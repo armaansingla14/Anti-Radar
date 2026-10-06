@@ -648,21 +648,57 @@ export interface InvestigateEvent {
   [key: string]: JsonValue;
 }
 
-/** Response of GET /api/watchlist (not modelled in api.py; kept permissive). */
-export interface WatchlistEntry {
+export interface WatchItemOut {
   id: string;
-  entity_type: string;
-  entity_id: string | null;
-  topic_key?: string | null;
-  note?: string | null;
-  name?: string | null;
-  slug?: string | null;
-  created_at?: ISODateTime | null;
-  [key: string]: JsonValue;
+  entity_type: "company" | "person" | "repository" | "topic" | string;
+  entity_id: string;
+  topic_key: string | null;
+  name: string;
+  slug: string | null;
+  note: string | null;
+  created_at: ISODateTime;
+  last_seen_at: ISODateTime;
+  score: number | null;
+  delta_7d: number | null;
+  is_demo: boolean;
+  changes: string[];
 }
 
-export interface WatchlistResponse {
-  items: WatchlistEntry[];
-  changes?: WatchChange[];
-  [key: string]: JsonValue;
+export interface WatchlistOut {
+  name: string;
+  items: WatchItemOut[];
+  changes_since_last_visit: number;
+}
+
+/** Back-compat aliases used by earlier components. */
+export type WatchlistEntry = WatchItemOut;
+export type WatchlistResponse = WatchlistOut;
+
+export interface OkOut {
+  ok: boolean;
+  detail: string | null;
+}
+
+export interface FeedbackOut {
+  ok: boolean;
+  weights: Record<string, number>;
+  changed: Record<string, number>;
+  dismissed: boolean;
+}
+
+export interface IngestRunOut {
+  provider: string;
+  status: string;
+  records_fetched: number;
+  records_accepted: number;
+  records_rejected: number;
+  signals_created: number;
+  errors: string[];
+}
+
+export interface IngestOut {
+  run: IngestRunOut;
+  entity: { type: string; id: string; slug: string; name: string } | null;
+  info: JsonObject;
+  recomputed: boolean;
 }

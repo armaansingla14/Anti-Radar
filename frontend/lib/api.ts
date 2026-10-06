@@ -30,6 +30,9 @@ import type {
   SystemStatus,
   ThesisMap,
   WatchlistEntry,
+  OkOut,
+  FeedbackOut,
+  IngestOut,
   WatchlistResponse,
   WatchRequest,
 } from "./types";
@@ -145,12 +148,13 @@ export const postMemo = (req: MemoRequest) => post<ReportOut>("/memo", req);
 
 export const getWatchlist = () => get<WatchlistResponse>("/watchlist");
 export const addWatch = (req: WatchRequest) => post<WatchlistEntry>("/watchlist", req);
-export const removeWatch = (itemId: string) => request<void>("DELETE", `/watchlist/${enc(itemId)}`);
-export const postFeedback = (req: FeedbackRequest) => post<JsonObject>("/feedback", req);
+export const removeWatch = (itemOrEntityId: string) => request<OkOut>("DELETE", `/watchlist/${enc(itemOrEntityId)}`);
+export const markWatchlistSeen = () => post<OkOut>("/watchlist/seen", {});
+export const postFeedback = (req: FeedbackRequest) => post<FeedbackOut>("/feedback", req);
 
-export const ingestGithub = (req: IngestGithubRequest) => post<JsonObject>("/ingest/github", req);
-export const ingestUrl = (req: IngestUrlRequest) => post<JsonObject>("/ingest/url", req);
-export const ingestX = (req: IngestXRequest) => post<JsonObject>("/ingest/x", req);
+export const ingestGithub = (req: IngestGithubRequest) => post<IngestOut>("/ingest/github", req);
+export const ingestUrl = (req: IngestUrlRequest) => post<IngestOut>("/ingest/url", req);
+export const ingestX = (req: IngestXRequest) => post<IngestOut>("/ingest/x", req);
 
 // ── Investigation (SSE over POST) ────────────────────────────────────────────
 
