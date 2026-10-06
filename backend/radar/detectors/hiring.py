@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
