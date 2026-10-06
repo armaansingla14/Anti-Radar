@@ -1,0 +1,59 @@
+{
+ "nbHits": 3,
+ "nbPages": 1,
+ "page": 0,
+ "hitsPerPage": 30,
+ "query": "humanoid robot",
+ "hits": [
+  {
+   "objectID": "49525153",
+   "title": "Launch HN: Nori Robotics (YC S26) – A low-cost humanoid robot for development",
+   "url": "https://www.norirobotics.com/",
+   "points": 201,
+   "num_comments": 66,
+   "author": "AntonioLi",
+   "created_at": "2026-09-01T17:35:10Z",
+   "created_at_i": 1788284110,
+   "story_text": "Hey HN, I’m Antonio from Nori Robotics (<a href=\"https:&#x2F;&#x2F;norirobotics.com\">https:&#x2F;&#x2F;norirobotics.com</a>). We build a $1,688 bimanual mobile robot in San Francisco for robotics developers and researchers.<p>I started working on Nori while doing robotics research at Columbia. I was teaching robots through human demonstrations, but getting my hands on affordable hardware was difficult. Most labs have one or two expensive robots, which makes it hard to collect large datasets, run long experiments, or test across several robots.<p>So I built my own. After seven iterations the latest Nori has:<p>* 19 degrees of freedom<p>* Two 7+1 DOF arms with a 1.5 kg payload per arm<p>* A 55 kg telescoping lift<p>* A differential wheeled base<p>* Four 720p, 30 fps RGB cameras<p>* 2D lidar<p>* A dual microphone array with full-duplex voice communication<p>* A 432 Wh battery<p>* A Raspberry Pi 5 with 4 GB RAM (SLAM and safeties are run on board, heavier ACT and VLAs must be run from a computer via LAN or a server via WAN)<p>Getting this under $2,000 was the main engineering challenge. Nori has more than 100 moving and structural parts, so costs add up quickly across actuators, bearings, wiring, power delivery, and assembly. Some main choices we made to get the cost low was using high-ratio servos instead of QDD motors, and using a wheel base instead of legs.<p>We assemble each robot in San Francisco and have designed it to be easy to manufacture and repair (we offer 3D files to",
+   "_tags": [
+    "story",
+    "author_AntonioLi",
+    "story_49525153",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49535506",
+   "title": "Why humanoid robots won't catch up to human workers any time soon",
+   "url": "https://www.understandingai.org/p/why-humanoid-robots-wont-catch-up",
+   "points": 37,
+   "num_comments": 73,
+   "author": "speckx",
+   "created_at": "2026-09-02T12:53:22Z",
+   "created_at_i": 1788353602,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_speckx",
+    "story_49535506"
+   ]
+  },
+  {
+   "objectID": "49466715",
+   "title": "Launch HN: Salem Robotics (YC S26) – Software for industrial inspection robots",
+   "url": null,
+   "points": 49,
+   "num_comments": 31,
+   "author": "Salem_robotics",
+   "created_at": "2026-08-27T15:46:04Z",
+   "created_at_i": 1787845564,
+   "story_text": "Hi HN, we&#x27;re the founders of Salem Robotics (<a href=\"https:&#x2F;&#x2F;salemroboticsinc.com\">https:&#x2F;&#x2F;salemroboticsinc.com</a>). We give existing mobile robots the task-specific intelligence to carry out surveys and physically interactive inspections in hazardous industrial facilities.<p>Here&#x27;s a video of it running on real robot hardware with a few words from us:\n<a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=U_228h3NE7c\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=U_228h3NE7c</a><p>We came to Salem through robotics research at UT Austin and a combined 15 years working in nuclear, including about 10 years developing and deploying autonomous robots at Los Alamos National Laboratory. Over the last five years, we kept running into the same gap: robot hardware had become very capable, but making a robot carry out a complete industrial procedure still required a surprising amount of robotics work and manual intervention.<p>The part that interested us most was manipulation. A nuclear contamination survey, for example, can require taking a &quot;smear&quot;: wiping a defined area of a surface so it can be checked for removable radioactive contamination. In an oil, gas, or chemical facility, an LDAR (leak detection and repair) inspection can require moving a detector around a particular valve, flange, or connection. Other inspections require positioning an instrument at a precise location and orientation relative to a pipe or piece of e",
+   "_tags": [
+    "story",
+    "author_Salem_robotics",
+    "story_49466715",
+    "launch_hn"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,435 @@
+{
+ "nbHits": 1512,
+ "nbPages": 40,
+ "page": 0,
+ "hitsPerPage": 25,
+ "query": "",
+ "hits": [
+  {
+   "objectID": "49979793",
+   "title": "Show HN: OpenChart – OSS TradingView alternative with your own AI agent",
+   "url": "https://github.com/longsurf-ai/openchart",
+   "points": 19,
+   "num_comments": 0,
+   "author": "Warren93",
+   "created_at": "2026-10-06T15:16:45Z",
+   "created_at_i": 1791299805,
+   "story_text": "Hi HN, I&#x27;m Weilun, cofounder of OpenChart.<p>We built OpenChart because we wanted Claude and Codex to interface with the markets, like most of humans do, through charts rather than through CLIs.<p>With your existing AI plans, your agent can work directly with your charts: annotate a setup, write an indicator, investigate a market move, or create an alert. The chart, conversation, and research live in the same workspace.<p>OpenChart alerts on any market move: draw any shape on a chart and attach an alert. When price crosses it, the alert triggers your agent to investigate the move and save the research in your workspace. The agents can work with charts, indicators, and alerts. Custom indicators and alert conditions are written in [Tea](<a href=\"https:&#x2F;&#x2F;github.com&#x2F;longsurf-ai&#x2F;tea\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;longsurf-ai&#x2F;tea</a>), a programming language we built for the markets.<p>We believe software shouldn’t impose artificial friction on your workflow. OpenChart is built on that belief with no software cap. The source code is publicly available, and you can use free market data from day one. We also offer optional paid cloud market data for lower latency.<p>Everything is private. Your charts, research, and indicator code are stored on your own computer, with the app&#x27;s backend running locally too.<p>We currently support only macOS on Apple Silicon, but we&#x27;re expanding to more platforms.<p>Website: <a href=\"https:&#x2F",
+   "_tags": [
+    "story",
+    "author_Warren93",
+    "story_49979793",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49978401",
+   "title": "Show HN: Jotbus – a shared encrypted scratchpad for coding agents",
+   "url": "https://jotbus.com/",
+   "points": 19,
+   "num_comments": 11,
+   "author": "shake-n-fries",
+   "created_at": "2026-10-06T13:45:04Z",
+   "created_at_i": 1791294304,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_shake-n-fries",
+    "story_49978401",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49978398",
+   "title": "Show HN: ChatGPT answers calls on a normal SIM. No Twilio, just a $6 ESP32",
+   "url": "https://www.youtube.com/watch?v=zIVXu6g8qdY",
+   "points": 9,
+   "num_comments": 1,
+   "author": "nadam54321",
+   "created_at": "2026-10-06T13:44:50Z",
+   "created_at_i": 1791294290,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_nadam54321",
+    "story_49978398",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49978267",
+   "title": "Show HN: Kahawai – An open source, modular media system",
+   "url": "https://kahawai.net/",
+   "points": 6,
+   "num_comments": 0,
+   "author": "berm_",
+   "created_at": "2026-10-06T13:36:33Z",
+   "created_at_i": 1791293793,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_berm_",
+    "story_49978267",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49978171",
+   "title": "Show HN: Parseable, an open observability datalake, handles 100M time-series/min",
+   "url": "https://www.parseable.com",
+   "points": 33,
+   "num_comments": 5,
+   "author": "yashdotrv",
+   "created_at": "2026-10-06T13:30:50Z",
+   "created_at_i": 1791293450,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_yashdotrv",
+    "story_49978171",
+    "show_hn",
+    "front_page"
+   ]
+  },
+  {
+   "objectID": "49977385",
+   "title": "Show HN: MailAccess – the true Email OSINT framework",
+   "url": "https://mailaccess.pro",
+   "points": 54,
+   "num_comments": 0,
+   "author": "coding-maniac",
+   "created_at": "2026-10-06T12:24:18Z",
+   "created_at_i": 1791289458,
+   "story_text": "Im a security engineer and i built mailaccess. When i started learning pentesting, i came across multiple lectures and notes of people listing out tools and websites, which gives the emails for a particular domain, and almost all of them mentioned that the tool might not stick, so its better to learn the methodology, rather than learning a tool- that stuck with me. \nAs i was beginning to really get into pentesting i noticed a clear lack of email osint methodology through the tool itself - so i thought of building one myself. I researched email osint methodoliges and identity chaining in depth to really get this tool the exact brain that a human would use, the reasoning of each action and the scoring behind each of it. Then after learning i just put it all together, and people really liked ita nd supported it, because it gave the truth rather than just filling it with names, it doesnt give a list, it gives sections, where it came from and how. Thats exactly what i wouldve wanted when i was first learning, a tool that familiarizes with what each source gave, and what was found.<p>Do check it out, i have made a hosted version so that people can route everything through that, and that also has been going very well, all thanks to the community and the solid supporters throughout.<p>github.com&#x2F;KatrielMoses&#x2F;MailAccess",
+   "_tags": [
+    "story",
+    "author_coding-maniac",
+    "story_49977385",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49976376",
+   "title": "Show HN: Acceptodds a prediction market on which ICLR 2027 papers get accepted",
+   "url": "https://acceptodds.com",
+   "points": 5,
+   "num_comments": 1,
+   "author": "armstrongb",
+   "created_at": "2026-10-06T10:03:26Z",
+   "created_at_i": 1791281006,
+   "story_text": "Hi, I built acceptodds, a prediction market on conference peer review. Every ICLR 2027 submission (42k papers) has a market: Accept vs. Reject.<p>Like many in the ML community, I think the current conference&#x2F;paper situation is a bit broken. I&#x27;m not sure how to fix it, but this is my attempt at building something fun to get the conversation started.<p>Some details:\n- Prices come from Hanson&#x27;s LMSR (logarithmic market scoring rule).<p>- You can sell and&#x2F;or rebuy at any time<p>- There&#x27;s a public leaderboard that ranks traders by P&amp;L.<p>- It uses an in-app currency called reputation. It can&#x27;t be converted to money.<p>- Bots can trade too, and they&#x27;re encouraged. If you can get an LLM to predict the market, that would be cool! There&#x27;s a public HTTP API with an OpenAPI spec (&#x2F;api&#x2F;v1&#x2F;openapi.json).<p>- Comments are pseudonymous, like on OpenReview (&quot;User k3xm&quot;), but they show the author&#x27;s position.<p>- There&#x27;s also a 2D map of all submissions: <a href=\"https:&#x2F;&#x2F;acceptodds.com&#x2F;map\" rel=\"nofollow\">https:&#x2F;&#x2F;acceptodds.com&#x2F;map</a><p>How would you extend this? How should ML conference reviews work? Is there something better than open review?<p>Go find your own paper (if you have one), place a bet and LMK what you think :)",
+   "_tags": [
+    "story",
+    "author_armstrongb",
+    "story_49976376",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49976361",
+   "title": "Show HN: Mashy – Nine short holes of pixel golf",
+   "url": "https://playmashy.com/",
+   "points": 5,
+   "num_comments": 6,
+   "author": "marcperel",
+   "created_at": "2026-10-06T10:02:28Z",
+   "created_at_i": 1791280948,
+   "story_text": "I built this 9 hole pixel golf game last week to challenge my mates, let me know what you think :)",
+   "_tags": [
+    "story",
+    "author_marcperel",
+    "story_49976361",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49970043",
+   "title": "Show HN: CoIsland – A local Mac app that monitors your dev tools and alerts you",
+   "url": "https://coisland.app/",
+   "points": 9,
+   "num_comments": 2,
+   "author": "LeDonT",
+   "created_at": "2026-10-05T20:14:52Z",
+   "created_at_i": 1791231292,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_LeDonT",
+    "story_49970043",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49969680",
+   "title": "Show HN: Meanwhile Map – what else was happening in the world at the same time",
+   "url": "https://meanwhilemap.com/",
+   "points": 5,
+   "num_comments": 1,
+   "author": "29b",
+   "created_at": "2026-10-05T19:48:03Z",
+   "created_at_i": 1791229683,
+   "story_text": "When reading a history book, I sometimes have a hard time internalizing when the events are taking place. Sure, I know the dates, but it takes a bit of effort to put them in a broader context, to understand where in history they belong. What usually helps is to put them in relation to other contemporaneous events.\nTo play around with this, I&#x27;ve made Meanwhile Map. You select a date and a time window, then scroll around the world map to see a list of contemporaneous events.\nFor example, yes, the Mughal Empire was founded by Babur in the 1520s, but it paints a different picture in my head when I see that this roughly coincides with Cortés&#x27; capture of Tenochtitlan, or that it&#x27;s close to the Siege of Vienna. Example link: <a href=\"https:&#x2F;&#x2F;meanwhilemap.com&#x2F;#y=1520&amp;m=1&amp;span=120&amp;off=founded,people&amp;map=1.4&#x2F;25&#x2F;0\" rel=\"nofollow\">https:&#x2F;&#x2F;meanwhilemap.com&#x2F;#y=1520&amp;m=1&amp;span=120&amp;off=founded,pe...</a><p>On the technical side, the app is a single static web page. It uses Wikidata for data (via SPARQL) and OpenHistoricalMap to show the events on the political map of the time. It&#x27;s open source (<a href=\"https:&#x2F;&#x2F;github.com&#x2F;ea&#x2F;meanwhilemap&#x2F;tree&#x2F;main\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;ea&#x2F;meanwhilemap&#x2F;tree&#x2F;main</a>), vibe coded as an experiment.  All processing is client-side, and no data is tracked other than simple visitor counts.",
+   "_tags": [
+    "story",
+    "author_29b",
+    "story_49969680",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49967539",
+   "title": "Show HN: Invofox – Turn any document into structured, validated JSON",
+   "url": "https://www.invofox.com/en/",
+   "points": 6,
+   "num_comments": 3,
+   "author": "albertogimeno",
+   "created_at": "2026-10-05T17:09:34Z",
+   "created_at_i": 1791220174,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_albertogimeno",
+    "story_49967539",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49966865",
+   "title": "Show HN: Era – Complete Simulated Companies for Your Agents",
+   "url": "https://console.era.eon.io/",
+   "points": 14,
+   "num_comments": 12,
+   "author": "inglor",
+   "created_at": "2026-10-05T16:19:08Z",
+   "created_at_i": 1791217148,
+   "story_text": "Hi, I&#x27;m Benji. I&#x27;m one of the people who built Era a free-for-builders service that creates digital twins for common SaaS services.<p>We built it for ourselves and got a lot of excitement from research partners - and are giving \nit away for free.",
+   "_tags": [
+    "story",
+    "author_inglor",
+    "story_49966865",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49966745",
+   "title": "Show HN: SoldStack – sold prices API for secondhand clothes",
+   "url": "https://soldstack.fly.dev/",
+   "points": 8,
+   "num_comments": 9,
+   "author": "aarontian0",
+   "created_at": "2026-10-05T16:09:30Z",
+   "created_at_i": 1791216570,
+   "story_text": "Soldstack is a site for developers to get the buy or sell value of a product mainly on Poshmark right now.<p>The reason I built this is because eBay sold data got locked behind a login, and Poshmark data is messy and often over a year old. So I wanted to create something that makes it easier to access this data.<p>When I was making this, I had to be careful with cleaning out the data. For example, if one searched nike dunk low, they would get nike dunk lows, toddler and kid&#x27;s sizes (which go much cheaper), bundles, other shoes, duplicates, and high outliers. But if you average all that, the price would be inaccurate.<p>Things to try include the price guide, the fee calculator, which all need no sign up. The Google Sheets formula does need a signup however.<p>I&#x27;d love feedback on whether I should expand this to Mercari or if something looks off. Thanks!",
+   "_tags": [
+    "story",
+    "author_aarontian0",
+    "story_49966745",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49966238",
+   "title": "Show HN: I finetuned 1.5B Qwen to near GPT-4o level bash generation perf",
+   "url": "https://dirac.run/posts/easycommand",
+   "points": 5,
+   "num_comments": 0,
+   "author": "GodelNumbering",
+   "created_at": "2026-10-05T15:35:29Z",
+   "created_at_i": 1791214529,
+   "story_text": "Purely a hobby side project to see how far I can push a really small model, using (mostly) automated training pipelines<p>Original mention: <a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=49869735\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=49869735</a><p>There were a bunch of requests to release it. Full synthetic data: <a href=\"https:&#x2F;&#x2F;huggingface.co&#x2F;datasets&#x2F;dirac-run&#x2F;ec-training-data\" rel=\"nofollow\">https:&#x2F;&#x2F;huggingface.co&#x2F;datasets&#x2F;dirac-run&#x2F;ec-training-data</a><p>Models: <a href=\"https:&#x2F;&#x2F;huggingface.co&#x2F;dirac-run&#x2F;ec-1.5b-gguf\" rel=\"nofollow\">https:&#x2F;&#x2F;huggingface.co&#x2F;dirac-run&#x2F;ec-1.5b-gguf</a> and <a href=\"https:&#x2F;&#x2F;huggingface.co&#x2F;dirac-run&#x2F;ec-0.6b-gguf\" rel=\"nofollow\">https:&#x2F;&#x2F;huggingface.co&#x2F;dirac-run&#x2F;ec-0.6b-gguf</a><p>Cli <a href=\"https:&#x2F;&#x2F;github.com&#x2F;dirac-run&#x2F;ec\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;dirac-run&#x2F;ec</a><p>feel free to train&#x2F;use the data as you wish.",
+   "_tags": [
+    "story",
+    "author_GodelNumbering",
+    "story_49966238",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49965575",
+   "title": "Show HN: DevBoard – a simpler ClickUp for small dev teams, native apps and MCP",
+   "url": "https://getdevboard.app/",
+   "points": 5,
+   "num_comments": 0,
+   "author": "darkobacic",
+   "created_at": "2026-10-05T14:45:55Z",
+   "created_at_i": 1791211555,
+   "story_text": "After being &#x27;forced&#x27; to use popular solutions like Jira, Linear, ClickUp and Trello for years I had enough. I wanted to build a simple, clutter free, bloat free, fast tool to help you get your shit organised.<p>I built this using Flutter (native on macOS, iOS and Android, Windows and Linux coming) and Serverpod for backend, hosted on a VPS.<p>And since we all use AI tools, it works with Cursor, Claude, etc over MCP.<p>Would you switch from ClickUp or Jira to this? It&#x27;s free for everyone in the beta.<p>PS: you need an account to try it, screenshots are on the page",
+   "_tags": [
+    "story",
+    "author_darkobacic",
+    "story_49965575",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49965478",
+   "title": "Show HN: Jurl – curl that reads the page for you",
+   "url": "https://jurl.dev/",
+   "points": 6,
+   "num_comments": 2,
+   "author": "rayoplateado",
+   "created_at": "2026-10-05T14:38:02Z",
+   "created_at_i": 1791211082,
+   "story_text": "jurl is a CLI. Tell it what you want from a page and it picks exactly that out: the paragraphs that answer a question, the code, the links worth following, or a photo you describe. On Wikipedia&#x27;s Cologne page it finds the cathedral among 73 images in 2.3 s; on the Jevons page, the two paragraphs out of ~240 that explain his paradox.<p>The link above lets you try it in the browser, no key needed. Or in your terminal, with your own TypeSafe key (it asks for it on first run):<p><pre><code>  brew install rayoplateado&#x2F;tap&#x2F;jurl\n  jurl -q &quot;What is the Jevons paradox?&quot; en.wikipedia.org&#x2F;wiki&#x2F;William_Stanley_Jevons\n  jurl --code github.com&#x2F;BurntSushi&#x2F;ripgrep\n  jurl -f &quot;a cathedral&quot; en.wikipedia.org&#x2F;wiki&#x2F;Cologne\n  jurl -l -n 3 news.ycombinator.com | xargs -n1 jurl -n 1\n</code></pre>\nHow it works: jurl splits the page into blocks, links and images, and turns each one into a yes&#x2F;no question (&quot;does this block answer the question?&quot;). A decision model, Jev from TypeSafe, scores them all in a single request. For images, Clef on Cloudflare Workers AI looks at the pixels. The models return probabilities, never text: jurl picks, it doesn&#x27;t write. Everything it prints is on the page, so it&#x27;s safe to pipe into xargs curl.<p>Most pages take under a second and cost a fraction of a cent, about a thousand pages per dollar, paid straight to the APIs: jurl calls them directly with your own keys (TypeSafe for text, ",
+   "_tags": [
+    "story",
+    "author_rayoplateado",
+    "story_49965478",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49965227",
+   "title": "Show HN: Pumpkins.sh – claim, carve, and display a pumpkin to the world",
+   "url": "https://pumpkins.sh/",
+   "points": 29,
+   "num_comments": 9,
+   "author": "linesofcode",
+   "created_at": "2026-10-05T14:18:09Z",
+   "created_at_i": 1791209889,
+   "story_text": "What if....there was a near infinite pumpkin patch where anyone can claim and carve a pumpkin then show-case it to the world?<p>Here are 1 million pumpkins. Pick one. Make it your own.<p>Have a VR headset? Put it on and explore the patch.",
+   "_tags": [
+    "story",
+    "author_linesofcode",
+    "story_49965227",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49965142",
+   "title": "Show HN: EtherPK – an Obsidian and Logseq alternative with prose and blocks",
+   "url": "https://github.com/appsoftwareltd/etherpk-client",
+   "points": 5,
+   "num_comments": 0,
+   "author": "gb2d_hn",
+   "created_at": "2026-10-05T14:11:18Z",
+   "created_at_i": 1791209478,
+   "story_text": "EtherPK allows for prose and blocks in the same docs, and has static site publishing, so you can maintain your outline style notes with your blogs and docs. For more features: <a href=\"https:&#x2F;&#x2F;www.etherpk.com\" rel=\"nofollow\">https:&#x2F;&#x2F;www.etherpk.com</a>",
+   "_tags": [
+    "story",
+    "author_gb2d_hn",
+    "story_49965142",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49964837",
+   "title": "Show HN: I wrote a book to help developers to improve their writing",
+   "url": "https://refactoringenglish.com",
+   "points": 5,
+   "num_comments": 1,
+   "author": "mtlynch",
+   "created_at": "2026-10-05T13:45:48Z",
+   "created_at_i": 1791207948,
+   "story_text": "I&#x27;ve been writing online about software and entrepreneurship for the last decade. You may remember me as the guy who quit his job at Google to bootstrap my own business (<a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=16483241\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=16483241</a>) or the guy who spent $46k on a website redesign that got out of control (<a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=32179563\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=32179563</a>).<p>Other developers have asked me for help with their writing, and I realized that there are certain techniques and best practices I&#x27;ve picked up over time that most developers don&#x27;t know. Some of the rules take practice to apply, but a lot of them you can apply as soon as you understand it.<p>I&#x27;ve spent the last two years capturing all the writing techniques I&#x27;ve learned into a book called <i>Refactoring English: Effective Writing for Software Developers</i> (<a href=\"https:&#x2F;&#x2F;refactoringenglish.com&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;refactoringenglish.com&#x2F;</a>). I&#x27;m launching the book today in both print and digital formats.<p>This book would not be possible without HN. I initially funded it with Kickstarter, and sales had plateaued at around 80% of my target with only four days remaining (<a href=\"https:&#x2F;&#x2F;mtlynch.io&#x2F;book-pre-sale-just-barely-succeeded&#x2F;\" rel=\"nofollow\">https:&#x2F;&#x2F;mtlynch.io&#",
+   "_tags": [
+    "story",
+    "author_mtlynch",
+    "story_49964837",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49964379",
+   "title": "Show HN: Learn to program a modular synthesizer in the browser",
+   "url": "https://ostra.fm/learn",
+   "points": 5,
+   "num_comments": 4,
+   "author": "nicktikhonov",
+   "created_at": "2026-10-05T13:10:07Z",
+   "created_at_i": 1791205807,
+   "story_text": "I’m a software engineer and always wanted a simpler way to play around with modular synthesizers, without having to spend thousands of $.<p>So I built Ostra: a modular synth that runs entirely in the browser, with dozens of modules and a short interactive tutorial. There&#x27;s no need to install anything, or even log in. Everything runs in the browser and you can even record your patches and save .WAVs to your disk.<p>I’d be interested in feedback on the implementation, UX, and what other programmable modules would be worth adding.<p>Thanks for checking this out!",
+   "_tags": [
+    "story",
+    "author_nicktikhonov",
+    "story_49964379",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49964102",
+   "title": "Show HN: Steve Jobs died 15 years ago today. I built an interactive tribute",
+   "url": "https://thankyousteve.org/",
+   "points": 15,
+   "num_comments": 27,
+   "author": "akashbangad",
+   "created_at": "2026-10-05T12:42:45Z",
+   "created_at_i": 1791204165,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_akashbangad",
+    "story_49964102",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49964046",
+   "title": "Show HN: Abliterated LLM provider for cyber tasks",
+   "url": "https://refuseless.com",
+   "points": 5,
+   "num_comments": 4,
+   "author": "jurisdb",
+   "created_at": "2026-10-05T12:36:08Z",
+   "created_at_i": 1791203768,
+   "story_text": "Current lineup includes GLM 5.3 and its Flash variant. MiMo V2.6 and Qwen Flash Next will be added in the near future.",
+   "_tags": [
+    "story",
+    "author_jurisdb",
+    "story_49964046",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49963508",
+   "title": "Show HN: A Walkable O'Neill Cylinder in the Browser",
+   "url": "https://islandthree.world",
+   "points": 7,
+   "num_comments": 7,
+   "author": "zkauble3310",
+   "created_at": "2026-10-05T11:32:58Z",
+   "created_at_i": 1791199978,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_zkauble3310",
+    "story_49963508",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49963394",
+   "title": "Show HN: Minigraf – An embedded, bi-temporal graph database in Rust",
+   "url": "https://github.com/project-minigraf/minigraf",
+   "points": 37,
+   "num_comments": 30,
+   "author": "adityamukho",
+   "created_at": "2026-10-05T11:18:18Z",
+   "created_at_i": 1791199098,
+   "story_text": "A successor project to my previous attempt at building a temporal graph database (<a href=\"https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=23455516\">https:&#x2F;&#x2F;news.ycombinator.com&#x2F;item?id=23455516</a>). This one builds on its predecessor&#x27;s concept, but drops the dependency on another database to provide the storage, transaction and query engines. Minigraf is self-contained, packaged as a library crate, embeds into your application, and supports full bi-temporality.",
+   "_tags": [
+    "story",
+    "author_adityamukho",
+    "story_49963394",
+    "show_hn"
+   ]
+  },
+  {
+   "objectID": "49960371",
+   "title": "Show HN: Ramen – self-hosted multi-zone MCP server for Kubernetes(Rust & Python)",
+   "url": "https://github.com/bkraad47/ramen",
+   "points": 5,
+   "num_comments": 0,
+   "author": "bulkguy47",
+   "created_at": "2026-10-05T03:27:26Z",
+   "created_at_i": 1791170846,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_bulkguy47",
+    "story_49960371",
+    "show_hn"
+   ]
+  }
+ ]
+}

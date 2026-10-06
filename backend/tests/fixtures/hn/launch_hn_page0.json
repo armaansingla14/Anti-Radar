@@ -1,0 +1,400 @@
+{
+ "nbHits": 23,
+ "nbPages": 1,
+ "page": 0,
+ "hitsPerPage": 25,
+ "query": "",
+ "hits": [
+  {
+   "objectID": "49911995",
+   "title": "Launch HN: Magnitude (YC S25) – Self-optimizing inference engine for agents",
+   "url": "https://github.com/magnitudedev/magnitude",
+   "points": 194,
+   "num_comments": 99,
+   "author": "anerli",
+   "created_at": "2026-09-30T17:37:40Z",
+   "created_at_i": 1790789860,
+   "story_text": "Hey HN, Anders and Tom here. We&#x27;re building Magnitude, an inference engine for agents that optimizes itself to run as fast as possible on your hardware. It works on Mac, Linux, and Windows on any hardware and is up to 2x faster than llama.cpp.<p>We&#x27;re both software engineers and previously built an open source browser agent to 4k+ GH stars and 100k+ downloads. We increasingly wanted to run it on local models, but found that no inference engine worked for our use case.<p>Inference engines today all make a performance tradeoff. They are either:<p>- Built for batched inference on datacenter hardware at the cost of single-session performance (vLLM, SGLang)\n- Designed for broad compatibility instead of optimizing for specific hardware (llama.cpp, Ollama)\n- Specialized for specific hardware or models but lacking engine completeness (oMLX, ds4)<p>Plus none of them are designed for running agents locally. Sessions are long, several often run at once, and you still want to use your computer for other things.<p>Magnitude is built for maximum performance on your hardware and running local agents:<p>- On-device compilation and tuning: Kernels are written with flexible parameters that are tuned on your actual device before the model runs. This gives you broad hardware compatibility with the same performance ceiling as hardware-specific kernels.<p>- Focus on best architectures: We write our tunable, highly efficient kernels for the most popular open-weights families. This allows ",
+   "_tags": [
+    "story",
+    "author_anerli",
+    "story_49911995",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49881505",
+   "title": "Launch HN: Vespper (YC F24) – SOTA Docx MCP",
+   "url": "https://www.vespper.com/blog/launching-vespper-docx-mcp",
+   "points": 37,
+   "num_comments": 18,
+   "author": "topaztee",
+   "created_at": "2026-09-28T17:34:36Z",
+   "created_at_i": 1790616876,
+   "story_text": "Hey HN! We&#x27;re Dudu and Topaz from Vespper (<a href=\"https:&#x2F;&#x2F;vespper.com\">https:&#x2F;&#x2F;vespper.com</a>). Vespper is an MCP that lets AI agents efficiently edit Word documents, powered by our fine-tuned model. It&#x27;s currently 3× faster, 2× cheaper and more accurate than the closest alternative. Check out an overview of how the product works here: <a href=\"https:&#x2F;&#x2F;youtu.be&#x2F;odKxsgPjzzw\" rel=\"nofollow\">https:&#x2F;&#x2F;youtu.be&#x2F;odKxsgPjzzw</a><p>We came to work on this problem after spending a year building an AI document editor for pharma companies. Before that, Topaz(myself) was a senior SWE at Snyk, working on distributed systems, and Dudu was a deep learning engineer at Viz.ai, building computer vision models for stroke detection.\nOur editor helped pharma companies generate regulatory documents (e.g. CSRs) to speed up their submissions. Initially, the output was Markdown, displayed in a WYSIWYG editor. However, users preferred working with their own Word templates. That&#x27;s when the problems began.<p>AI agents aren&#x27;t great at editing Word documents. A Word document is a zip file of verbose XML files following the OOXML spec. Even &quot;small&quot; changes require backflips, for example: adding a numbered list requires creating an entry in numbering.xml with a fresh ID and linking it back in document.xml, bolding a sentence requires splitting it into 3+ run elements. The list goes on.<p>This makes editing the zip directly (un",
+   "_tags": [
+    "story",
+    "author_topaztee",
+    "story_49881505",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49804931",
+   "title": "Launch HN: Coverage Cat (YC S22) – Umbrella insurance via your personal agent",
+   "url": "https://www.coveragecat.com/",
+   "points": 54,
+   "num_comments": 32,
+   "author": "botacode",
+   "created_at": "2026-09-22T17:26:36Z",
+   "created_at_i": 1790097996,
+   "story_text": "Hey HN! We’re Max and Gabriel the co-founders of Coverage Cat. We’ve been friends for over a decade, met in college then hung out mostly on the internet. We love building products that help people optimize the crufty corners of their lives. Max is a former Google&#x2F;Microsoft&#x2F;Two Sigma PM and Gabriel has been working in startups for over a decade.<p>We’re building Coverage Cat: a licensed insurance brokerage that helps you compare umbrella and home coverage side by side — with straight pricing, no sold leads, and a real broker on the other end. Our current focus is helping tech folks (think L3-L8) buy umbrella insurance.<p>Coverage Cat pairs AI-guided intake with a licensed brokerage team, so you can size up coverage, see honest price ranges, and compare real carrier options without handing your details to five agents overnight. Folks who use personal AI agents (think Muse, Instinct, Town, Openclaw, etc.) can drive the same flow through the Agent API&#x2F;MCP.<p>We’d love your feedback so please do try it out. Just feed the prompt: “Shop for umbrella insurance with Coverage Cat” to your personal agent and let us know what you think!<p>If you want to watch a couple of agents navigate the flow before you use it there’s a video here: <a href=\"https:&#x2F;&#x2F;youtu.be&#x2F;1BUkgAn6s-I\" rel=\"nofollow\">https:&#x2F;&#x2F;youtu.be&#x2F;1BUkgAn6s-I</a><p>For those who are unfamiliar with this type of coverage, here’s a blurb from one of our insurance agents: “Umbrella liabili",
+   "_tags": [
+    "story",
+    "author_botacode",
+    "story_49804931",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49743049",
+   "title": "Launch HN: Skillsync (YC W26) – AI chat sessions made portable across agents",
+   "url": null,
+   "points": 68,
+   "num_comments": 62,
+   "author": "cat-whisperer",
+   "created_at": "2026-09-17T16:22:15Z",
+   "created_at_i": 1789662135,
+   "story_text": "Hey HN, we&#x27;re Nars &amp; Nishant, founders of Skillsync (<a href=\"https:&#x2F;&#x2F;skillsync.com\">https:&#x2F;&#x2F;skillsync.com</a>)<p>Skillsync lets you move your AI chats across every coding agent. Most of our work exists as conversations, which are currently scattered across our agents. Though stored locally, these conversations use different formats. This is annoying because you cannot simply switch between agents without starting over. We get locked into a single provider and their agent as we invest in skills and memories over time. Skillsync acts as a universal converter. It moves the entire session, including all the messages, reasoning and tool calls so you can pick up right where you left off.<p>Skillsync collects all your sessions in one place and makes them searchable. It breaks down what each session is carrying, including which loaded skills the agent is actually using, making stale context easy to spot. You can also create shared workspaces to sync sessions across your team. You can build your own closed loop systems. Everything runs locally except when you share to workspaces.<p>The core is an open-source Rust engine called txcript (<a href=\"https:&#x2F;&#x2F;github.com&#x2F;skillsynchq&#x2F;txcript\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;skillsynchq&#x2F;txcript</a>). It translates a session from one agent&#x27;s on-disk format into another&#x27;s, mapping conversation, reasoning, and tool history. Think ffmpeg or pandoc, but for agent sessi",
+   "_tags": [
+    "story",
+    "author_cat-whisperer",
+    "story_49743049",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49552616",
+   "title": "Launch HN: Mireye (YC S26) – Infrastructure for Physical World AI Agents",
+   "url": null,
+   "points": 28,
+   "num_comments": 8,
+   "author": "anshchokshi",
+   "created_at": "2026-09-03T16:24:13Z",
+   "created_at_i": 1788452653,
+   "story_text": "Hi HN, I&#x27;m Ansh, founder of Mireye (<a href=\"https:&#x2F;&#x2F;www.mireye.com\">https:&#x2F;&#x2F;www.mireye.com</a>). I&#x27;m building the infrastructure AI agents use to make decisions about physical places: data, enrichment, tools, and signals for any US location, behind one API and MCP server.<p>Here&#x27;s a demo video: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=haqO6UbUqU0\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=haqO6UbUqU0</a><p>To try it, paste <a href=\"https:&#x2F;&#x2F;www.mireye.com&#x2F;skills.md\">https:&#x2F;&#x2F;www.mireye.com&#x2F;skills.md</a> into your agent, and grab a free key at mireye.com (5,000 credits, no card). Docs are at <a href=\"https:&#x2F;&#x2F;docs.mireye.ai\" rel=\"nofollow\">https:&#x2F;&#x2F;docs.mireye.ai</a>. The fastest way in is to ask the API any question about any US location. Test it on a place you know, cold and grade it against what you know.<p>Before Mireye I was building construction agents and hit this wall myself: my agent could reason about anything online but knew nothing about the ground under it. Then a Fortune 500 insurer told me their engineers had given up on underwriting agents for the same reason. Frontier models keep hallucinating when asked a specific question about a specific place.<p>My first product was a niche site-screening app. Customers tested it on places they knew and the answers held up, but nobody cared about the app. They wanted the engine underneath. Usage agreed: 311 ",
+   "_tags": [
+    "story",
+    "author_anshchokshi",
+    "story_49552616",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49543530",
+   "title": "Launch HN: RonanRX (YC S26) – Personalized Peptides and GLP-1s",
+   "url": null,
+   "points": 119,
+   "num_comments": 82,
+   "author": "lloydarmbrust",
+   "created_at": "2026-09-02T22:36:04Z",
+   "created_at_i": 1788388564,
+   "story_text": "Hi HN,<p>I’m Lloyd, one of two founders of RonanRx (<a href=\"https:&#x2F;&#x2F;ronanrx.com&#x2F;\">https:&#x2F;&#x2F;ronanrx.com&#x2F;</a>). We are building a vertically integrated pharmaceutical company with software for prescribing, telehealth, compounding, manufacturing, and delivery. We are starting with GLP-1s and peptides.<p>The path to RonanRx is fairly unconventional. During the pandemic, I built one of the largest mask manufacturing factories in the US. We could make a million masks in a day. We converted raw polypropylene pellets into finished pallets of masks.<p>I had a background in software from my YC W10 company, so we took a software approach to building our factory. We used machine learning and computer vision to optimize production. We also vertically integrated almost everything. It worked. We built an efficient manufacturing operation and grew the business to 50 million dollars in revenue. Then people actually stopped caring about masks. Fair enough.<p>Around the same time, I decided to try and lose the weight I had gained while building the factory. I ate nothing but chicken for six months. While this diet got some results, I plateaued. My doctor suggested tirzepatide, a GLP-1 medication.<p>For me, losing weight was only the beginning. &quot;Food noise&quot; was gone. I showed less interest in other compulsive behavior. I stopped scrolling Instagram and quit biting my nails. But that was just the beginning. I was born with a congenital heart defect called a",
+   "_tags": [
+    "story",
+    "author_lloydarmbrust",
+    "story_49543530",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49525153",
+   "title": "Launch HN: Nori Robotics (YC S26) – A low-cost humanoid robot for development",
+   "url": "https://www.norirobotics.com/",
+   "points": 201,
+   "num_comments": 66,
+   "author": "AntonioLi",
+   "created_at": "2026-09-01T17:35:10Z",
+   "created_at_i": 1788284110,
+   "story_text": "Hey HN, I’m Antonio from Nori Robotics (<a href=\"https:&#x2F;&#x2F;norirobotics.com\">https:&#x2F;&#x2F;norirobotics.com</a>). We build a $1,688 bimanual mobile robot in San Francisco for robotics developers and researchers.<p>I started working on Nori while doing robotics research at Columbia. I was teaching robots through human demonstrations, but getting my hands on affordable hardware was difficult. Most labs have one or two expensive robots, which makes it hard to collect large datasets, run long experiments, or test across several robots.<p>So I built my own. After seven iterations the latest Nori has:<p>* 19 degrees of freedom<p>* Two 7+1 DOF arms with a 1.5 kg payload per arm<p>* A 55 kg telescoping lift<p>* A differential wheeled base<p>* Four 720p, 30 fps RGB cameras<p>* 2D lidar<p>* A dual microphone array with full-duplex voice communication<p>* A 432 Wh battery<p>* A Raspberry Pi 5 with 4 GB RAM (SLAM and safeties are run on board, heavier ACT and VLAs must be run from a computer via LAN or a server via WAN)<p>Getting this under $2,000 was the main engineering challenge. Nori has more than 100 moving and structural parts, so costs add up quickly across actuators, bearings, wiring, power delivery, and assembly. Some main choices we made to get the cost low was using high-ratio servos instead of QDD motors, and using a wheel base instead of legs.<p>We assemble each robot in San Francisco and have designed it to be easy to manufacture and repair (we offer 3D files to",
+   "_tags": [
+    "story",
+    "author_AntonioLi",
+    "story_49525153",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49511007",
+   "title": "Launch HN: Almanac (YC S26) – AI that knows your company",
+   "url": "https://usealmanac.com/",
+   "points": 59,
+   "num_comments": 48,
+   "author": "kushagrchitkar",
+   "created_at": "2026-08-31T15:34:34Z",
+   "created_at_i": 1788190474,
+   "story_text": "Hi HN, I&#x27;m Kushagra, one of three founders of Almanac, a Hermes with a brain that knows everything about your company.<p>We started our journey with setting up Hermes for our company, thinking it must be easy. We wanted an agent that would know every context about our company, so we could ask questions and get context-appropriate responses to.<p>This started a very annoying and difficult journey. Setting up Hermes, getting it to talk right, building OAuth apps for every connector myself, then feeding it context myself, and ultimately struggling with Hermes&#x27;s default memory. At the same time, we saw our YC batchmates struggling with the same problem, and we saw an opportunity.<p>So we built Almanac. This is how it works. You sign up, you get a Hermes agent straight out of the box. You have a one-click connect to any account (Gmail, Calendar, Granola, PostHog, etc). You have personal accounts (only accessible by you) and also shared accounts (accessible by everyone in the company). The consequence being I can never see my cofounders&#x27; accounts.<p>The “brain” of this agent is wikis. We pull in information from your connected sources, and start organizing this information in two wikis. A personal one, for you, which understands who you are, what your preferences are, the people in your life, and the things going on in your life. The second wiki is a company wiki, which includes what the company is, what you’re working on, what the roadmap is, and what the blockers o",
+   "_tags": [
+    "story",
+    "author_kushagrchitkar",
+    "story_49511007",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49510632",
+   "title": "Launch HN: Hebbian Robotics (YC S26) – Build scalable robotics data pipelines",
+   "url": "https://github.com/Hebbian-Robotics/hflow",
+   "points": 46,
+   "num_comments": 12,
+   "author": "kstonekuan",
+   "created_at": "2026-08-31T15:02:41Z",
+   "created_at_i": 1788188561,
+   "story_text": "Hi HN, we’re Brandon and Kingston, the founders of Hebbian Robotics. We built HFlow (<a href=\"https:&#x2F;&#x2F;github.com&#x2F;Hebbian-Robotics&#x2F;hflow\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;Hebbian-Robotics&#x2F;hflow</a>), an SDK that turns multimodal recordings from robots and human operators into standardized, quality-checked episodes and queryable dataset manifests. A recording can contain synchronized video, joint states, actions, timestamps, and metadata, and HFlow processes those streams together.<p>Here’s a demo of HFlow in action: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=xni0GwV-xAw\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=xni0GwV-xAw</a><p>Robotics data pipelines often begin as scripts: one transcodes video, another checks timestamps, another adds labels, and another copies selected recordings into a training set. This works until the corpus grows. Then it becomes difficult to know which code ran, why an episode was excluded, or whether a dataset can be reproduced. The first pain is usually quality control because frozen cameras, missing topics, timestamp drift, and duplicate recordings can quietly enter training data.<p>Brandon first encountered this while training embodied AI models for two-arm industrial cleaning robots. Kingston had run into related problems while building high-throughput infrastructure at Jane Street. Later, while speaking with robotics data providers, we kept seeing teams rebuild similar pro",
+   "_tags": [
+    "story",
+    "author_kstonekuan",
+    "story_49510632",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49466715",
+   "title": "Launch HN: Salem Robotics (YC S26) – Software for industrial inspection robots",
+   "url": null,
+   "points": 49,
+   "num_comments": 31,
+   "author": "Salem_robotics",
+   "created_at": "2026-08-27T15:46:04Z",
+   "created_at_i": 1787845564,
+   "story_text": "Hi HN, we&#x27;re the founders of Salem Robotics (<a href=\"https:&#x2F;&#x2F;salemroboticsinc.com\">https:&#x2F;&#x2F;salemroboticsinc.com</a>). We give existing mobile robots the task-specific intelligence to carry out surveys and physically interactive inspections in hazardous industrial facilities.<p>Here&#x27;s a video of it running on real robot hardware with a few words from us:\n<a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=U_228h3NE7c\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=U_228h3NE7c</a><p>We came to Salem through robotics research at UT Austin and a combined 15 years working in nuclear, including about 10 years developing and deploying autonomous robots at Los Alamos National Laboratory. Over the last five years, we kept running into the same gap: robot hardware had become very capable, but making a robot carry out a complete industrial procedure still required a surprising amount of robotics work and manual intervention.<p>The part that interested us most was manipulation. A nuclear contamination survey, for example, can require taking a &quot;smear&quot;: wiping a defined area of a surface so it can be checked for removable radioactive contamination. In an oil, gas, or chemical facility, an LDAR (leak detection and repair) inspection can require moving a detector around a particular valve, flange, or connection. Other inspections require positioning an instrument at a precise location and orientation relative to a pipe or piece of e",
+   "_tags": [
+    "story",
+    "author_Salem_robotics",
+    "story_49466715",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49451495",
+   "title": "Launch HN: Risklytics (YC S26) – Insurance brokerage for frontier tech companies",
+   "url": "https://www.risklytics.ai/",
+   "points": 54,
+   "num_comments": 25,
+   "author": "AlexRisio",
+   "created_at": "2026-08-26T16:06:01Z",
+   "created_at_i": 1787760361,
+   "story_text": "Hi HN, we&#x27;re Sam and Alex, founders of Risklytics (<a href=\"https:&#x2F;&#x2F;risklytics.ai\">https:&#x2F;&#x2F;risklytics.ai</a>). We&#x27;re both on leave from Harvard, and we run an insurance brokerage for companies building robots, drones, autonomous systems and satellites. You describe your machine, we find the insurance companies willing to cover it, and we read everything before you sign.<p>Buying insurance for any frontier tech goes like this:<p>- your first customer or pilot requires coverage before your machine can work on their site<p>- a broker hands you an application written for ordinary businesses, and often will deny you on baseless &quot;risks&quot; (one of our clients got denied for using CAD software in their workflow)<p>- you get filed under something close or outright denied, the person at the insurance company often can&#x27;t tell what they&#x27;re looking at, and the safe answer is no<p>- if a quote does come back, the AI risk is often quietly removed by an add-on clause that prevents you from truly being covered<p>Those clauses surprised us. Insurance companies mostly don&#x27;t write their own policies from scratch. They license standard forms from an industry body called ISO and attach add-on clauses to adjust them, and in January ISO published clauses that void coverage for losses arising out of AI in any part of a process. Each insurer decides whether to adopt them, account by account, and there&#x27;s no public record of who has and to what c",
+   "_tags": [
+    "story",
+    "author_AlexRisio",
+    "story_49451495",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49376038",
+   "title": "Launch HN: Vendo (YC S26) – Let users build features on top of your product",
+   "url": "https://github.com/runvendo/vendo",
+   "points": 61,
+   "num_comments": 22,
+   "author": "yousefh409",
+   "created_at": "2026-08-20T15:29:52Z",
+   "created_at_i": 1787239792,
+   "story_text": "Hi HN, we’re Yousef &amp; Nour, founders of Vendo (<a href=\"https:&#x2F;&#x2F;vendo.run\">https:&#x2F;&#x2F;vendo.run</a>). Vendo lets users create new features inside the software they already use. A user describes the dashboard, workflow, or small app they need, and Vendo builds it on top of the product’s existing data, API, and interface.<p>Demo: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=VdpHehY64ls\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=VdpHehY64ls</a><p>We built Vendo because every SaaS eventually faces the same problem: every customer needs something slightly different. One wants a new report and another needs a workflow that only makes sense for their team. These requests either sit on the roadmap, become one-off engineering work, or force the customer into spreadsheets and external tools. We wanted the user to be able to create the missing feature themselves, without leaving the product.<p>Here is how it works:<p>- npx vendo init reads the product&#x27;s API surface, theme, routes, and more. These are used so that the apps Vendo creates (1) look on-brand and native and (2) have the ability to read data and perform actions directly through the company&#x27;s API<p>- When a user asks for a feature, we have a custom Vendo harness that writes a React component with a bunch of Vendo add-ons and guardrails (ex. ability to make calls to the host API + our component library). Every save is compiled, type-checked, run against real API respo",
+   "_tags": [
+    "story",
+    "author_yousefh409",
+    "story_49376038",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49363710",
+   "title": "Launch HN: OneCLI (YC S26) – OSS sandboxed agent harness for teams",
+   "url": "https://github.com/onecli/onecli",
+   "points": 88,
+   "num_comments": 37,
+   "author": "guyb3",
+   "created_at": "2026-08-19T16:29:02Z",
+   "created_at_i": 1787156942,
+   "story_text": "Hi HN, Jonathan &amp; Guy here from OneCLI, an agent harness built for teams, giving every employee a secured, sandboxed personal agent.<p>Here’s what you can do with it:<p>1. get a sandboxed agent, with all the OneCLI capabilities in place like connect your GitHub account, Gmail, Notion, or Dropbox simply from the chat.<p>2. deterministic human in the loop approval in the chat itself for things that you need 100% control like sending an email or deleting the Linear ticket.<p>3. manage team policy in one place, enforced across every agent in the workspace<p>4. enjoy global connections at the team level, like shared LLM keys or service accounts<p>Here’s a demo: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=dlW-44ntpbE\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=dlW-44ntpbE</a><p>We started working on this by accident, even though our careers were in the security space. We were working on a devtool called ChartDB, an open-source DB tool. When OpenClaw took off back in January, we started using it to orchestrate agents on top of ChartDB. We quickly understood there is a big issue around auth. Agents need credentials to do real work, but to give them those secrets would not be the best idea. They keep them in their memory and also write them down to local files and their sessions as plain text. And we knew that agents can easily be fooled into giving up those API keys&#x2F;secrets. So we needed some way to control the agent and stop prompt injections ",
+   "_tags": [
+    "story",
+    "author_guyb3",
+    "story_49363710",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49348136",
+   "title": "Launch HN: machine0 (YC S26) – Persistent CPU and GPU VMs from the CLI",
+   "url": "https://machine0.io",
+   "points": 83,
+   "num_comments": 44,
+   "author": "bwm",
+   "created_at": "2026-08-18T16:26:42Z",
+   "created_at_i": 1787070402,
+   "story_text": "Hi HN! I’m Barnaby, founder of machine0 (<a href=\"https:&#x2F;&#x2F;machine0.io\">https:&#x2F;&#x2F;machine0.io</a>). I’m building a CLI for long horizon agent compute: `machine0 new mybox` gives your agent a persistent cloud VM, billed by the minute, from $0.013&#x2F;hr up to 60 vCPU &#x2F; 240 GB RAM and GPUs (H100s, H200s etc), with 99.99% VM level uptime. Agents self drive via CLI or MCP.<p>Demo: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=gyllkZ0M04E\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=gyllkZ0M04E</a><p>Agent workloads are moving from ephemeral to always-on. A coding agent working on a complex feature runs 6-8 hours. Agent orchestrated training &amp; RL runs take days. OpenClaw &amp; Hermes run 24&#x2F;7. As you run more in parallel:<p>- Resources: a few agents on a large codebase saturate RAM and CPU. Model training and RL needs GPUs you don&#x27;t have.<p>- Security: `--yolo` on your personal machine is one prompt injection away from exfiltrated credentials.<p>- Availability: close your laptop and the agent dies mid-task.<p>- Isolation: there&#x27;s no clean line between you and the minimum your agent actually needs.<p>machine0 gives every agent its own computer. It&#x27;s a CLI simple enough that both humans and agents use it without reading docs:\n`machine0 new mybox` creates an SSH-ready VM with a static IP and HTTPS endpoint. Always on (with 99.99% VM level uptime) until you switch it off.<p>- Billed by the minute. 1 vCPU &#x2F;",
+   "_tags": [
+    "story",
+    "author_bwm",
+    "story_49348136",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49332751",
+   "title": "Launch HN: Speko (YC S26) – OpenRouter for Voice AI",
+   "url": "https://speko.ai/",
+   "points": 118,
+   "num_comments": 69,
+   "author": "abdik",
+   "created_at": "2026-08-17T15:36:18Z",
+   "created_at_i": 1786980978,
+   "story_text": "Hi HN! I&#x27;m Bek, founder of Speko, a platform that finds an optimal combination of speech-to-text, LLM, and text-to-speech models, given your constraints, among all our public benchmarked options, and tells you why.<p>Demo: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=no2LY2gRh-c\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=no2LY2gRh-c</a><p>Typical production voice agent is an ensemble of three models: STT, an LLM, and TTS.<p>Each of those layers offers a dozen credible vendors, and each month there are new models on the market. Almost everyone evaluates once, picks a stack of their choice, and never rechecks because switching from a vendor to another involves yet another integration and arguments about the numbers.<p>The result is that you use voice agents running last quarter&#x27;s models while better and cheaper options are available.<p>Before founding Speko, I spent four years as cofounder and CTO building voice agents for enterprises across Asia in 10+ languages. Each time a new speech model would arrive, we repeated the same ritual: hire native-speaking raters, benchmark it against our existing stack, and update production if it improved. Speko turns this process into an API. A team running thousands of calls a day told us: &quot;we can literally go to this dashboard, switch the model, and it will do it for us.&quot;<p>How it works: you send a request with your optimization criteria (accuracy, latency, cost or balanced), language and r",
+   "_tags": [
+    "story",
+    "author_abdik",
+    "story_49332751",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49283063",
+   "title": "Launch HN: Bullet (YC S26) – A Faster Coding Agent",
+   "url": "https://www.codewithbullet.com",
+   "points": 121,
+   "num_comments": 89,
+   "author": "adi1",
+   "created_at": "2026-08-13T08:14:30Z",
+   "created_at_i": 1786608870,
+   "story_text": "Hi HN! We’re Adi and Alex, founders of Bullet, a faster coding agent.<p>Bullet started in a senior year dorm. We were fresh out of working at AppLovin and Citadel, and naturally thought we were on a sure path to startup success. We were going to use our skills optimizing stock pricing calculation speeds and agent document context to take over the world. So, Bullet started as an AI hedge fund, a browser-use agent, synthetic financial data (oof), a mobile IDE, and a bunch of other things. We wanted to build something people wanted, but it seemed like everything we built was just terrible, useless, or both.<p>So, we decided to do something completely different, something completely out of the blue, something that no one had ever done before. Solve a problem we actually had.<p>Over the course of six pivots, we suffered. Throughout all of our adventures, one final boss kept getting in our way. Claude Code and his little brother Codex. We were spending hours waiting for coding agents like Claude Code and Codex, and got so frustrated to the point that I downloaded the Claude Code whip. We had spent months of time waiting for six codebases-worth of useless coding agent work.<p>Lightbulb moment. There’s nothing more noble than destroying the institutions! Let’s take on Claude Code and Codex, we can do it! Piece of cake!<p>And so, Bullet started off as a side project. We used the Claude Code to improve the Claude Code:<p>1. Model routing. Do you regret giving a task to Fable when it co",
+   "_tags": [
+    "story",
+    "author_adi1",
+    "story_49283063",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49269090",
+   "title": "Launch HN: Discovered Materials (YC P26) – AI agents to discover new materials",
+   "url": "https://discoveredmaterials.com/research/",
+   "points": 162,
+   "num_comments": 37,
+   "author": "advaith08",
+   "created_at": "2026-08-12T07:51:20Z",
+   "created_at_i": 1786521080,
+   "story_text": "Hey HN, we&#x27;re Advaith and Akash from Discovered Materials ( <a href=\"https:&#x2F;&#x2F;discoveredmaterials.com&#x2F;\">https:&#x2F;&#x2F;discoveredmaterials.com&#x2F;</a> ).  We build AI agents that discover new materials for the semiconductor industry.<p>GPUs today have a heat problem. Nvidia &amp; AMD are almost doubling the TDP (Thermal Design Power) in every chip they release - the H100 (released 2022) has a TDP of 700W, Blackwell (2024) gives out 1.2 kW and Rubin (2026) gives out at 2.3 kW of heat. This trend is expected to continue, and getting rid of this heat is one of the major reasons datacenters consume so much power and water today - they need it to keep chips cool during operation.<p>The amount of heat produced by a chip and its ability to dissipate it are both influenced by the materials used to make it. For example, we could reduce the energy per bit required to move data between logic and memory by 10-50x by 3D packaging chips (placing HBM memory stacks directly on top of logic chips, instead of placing them beside logic on a 2D circuit board). However, we&#x27;re unable to do this today because the dielectric material used in HBM (such as SiO2) is a very poor thermal conductor, trapping heat between logic and memory and causing drastic temperature rise during operation. Similarly, there&#x27;s many other materials in the GPU that are being re-evaluated today - 2 more examples are thermal interface materials and substrates. However, getting a new material ",
+   "_tags": [
+    "story",
+    "author_advaith08",
+    "story_49269090",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49259309",
+   "title": "Launch HN: Keet (YC S24) – An app to create video courses on anything",
+   "url": "https://www.trykeet.com/",
+   "points": 48,
+   "num_comments": 48,
+   "author": "zackashen",
+   "created_at": "2026-08-11T14:48:37Z",
+   "created_at_i": 1786459717,
+   "story_text": "Hi HN! We’re Zack and Tommy the Co-Founders of Keet (<a href=\"https:&#x2F;&#x2F;trykeet.com\">https:&#x2F;&#x2F;trykeet.com</a>). We are building a mobile app that generates courses on any topic, with short videos for explanation and games for reinforcement. Courses mirror a real curriculum to help you learn over an extended period of time.<p>Tommy and I met in linear algebra class in college and spent the next 4 years taking classes together. Our friendship was formed around learning new things. In school, someone else designs the curriculum, delivers the content, and writes the assessments. All you have to do is show up. Learning without this structure was frustrating, and there was a lot of friction to get started.<p>Zack has a coffee obsession and struggled to assemble youtube videos, conversations with ChatGPT, and the books he was reading into a coherent understanding of all of the different variables that go into brewing a cup of coffee. His attempts gave him the freedom to follow his curiosity, but the instructional design was difficult. Every piece of content either presumed some prerequisite knowledge or none at all.<p>Keet is our attempt at providing the autonomy to teach yourself anything while adding a structure conducive to learning. It finds a custom starting point and sequences lessons in a logical order.<p>We have found Keet most useful in the following scenarios:<p>- You have a subject matter interest that you enjoy passively learning about. (i.e. you really ",
+   "_tags": [
+    "story",
+    "author_zackashen",
+    "story_49259309",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49246057",
+   "title": "Launch HN: Stoa Markets (YC S26) – A Marketplace for GPUs and AI Servers",
+   "url": "https://www.stoaexchange.com",
+   "points": 77,
+   "num_comments": 51,
+   "author": "erenberke",
+   "created_at": "2026-08-10T16:35:27Z",
+   "created_at_i": 1786379727,
+   "story_text": "Hi HN, we’re Eren, Berat and Kaan. We’re building Stoa (<a href=\"https:&#x2F;&#x2F;www.stoaexchange.com\">https:&#x2F;&#x2F;www.stoaexchange.com</a>), a marketplace for new and used GPUs and AI servers.<p>GPUs are the collateral in the data center buildout. Today, financing terms mostly depend on the offtaker, meaning the company that has committed to use the compute.<p>If that company is a hyperscaler, the financing can look investment grade. If it’s a smaller cloud or startup, terms get expensive fast, even with the same hardware as collateral.<p>The lender’s problem is pretty reasonable. If the borrower defaults and we need to sell these servers, what can we actually get for them? There isn’t a good answer today.<p>We started brokering GPU deals to understand why. It was much more manual than we expected. The hardware is still traded through phone calls, forwarded spreadsheets and long email threads.<p>One week, a seller quoted us $200k for a server node and another quoted $240k for what looked like the same thing. Neither was necessarily wrong. They had different information and could only see their own corner of the market.<p>Before we could compare the quotes, we had to sort out the configuration, condition, warranty, location and delivery terms. It’s the same information Kelley Blue Book attaches to a used-car price through the year, trim, mileage and condition. “An H100 server” isn’t enough information to know what something is worth, just as “a used BMW” isn’t.<p>This",
+   "_tags": [
+    "story",
+    "author_erenberke",
+    "story_49246057",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49198464",
+   "title": "Launch HN: ProvenMetal (YC S26) delivers circuit boards in days instead of weeks",
+   "url": "https://provenmetal.com",
+   "points": 237,
+   "num_comments": 156,
+   "author": "willcarkner",
+   "created_at": "2026-08-06T15:59:15Z",
+   "created_at_i": 1786031955,
+   "story_text": "Hey HN, we’re Will &amp; Johnny from ProvenMetal (<a href=\"https:&#x2F;&#x2F;provenmetal.com\">https:&#x2F;&#x2F;provenmetal.com</a>). You send us design files or specs and we give you assembled boards domestically in days.<p>The US produced 30% of PCBs globally in 2000, now they produce 4%. Chinese manufacturers have completely dominated this space at 55% of global production.<p>Now, the need for a domestic PCB supply chain is higher than ever before, yet the infrastructure has been dissolving over the last 2 decades. What is left is mostly small family run manufacturers (CMs) that have been operating in largely the same, labor intensive way since the early 2000’s.<p>When you place an order through a CM it typically takes several days to receive a quote and complete design for manufacture review, and then you have to source all of the components (the hardest part) and bare boards yourself, then wait anywhere from a few days to several weeks for the assembly and testing of those boards.<p>We started off assembling circuit boards out of a garage with prosumer grade equipment (NeoDen YY1, Glenbrook X-ray, solder paste stencils, and manual rework stations). We believed that by owning the manufacturing process, we could turn all the front of house automations inwards. But here’s the thing… manufacturing circuit boards with prosumer grade equipment out of a garage takes a huge amount of time. Suddenly we were spending 90% of our time assembling circuit boards instead of growing the",
+   "_tags": [
+    "story",
+    "author_willcarkner",
+    "story_49198464",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49185389",
+   "title": "Launch HN: HyperProbe (YC S26) – Agents that do read-only debugging in prod",
+   "url": "https://www.hyperprobe.co",
+   "points": 69,
+   "num_comments": 51,
+   "author": "shailendraht",
+   "created_at": "2026-08-05T16:47:15Z",
+   "created_at_i": 1785948435,
+   "story_text": "Hi HN, this is Shailendra and Karan here. We are building a fast and safe way for coding agents to debug issues live in production.<p>When prod breaks, it lets Cursor, Claude, and others drop virtual breakpoints or probes safely in your running code, and extract the exact variable values that logs don’t have.<p>All this saves time and effort for engineers who’d otherwise dig through logs and traces or redeploy with console.logs or print statements until they find the root cause.<p>Here is the link to the video that explains this: <a href=\"https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=ivV7I--ta5c\" rel=\"nofollow\">https:&#x2F;&#x2F;www.youtube.com&#x2F;watch?v=ivV7I--ta5c</a><p>Agents write most of our code now. This shrinks the useful context engineers need to debug AI written code, a problem not helped by the limited telemetry added in the same code by AI.<p>So when something breaks in prod, the first instinct for an engineer is to open logs or throw them to your agents. But if the line you are looking for is not there, agents will start guessing the root cause on non-existent data, forcing you to add a log, and redeploy.<p>This analysis-inference loop of agents with existing data does not come cheap, burning a lot of tokens. And the add log, redeploy cycle is so slow and painful that it makes engineers hate on-call.<p>Our approach lets agents capture telemetry on-demand at the exact moment and point of failure, killing the log-redeploy cycle and getting the most accurate RCA",
+   "_tags": [
+    "story",
+    "author_shailendraht",
+    "story_49185389",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49172936",
+   "title": "Launch HN: EdotEnv (YC S26) – Quant Trading RL Envs to Teach LLMs Research",
+   "url": "https://edotenv.com/",
+   "points": 39,
+   "num_comments": 34,
+   "author": "Mzzzzz",
+   "created_at": "2026-08-04T18:36:02Z",
+   "created_at_i": 1785868562,
+   "story_text": "We are Rui and Michael and we’re building EdotEnv (<a href=\"https:&#x2F;&#x2F;edotenv.com\" rel=\"nofollow\">https:&#x2F;&#x2F;edotenv.com</a>): self-improving RL environments from Quant Trading workflows.<p>With all the benchmaxxing around, evals saturate and become meaningless for model comparison. Useful benchmarks should increase in difficulty as models advance. Back in our Quant jobs, Michael and I saw that the market has exactly this property: markets became more efficient as people profited from trading inefficiencies, making new profitable strategies harder to find and old ones decay over time.<p>This makes markets an ideal, continuously evolving benchmark for LLM training. The hard part is to turn professional quant workflows into reliable training envs, as this is a very niche expertise.<p>In our environments, we give LLMs a quant trading workflow and evaluate their performance on out-of-sample data: build predictive features&#x2F; models, design a portfolio, backtest strategies, adapt continuously to market regimes. Each step is a task with different self-built tools. For example, a predictive feature building task gives the agent cleaned market data of time period [0,T] to research ideas, a backtesting tool to test created features at time t on [0, t], an execution tool to trade strategies with the new features on [t+1, T] and a final evaluation. Our reward isolates the agent&#x27;s feature building skills and yet benefits from market properties.<p>From running SOTA ",
+   "_tags": [
+    "story",
+    "author_Mzzzzz",
+    "story_49172936",
+    "launch_hn"
+   ]
+  },
+  {
+   "objectID": "49157997",
+   "title": "Launch HN: Hoplite (YC S26) – Effortlessly deploy cloud coding agents",
+   "url": "https://hoplite.sh",
+   "points": 81,
+   "num_comments": 70,
+   "author": "BenceRed",
+   "created_at": "2026-08-03T16:32:06Z",
+   "created_at_i": 1785774726,
+   "story_text": "Hi HN, we’re Bence and Ryan, founders of Hoplite (<a href=\"https:&#x2F;&#x2F;hoplite.sh\">https:&#x2F;&#x2F;hoplite.sh</a>). Hoplite lets you deploy coding agents in the cloud, with a suite of tools that makes it incredibly easy to QA features. During onboarding, we port over your local setup - sessions, memories, MCP servers, and get your projects ready to run in the cloud.<p>Here’s a demo: <a href=\"https:&#x2F;&#x2F;youtu.be&#x2F;bnyktZ_9pjE\" rel=\"nofollow\">https:&#x2F;&#x2F;youtu.be&#x2F;bnyktZ_9pjE</a><p>We got here after pivoting away from the idea we applied to YC with; AI for retail investing. It ultimately wasn’t a product that we ourselves would use, nor served a customer base that we felt connected to. In reflecting on what we really wanted to do, we realised that we loved talking to founders and developers, and were really opinionated about the specific area of cloud agents. We tried out all the existing solutions, and didn’t find one that A) took good advantage of being in the cloud, and B) was performant and felt good to use.<p>We’re building a product that we feel reflects what mainstream development will look like in 6-12 months. As models improve, developers will end up reviewing less and less code, and will instead focus on reviewing the product output. That means evaluating new user flows, visually verifying that new features look good, that the API works as expected, that the CLI works on Windows, etc. And doing it while running hundreds of agents concurrent",
+   "_tags": [
+    "story",
+    "author_BenceRed",
+    "story_49157997",
+    "launch_hn"
+   ]
+  }
+ ]
+}
