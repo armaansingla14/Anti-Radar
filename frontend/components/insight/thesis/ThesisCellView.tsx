@@ -16,7 +16,7 @@ export function isQuiet(c: ThesisCell): boolean {
 
 /** Attention is the mean percentile of linked companies — undefined without any. */
 export function attentionMeasured(c: ThesisCell): boolean {
-  return c.companies > 0;
+  return c.attention !== null && c.attention !== undefined;
 }
 
 const MOMENTUM_TITLE =

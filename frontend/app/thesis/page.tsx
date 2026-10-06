@@ -206,12 +206,12 @@ export default async function ThesisPage() {
     label: c.label,
     theme: c.themeLabel,
     momentum: c.momentum,
-    attention: c.attention,
+    attention: c.attention ?? 0,
     companies: c.companies,
     gap: c.attention_gap,
   }));
   const unplotted = cells.filter((c) => !attentionMeasured(c) && !isQuiet(c)).length;
-  const topGap = [...gaps].sort((a, b) => b.momentum - b.attention - (a.momentum - a.attention))[0];
+  const topGap = [...gaps].sort((a, b) => b.momentum - (b.attention ?? 0) - (a.momentum - (a.attention ?? 0)))[0];
 
   return (
     <div>
