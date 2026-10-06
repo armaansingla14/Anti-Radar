@@ -1,0 +1,18 @@
+{
+ "login": "bob",
+ "id": 3718600,
+ "type": "User",
+ "html_url": "https://github.com/bob",
+ "avatar_url": "https://avatars.githubusercontent.com/u/bob",
+ "name": null,
+ "company": null,
+ "blog": "",
+ "location": "Boston, MA",
+ "email": null,
+ "hireable": null,
+ "bio": null,
+ "twitter_username": null,
+ "public_repos": 12,
+ "followers": 150,
+ "created_at": "2015-03-03T00:00:00Z"
+}

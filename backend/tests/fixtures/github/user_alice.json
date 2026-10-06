@@ -1,0 +1,18 @@
+{
+ "login": "alice",
+ "id": 3202381,
+ "type": "User",
+ "html_url": "https://github.com/alice",
+ "avatar_url": "https://avatars.githubusercontent.com/u/alice",
+ "name": "Alice Example",
+ "company": "@acme-robotics @mit",
+ "blog": "",
+ "location": "Boston, MA",
+ "email": null,
+ "hireable": null,
+ "bio": null,
+ "twitter_username": "alice_ex",
+ "public_repos": 12,
+ "followers": 150,
+ "created_at": "2015-03-03T00:00:00Z"
+}

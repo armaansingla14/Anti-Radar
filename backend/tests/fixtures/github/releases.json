@@ -1,0 +1,29 @@
+[
+ {
+  "tag_name": "v0.3.0-rc1",
+  "name": "v0.3.0 RC",
+  "draft": true,
+  "prerelease": true,
+  "published_at": null,
+  "html_url": "https://github.com/acme-robotics/graspnet/releases/tag/v0.3.0-rc1",
+  "body": ""
+ },
+ {
+  "tag_name": "v0.2.0",
+  "name": "GraspNet 0.2",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-09-15T12:00:00Z",
+  "html_url": "https://github.com/acme-robotics/graspnet/releases/tag/v0.2.0",
+  "body": "## Highlights\n* **Bimanual** support\n* [Docs](https://acme-robotics.ai/docs)"
+ },
+ {
+  "tag_name": "v0.1.0",
+  "name": "v0.1.0",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-06-20T12:00:00Z",
+  "html_url": "https://github.com/acme-robotics/graspnet/releases/tag/v0.1.0",
+  "body": "First release"
+ }
+]

@@ -1,0 +1,27 @@
+[
+ {
+  "login": "alice",
+  "type": "User",
+  "contributions": 310
+ },
+ {
+  "login": "dependabot[bot]",
+  "type": "Bot",
+  "contributions": 40
+ },
+ {
+  "login": "bob",
+  "type": "User",
+  "contributions": 22
+ },
+ {
+  "login": "github-actions[bot]",
+  "type": "Bot",
+  "contributions": 5
+ },
+ {
+  "login": "carol",
+  "type": "User",
+  "contributions": 9
+ }
+]

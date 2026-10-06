@@ -1,0 +1,16 @@
+{
+ "login": "acme-robotics",
+ "id": 800001,
+ "html_url": "https://github.com/acme-robotics",
+ "name": "Acme Robotics",
+ "company": null,
+ "blog": "https://www.acme-robotics.ai/",
+ "location": "San Francisco, CA",
+ "email": null,
+ "twitter_username": "AcmeRobotics",
+ "description": "Robot hands for everyone",
+ "public_repos": 7,
+ "followers": 230,
+ "created_at": "2026-05-15T08:00:00Z",
+ "type": "Organization"
+}
