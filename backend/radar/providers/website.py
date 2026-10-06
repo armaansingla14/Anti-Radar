@@ -448,7 +448,8 @@ class WebsiteProvider:
             if not result.complete:
                 batch.errors.append(f"{ats_name} board {slug!r} response truncated; job counts are lower bounds")
             job_source_url = job_source_url or ats_mod.board_url(ats_name, slug)
-            jobs.extend(result.jobs)
+            jobs.extend(result.jobs if result.complete else [j.model_copy(update={"complete": False})
+                                                            for j in result.jobs])
         if not sourced:
             careers = next((p for k, p in pages if k == "careers"), None)
             if careers is not None:

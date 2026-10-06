@@ -261,3 +261,22 @@ def test_crawl_rejects_unsafe_input(provider):
 def test_crawl_platform_url_is_not_a_company(provider, public_dns):
     batch = provider.crawl("https://github.com/acme-robotics")
     assert batch.companies == [] and "not a company domain" in batch.errors[0]
+
+
+@respx.mock
+def test_truncated_board_marks_jobs_incomplete(provider, public_dns, monkeypatch):
+    from radar.providers import ats as ats_mod
+
+    _mock_site("acme_careers_ashby.html")
+    real = ats_mod.fetch_board
+
+    def truncated(client, ats, slug, company):
+        return ats_mod.BoardResult(real(client, ats, slug, company).jobs[:1], False)
+
+    respx.get("https://api.ashbyhq.com/posting-api/job-board/acme-robotics").mock(
+        return_value=httpx.Response(200, json=json.loads((FIXTURES / "ats" / "ashby_board.json").read_text())))
+    monkeypatch.setattr(ats_mod, "fetch_board", truncated)
+    batch = provider.crawl(BASE, max_pages=3)
+    assert len(batch.jobs) == 1 and batch.jobs[0].complete is False
+    assert not [m for m in batch.metrics if m.metric == "open_roles"]
+    assert any("truncated" in e for e in batch.errors)
