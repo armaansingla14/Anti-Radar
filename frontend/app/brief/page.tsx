@@ -9,7 +9,7 @@ import { GeneratorNote } from "@/components/feed/GeneratorNote";
 import { StrangeSignalDispatch } from "@/components/feed/StrangeSignalDispatch";
 import { longDate } from "@/components/feed/prose";
 import { getBrief } from "@/lib/api";
-import { hrefFor, isSafeUrl, pad2 } from "@/lib/format";
+import { externalHref, hrefFor, pad2 } from "@/lib/format";
 import type { IntelCard, PaperCard } from "@/lib/types";
 import "./print.css";
 
@@ -64,8 +64,8 @@ function Research({ papers, llm }: { papers: PaperCard[]; llm: boolean }) {
           <span className="tnum pt-[4px] font-mono text-[10.5px] text-ink-3">{pad2(i + 1)}</span>
           <div className="min-w-0">
             <p className="font-serif text-[17px] leading-snug text-ink">
-              {isSafeUrl(p.url) ? (
-                <a href={p.url} target="_blank" rel="noopener noreferrer nofollow" className="decoration-accent underline-offset-4 hover:underline">
+              {externalHref(p.url, p.is_demo) ? (
+                <a href={externalHref(p.url, p.is_demo)!} target="_blank" rel="noopener noreferrer nofollow" className="decoration-accent underline-offset-4 hover:underline">
                   {p.title}
                 </a>
               ) : (

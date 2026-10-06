@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { DemoBadge, EpistemicBadge } from "@/components/Badges";
 import { SourceLink } from "@/components/SourceLink";
-import { domainOf, fmtDate, isSafeUrl, pad2 } from "@/lib/format";
+import { domainOf, externalHref, fmtDate, pad2 } from "@/lib/format";
 import type { Epistemic, PaperCard as Paper } from "@/lib/types";
 import { EntityLinks } from "./EntityLinks";
 
@@ -21,7 +21,7 @@ function authorLine(authors: string[]): string {
 
 /** Research paper as a publication entry: id, title, authors, categories, code, why it matters. */
 export function PaperCard({ paper, index, whyEpistemic, className }: PaperCardProps) {
-  const code = paper.code_urls.filter(isSafeUrl);
+  const code = paper.code_urls.filter((u) => externalHref(u, paper.is_demo));
   const pathOf = (u: string) => u.replace(/^https?:\/\/[^/]+\//, "").replace(/\/$/, "").toLowerCase();
   const uniqueCode = code.filter((u, i) => code.findIndex((v) => pathOf(v) === pathOf(u)) === i);
   return (
@@ -33,8 +33,8 @@ export function PaperCard({ paper, index, whyEpistemic, className }: PaperCardPr
         {paper.is_demo && <DemoBadge className="ml-auto" />}
       </div>
       <h3 className="mt-2 font-serif text-[19px] leading-[1.25] text-ink">
-        {isSafeUrl(paper.url) ? (
-          <a href={paper.url} target="_blank" rel="noopener noreferrer nofollow" className="decoration-accent decoration-1 underline-offset-4 hover:underline">
+        {externalHref(paper.url, paper.is_demo) ? (
+          <a href={externalHref(paper.url, paper.is_demo)!} target="_blank" rel="noopener noreferrer nofollow" className="decoration-accent decoration-1 underline-offset-4 hover:underline">
             {paper.title}
           </a>
         ) : (
@@ -64,7 +64,7 @@ export function PaperCard({ paper, index, whyEpistemic, className }: PaperCardPr
           <p className="flex flex-wrap items-baseline gap-x-3">
             <span className="label">Code</span>
             {uniqueCode.slice(0, 2).map((u) => (
-              <SourceLink key={u} url={u}>
+              <SourceLink key={u} url={u} demo={paper.is_demo}>
                 {domainOf(u)?.startsWith("github") ? pathOf(u) : domainOf(u)}
               </SourceLink>
             ))}

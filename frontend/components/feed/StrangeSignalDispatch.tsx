@@ -69,7 +69,7 @@ export function StrangeSignalDispatch({ signal, index, variant = "rail", classNa
           <EpistemicBadge value="INFERENCE" compact className="ml-0.5" />
         </summary>
         <div className="mt-3 animate-fade-in border-l border-rule pl-3">
-          <EvidenceList items={signal.evidence} dense limit={6} />
+          <EvidenceList items={signal.evidence} dense limit={6} demo={signal.is_demo} />
         </div>
       </details>
     </article>
