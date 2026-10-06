@@ -1,0 +1,557 @@
+"""Shared, batched converters from DB rows to API shapes (schemas/api.py).
+
+All "why" text produced here is deterministic (built from measured signals,
+metrics and score components) and labeled INFERENCE where it interprets facts.
+LLM narratives live in radar.llm.narratives and are attached by detail services.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
+from datetime import date, datetime, timedelta
+from typing import Any
+
+from sqlalchemy import and_, func, select
+from sqlalchemy.orm import Session
+
+from radar import clock
+from radar.models import (
+    Company,
+    CompanyMetric,
+    CompanyPerson,
+    EntityTopic,
+    MetricSnapshot,
+    Person,
+    Repository,
+    ScoreSnapshot,
+    Signal,
+    Topic,
+    Watchlist,
+    WatchlistItem,
+)
+from radar.schemas.api import (
+    AntiScore,
+    CompanySummary,
+    EvidenceItem,
+    IntelCard,
+    PersonCard,
+    TopicTag,
+)
+from radar.scoring.run import anti_score_from_snapshot
+from radar.thesis.loader import get_thesis
+
+NEW_DAYS = 7
+
+# Human phrasing for signal types in "Why it surfaced" (fallback: signal title).
+SOURCE_GLYPH = {"github": "GH", "arxiv": "AX", "hackernews": "HN", "website": "WEB", "jobs": "JOB", "x": "X",
+                "manual": "MAN", "demo": "DEMO"}
+
+
+# ── score snapshots ──────────────────────────────────────────────────────────
+
+
+def latest_snapshots(session: Session, ids: Iterable[uuid.UUID], day: date | None = None) -> dict[uuid.UUID, ScoreSnapshot]:
+    """Most recent snapshot on/before `day` per entity (one query)."""
+    ids = list(set(ids))
+    if not ids:
+        return {}
+    day = day or clock.today()
+    sub = (
+        select(ScoreSnapshot.entity_id, func.max(ScoreSnapshot.day).label("d"))
+        .where(ScoreSnapshot.entity_id.in_(ids), ScoreSnapshot.day <= day)
+        .group_by(ScoreSnapshot.entity_id)
+        .subquery()
+    )
+    rows = session.scalars(
+        select(ScoreSnapshot).join(sub, and_(ScoreSnapshot.entity_id == sub.c.entity_id, ScoreSnapshot.day == sub.c.d))
+    )
+    return {r.entity_id: r for r in rows}
+
+
+def score_deltas(
+    session: Session, current: dict[uuid.UUID, ScoreSnapshot], days: int, tolerance: int = 3
+) -> dict[uuid.UUID, float | None]:
+    """score(today) - score(nearest snapshot at/before today-days, within tolerance)."""
+    if not current:
+        return {}
+    out: dict[uuid.UUID, float | None] = {}
+    by_day: dict[date, list[uuid.UUID]] = defaultdict(list)
+    for eid, snap in current.items():
+        by_day[snap.day].append(eid)
+    for d, ids in by_day.items():
+        target = d - timedelta(days=days)
+        past = latest_snapshots(session, ids, target)
+        for eid in ids:
+            p = past.get(eid)
+            out[eid] = (
+                round(current[eid].score - p.score, 1) if p and (target - p.day).days <= tolerance else None
+            )
+    return out
+
+
+def score_history(session: Session, entity_id: uuid.UUID, days: int = 60) -> list[dict[str, Any]]:
+    lo = clock.today() - timedelta(days=days)
+    rows = session.execute(
+        select(ScoreSnapshot.day, ScoreSnapshot.score)
+        .where(ScoreSnapshot.entity_id == entity_id, ScoreSnapshot.day >= lo)
+        .order_by(ScoreSnapshot.day)
+    )
+    return [{"day": d, "score": s} for d, s in rows]
+
+
+def anti_score(session: Session, snap: ScoreSnapshot | None) -> AntiScore | None:
+    if snap is None:
+        return None
+    d7 = score_deltas(session, {snap.entity_id: snap}, 7).get(snap.entity_id)
+    d30 = score_deltas(session, {snap.entity_id: snap}, 30).get(snap.entity_id)
+    return anti_score_from_snapshot(snap, d7, d30)
+
+
+# ── topics, watch state ──────────────────────────────────────────────────────
+
+
+def topic_tags(session: Session, ids: Iterable[uuid.UUID], limit: int = 4) -> dict[uuid.UUID, list[TopicTag]]:
+    ids = list(set(ids))
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(EntityTopic.entity_id, EntityTopic.score, EntityTopic.method, Topic.key, Topic.theme, Topic.label)
+        .join(Topic, Topic.id == EntityTopic.topic_id)
+        .where(EntityTopic.entity_id.in_(ids))
+        .order_by(EntityTopic.score.desc())
+    )
+    out: dict[uuid.UUID, list[TopicTag]] = defaultdict(list)
+    seen: dict[uuid.UUID, set[str]] = defaultdict(set)
+    for eid, score, method, key, theme, label in rows:
+        if key in seen[eid] or len(out[eid]) >= limit:
+            continue
+        seen[eid].add(key)
+        out[eid].append(TopicTag(key=key, theme=theme, label=label, score=round(score, 3), method=method))
+    return out
+
+
+def watched_ids(session: Session) -> dict[uuid.UUID, uuid.UUID]:
+    """entity_id -> watchlist item id."""
+    rows = session.execute(select(WatchlistItem.entity_id, WatchlistItem.id).join(Watchlist))
+    return {e: i for e, i in rows if e is not None}
+
+
+def theme_label(theme: str) -> str:
+    t = get_thesis().themes.get(theme)
+    return t.label if t else theme.replace("_", " ").title()
+
+
+# ── labels ───────────────────────────────────────────────────────────────────
+
+
+def kind_label(c: Company, tags: Sequence[TopicTag]) -> str:
+    domain = theme_label(tags[0].theme).upper() if tags else ""
+    if c.kind == "stealth":
+        base = f"STEALTH {domain} COMPANY" if domain else "STEALTH COMPANY"
+    elif c.kind == "project":
+        base = f"{domain} OPEN-SOURCE PROJECT" if domain else "OPEN-SOURCE PROJECT"
+    elif c.kind == "lab":
+        base = f"{domain} RESEARCH LAB" if domain else "RESEARCH LAB"
+    else:
+        base = f"{domain} COMPANY" if domain else "COMPANY"
+    return base.replace("  ", " ").strip()
+
+
+def data_note(is_demo: bool) -> str:
+    if is_demo:
+        return "DEMO DATA — fictional example"
+    a = clock.as_of()
+    return f"Real public data captured {a:%b %-d, %Y}" if a else "Live public data"
+
+
+def headline(p: Person) -> str | None:
+    h = (p.attrs or {}).get("headline")
+    if h:
+        return h
+    if p.current_role and p.current_company:
+        return f"{p.current_role}, {p.current_company}"
+    if p.current_company:
+        return p.current_company
+    if p.prior_affiliations:
+        return f"Previously {p.prior_affiliations[-1]}"
+    return (p.bio or "")[:90] or None
+
+
+def avatar(p: Person) -> str | None:
+    if p.is_demo:
+        return None
+    a = (p.attrs or {}).get("avatar_url")
+    if a:
+        return a
+    return f"https://github.com/{p.github_handle}.png?size=96" if p.github_handle else None
+
+
+# ── evidence & why ───────────────────────────────────────────────────────────
+
+
+def evidence_from_signal(s: Signal) -> EvidenceItem:
+    return EvidenceItem(
+        signal_id=str(s.id),
+        title=s.title,
+        detail=s.description,
+        source_type=s.source_type,
+        source_url=s.source_url,
+        event_at=s.event_at,
+    )
+
+
+def _evidence_rank(e: dict[str, Any]) -> tuple:
+    return (e.get("weight") or 0, e.get("event_at") or "")
+
+
+def why_surfaced(snap: ScoreSnapshot | None, metrics: dict[str, Any] | None, limit: int = 6) -> list[EvidenceItem]:
+    """Deterministic 'Why it surfaced': measured deltas first, then the strongest evidence signals."""
+    items: list[EvidenceItem] = []
+    m = metrics or {}
+    if m.get("stars_30d") and m["stars_30d"] >= 20:
+        prev = m.get("stars_prev_28d")
+        rate = ""
+        if prev and prev > 0 and m.get("stars_7d") is not None:
+            ratio = (m["stars_7d"] / 7) / (prev / 28)
+            if ratio >= 1.5:
+                rate = f"; 7-day rate {ratio:.1f}× the prior 4 weeks"
+        items.append(EvidenceItem(title=f"GitHub stars +{int(m['stars_30d']):,} in 30 days{rate}",
+                                  source_type="github", detail="Computed from daily star history"))
+    c4, p4 = m.get("commits_4w"), m.get("commits_prev_4w")
+    if c4 and p4 and p4 > 0 and c4 / p4 >= 1.5 and c4 >= 15:
+        items.append(EvidenceItem(title=f"Commit activity +{(c4 / p4 - 1) * 100:.0f}% vs the prior 4 weeks",
+                                  detail=f"{int(c4)} commits in 4 weeks vs {int(p4)}", source_type="github"))
+    if m.get("new_contributors_30d") and m["new_contributors_30d"] >= 2:
+        items.append(EvidenceItem(title=f"{int(m['new_contributors_30d'])} new contributors in 30 days",
+                                  source_type="github"))
+    if snap is not None:
+        col = snap.collision or {}
+        if col.get("families") and len(col["families"]) >= 3:
+            items.append(EvidenceItem(title=f"Signal collision: {col.get('summary')}", source_type="system",
+                                      detail=", ".join(col["families"])))
+        seen_titles = {i.title for i in items}
+        pool: list[dict[str, Any]] = []
+        for comp in (snap.components or {}).values():
+            pool.extend(comp.get("evidence") or [])
+        pool.extend(col.get("evidence") or [])
+        pool.sort(key=_evidence_rank, reverse=True)
+        seen_ids: set[str] = set()
+        for e in pool:
+            sid = e.get("signal_id")
+            if (sid and sid in seen_ids) or e.get("title") in seen_titles:
+                continue
+            if e.get("title", "").startswith(("GitHub stars +", "+")) and any(
+                i.title.startswith("GitHub stars") for i in items
+            ):
+                continue
+            seen_ids.add(sid or "")
+            seen_titles.add(e.get("title"))
+            items.append(EvidenceItem.model_validate(e))
+            if len(items) >= limit:
+                break
+        att = snap.attention or {}
+        if att.get("flagged") and len(items) < limit + 1:
+            items.append(EvidenceItem(
+                title=f"Little conventional attention (attention percentile {att.get('attention', 0):.0f} "
+                      f"vs technical {att.get('technical', 0):.0f})",
+                source_type="system"))
+    return items[: limit + 1]
+
+
+def why_anti(c: Company, tags: Sequence[TopicTag], snap: ScoreSnapshot | None) -> list[str]:
+    """Deterministic 'Why Anti Fund might care' — thesis + stage + score-structure reasoning."""
+    lines: list[str] = []
+    if tags:
+        labels = []
+        for t in tags[:3]:
+            lab = f"{theme_label(t.theme)} · {t.label}"
+            if lab not in labels:
+                labels.append(lab)
+        lines.append(" + ".join(labels[:2]) + ".")
+    comps = (snap.components if snap else {}) or {}
+    fs = comps.get("founder_signal", {})
+    if fs and fs.get("max") and fs.get("value", 0) / fs["max"] >= 0.6:
+        lines.append("Strong technical founding team.")
+    if c.stage in ("formation", "pre_seed"):
+        lines.append("Formation-stage signal." if c.stage == "formation" else "Pre-seed stage (inferred).")
+    att = (snap.attention if snap else {}) or {}
+    if att.get("flagged"):
+        lines.append("Attention appears significantly behind technical momentum.")
+    col = (snap.collision if snap else {}) or {}
+    if col.get("score", 0) >= 0.7 and len(col.get("families") or []) >= 3:
+        lines.append(f"Independent signals are converging ({len(col['families'])} source families).")
+    if not lines and comps.get("technical_momentum", {}).get("value", 0) >= 15:
+        lines.append("Technical momentum in the top tier of tracked entities.")
+    return lines
+
+
+# ── sparklines ───────────────────────────────────────────────────────────────
+
+
+def star_sparklines(session: Session, company_ids: Sequence[uuid.UUID], days: int = 30) -> dict[uuid.UUID, list[float]]:
+    """Daily total stars across a company's repos, last `days` days (carry-forward fill)."""
+    if not company_ids:
+        return {}
+    lo = clock.today() - timedelta(days=days)
+    rows = session.execute(
+        select(Repository.company_id, MetricSnapshot.entity_id, MetricSnapshot.day, MetricSnapshot.value)
+        .join(MetricSnapshot, MetricSnapshot.entity_id == Repository.id)
+        .where(Repository.company_id.in_(list(company_ids)), MetricSnapshot.metric == "stars",
+               MetricSnapshot.day >= lo - timedelta(days=14))
+        .order_by(MetricSnapshot.day)
+    )
+    per_repo: dict[tuple[uuid.UUID, uuid.UUID], dict[date, float]] = defaultdict(dict)
+    for cid, rid, d, v in rows:
+        per_repo[(cid, rid)][d] = v
+    out: dict[uuid.UUID, list[float]] = defaultdict(lambda: [0.0] * (days + 1))
+    for (cid, _rid), series in per_repo.items():
+        last = None
+        days_sorted = sorted(series)
+        idx = 0
+        vals = out[cid]
+        for i in range(days + 1):
+            d = lo + timedelta(days=i)
+            while idx < len(days_sorted) and days_sorted[idx] <= d:
+                last = series[days_sorted[idx]]
+                idx += 1
+            vals[i] += last or 0.0
+    return {k: v for k, v in out.items() if any(v)}
+
+
+def person_sparklines(session: Session, person_ids: Sequence[uuid.UUID], days: int = 30) -> dict[uuid.UUID, list[float]]:
+    """Score history as the founder sparkline."""
+    if not person_ids:
+        return {}
+    lo = clock.today() - timedelta(days=days)
+    rows = session.execute(
+        select(ScoreSnapshot.entity_id, ScoreSnapshot.day, ScoreSnapshot.score)
+        .where(ScoreSnapshot.entity_id.in_(list(person_ids)), ScoreSnapshot.day >= lo)
+        .order_by(ScoreSnapshot.day)
+    )
+    out: dict[uuid.UUID, list[float]] = defaultdict(list)
+    for eid, _d, s in rows:
+        out[eid].append(float(s))
+    return {k: v for k, v in out.items() if len(v) > 1}
+
+
+# ── summaries & cards ────────────────────────────────────────────────────────
+
+
+def company_metrics(session: Session, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, dict[str, Any]]:
+    if not ids:
+        return {}
+    return dict(session.execute(select(CompanyMetric.company_id, CompanyMetric.metrics)
+                                .where(CompanyMetric.company_id.in_(list(ids)))).tuples().all())
+
+
+def one_liner(c: Company) -> str | None:
+    d = (c.description or "").strip()
+    if not d:
+        return None
+    first = d.split(". ")[0].strip()
+    return first if first.endswith(".") or len(first) < 40 else first + "."
+
+
+def company_summaries(session: Session, companies: Sequence[Company]) -> list[CompanySummary]:
+    ids = [c.id for c in companies]
+    snaps = latest_snapshots(session, ids)
+    d7 = score_deltas(session, snaps, 7)
+    tags = topic_tags(session, ids)
+    mets = company_metrics(session, ids)
+    watched = watched_ids(session)
+    out = []
+    for c in companies:
+        snap, m = snaps.get(c.id), mets.get(c.id, {})
+        out.append(CompanySummary(
+            id=str(c.id), slug=c.slug, name=c.name, one_liner=one_liner(c), kind=c.kind, stage=c.stage,
+            score=round(snap.score) if snap else None, delta_7d=d7.get(c.id),
+            thesis_tags=tags.get(c.id, []),
+            attention_gap=(snap.attention or {}).get("gap") if snap else None,
+            collision=(snap.collision or {}).get("score") if snap else None,
+            stars_30d=m.get("stars_30d"), first_seen_at=c.first_seen_at, website=c.website,
+            github_org=c.github_org, is_demo=c.is_demo, watched=c.id in watched,
+        ))
+    return out
+
+
+def founder_links(session: Session, person_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, CompanyPerson]:
+    if not person_ids:
+        return {}
+    rows = session.scalars(
+        select(CompanyPerson).where(CompanyPerson.person_id.in_(list(person_ids)))
+        .order_by(CompanyPerson.is_founder.desc(), CompanyPerson.confidence.desc())
+    )
+    out: dict[uuid.UUID, CompanyPerson] = {}
+    for cp in rows:
+        out.setdefault(cp.person_id, cp)
+    return out
+
+
+def person_why_now(p: Person, snap: ScoreSnapshot | None, limit: int = 4) -> list[str]:
+    """Deterministic founder 'why now' bullets from score evidence (formation signals first)."""
+    if snap is None:
+        return []
+    comps = snap.components or {}
+    order = ["formation_signal", "technical_output", "research", "pedigree", "thesis_fit", "attention_gap"]
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for key in order + [k for k in comps if k not in order]:
+        for e in (comps.get(key) or {}).get("evidence") or []:
+            t = e.get("title")
+            if t and t not in seen:
+                seen.add(t)
+                bullets.append(t)
+            if len(bullets) >= limit:
+                return bullets
+    pedigree = (comps.get("pedigree") or {}).get("explanation")
+    if pedigree and len(bullets) < limit and "no" not in pedigree.lower()[:3]:
+        bullets.append(pedigree)
+    return bullets[:limit]
+
+
+def person_cards(session: Session, people: Sequence[Person]) -> list[PersonCard]:
+    ids = [p.id for p in people]
+    snaps = latest_snapshots(session, ids)
+    d7 = score_deltas(session, snaps, 7)
+    links = founder_links(session, ids)
+    out = []
+    for p in people:
+        snap, cp = snaps.get(p.id), links.get(p.id)
+        out.append(PersonCard(
+            id=str(p.id), slug=p.slug, name=p.name, headline=headline(p), current_company=p.current_company,
+            current_role=p.current_role or (cp.role if cp else None), prior_affiliations=p.prior_affiliations or [],
+            domains=p.domains or [], github_handle=p.github_handle, x_handle=p.x_handle,
+            personal_site=p.personal_site, avatar_url=avatar(p),
+            founder_score=round(snap.score) if snap else None, delta_7d=d7.get(p.id),
+            why_now=person_why_now(p, snap), is_founder=bool(cp and cp.is_founder),
+            role=cp.role if cp else None, is_demo=p.is_demo, first_seen_at=p.first_seen_at,
+        ))
+    return out
+
+
+def company_cards(session: Session, companies: Sequence[Company], start_rank: int = 1) -> list[IntelCard]:
+    ids = [c.id for c in companies]
+    snaps = latest_snapshots(session, ids)
+    d7, d30 = score_deltas(session, snaps, 7), score_deltas(session, snaps, 30)
+    tags = topic_tags(session, ids)
+    mets = company_metrics(session, ids)
+    sparks = star_sparklines(session, ids)
+    watched = watched_ids(session)
+    cutoff = clock.now() - timedelta(days=NEW_DAYS)
+    cards = []
+    for i, c in enumerate(companies):
+        snap = snaps.get(c.id)
+        ascore = anti_score_from_snapshot(snap) if snap else None
+        cards.append(IntelCard(
+            rank=start_rank + i, entity_type="company", id=str(c.id), slug=c.slug, name=c.name,
+            kind_label=kind_label(c, tags.get(c.id, [])), one_liner=one_liner(c),
+            score=round(snap.score) if snap else 0, delta_7d=d7.get(c.id), delta_30d=d30.get(c.id),
+            thesis_tags=tags.get(c.id, []), why_surfaced=why_surfaced(snap, mets.get(c.id)),
+            why_anti=why_anti(c, tags.get(c.id, []), snap), why_anti_epistemic="INFERENCE",
+            attention_gap=ascore.attention_gap if ascore else None,
+            collision=ascore.collision if ascore else None,
+            sparkline=sparks.get(c.id, []), sparkline_label="GitHub stars · 30d" if c.id in sparks else None,
+            first_seen_at=c.first_seen_at, is_new=bool(c.first_seen_at and c.first_seen_at >= cutoff),
+            watched=c.id in watched, is_demo=c.is_demo, data_note=data_note(c.is_demo),
+        ))
+    return cards
+
+
+def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: int = 1) -> list[IntelCard]:
+    ids = [p.id for p in people]
+    snaps = latest_snapshots(session, ids)
+    d7, d30 = score_deltas(session, snaps, 7), score_deltas(session, snaps, 30)
+    tags = topic_tags(session, ids)
+    sparks = person_sparklines(session, ids)
+    watched = watched_ids(session)
+    cutoff = clock.now() - timedelta(days=NEW_DAYS)
+    cards = []
+    for i, p in enumerate(people):
+        snap = snaps.get(p.id)
+        ascore = anti_score_from_snapshot(snap) if snap else None
+        why = [EvidenceItem.model_validate(e) for e in _person_evidence(snap)]
+        domains = ", ".join(theme_label(d) for d in (p.domains or [])[:2])
+        lines = []
+        if p.current_company is None and p.prior_affiliations:
+            lines.append(f"No current company listed — previously {p.prior_affiliations[-1]}.")
+        if domains:
+            lines.append(f"Technical domain: {domains}.")
+        if ascore and ascore.attention_gap and ascore.attention_gap.flagged:
+            lines.append("Technical output well ahead of public following.")
+        cards.append(IntelCard(
+            rank=start_rank + i, entity_type="person", id=str(p.id), slug=p.slug, name=p.name,
+            kind_label="FOUNDER TO KNOW" if p.current_company is None else "FOUNDER",
+            one_liner=headline(p), score=round(snap.score) if snap else 0, delta_7d=d7.get(p.id),
+            delta_30d=d30.get(p.id), thesis_tags=tags.get(p.id, []), why_surfaced=why, why_anti=lines,
+            attention_gap=ascore.attention_gap if ascore else None, collision=ascore.collision if ascore else None,
+            sparkline=sparks.get(p.id, []), sparkline_label="Founder score · 30d" if p.id in sparks else None,
+            first_seen_at=p.first_seen_at, is_new=bool(p.first_seen_at and p.first_seen_at >= cutoff),
+            watched=p.id in watched, is_demo=p.is_demo, data_note=data_note(p.is_demo),
+        ))
+    return cards
+
+
+def _person_evidence(snap: ScoreSnapshot | None, limit: int = 5) -> list[dict[str, Any]]:
+    if snap is None:
+        return []
+    comps = snap.components or {}
+    order = ["formation_signal", "technical_output", "research", "pedigree"]
+    out, seen = [], set()
+    for key in order + [k for k in comps if k not in order]:
+        for e in (comps.get(key) or {}).get("evidence") or []:
+            if e.get("title") in seen:
+                continue
+            seen.add(e.get("title"))
+            out.append(e)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def ranked_companies(session: Session, *, limit: int = 20, include_demo: bool = True,
+                     kinds: Sequence[str] | None = None) -> list[Company]:
+    """Companies ordered by latest score (today's snapshots)."""
+    day = clock.today()
+    q = (
+        select(Company)
+        .join(ScoreSnapshot, and_(ScoreSnapshot.entity_id == Company.id, ScoreSnapshot.day == day))
+        .where(Company.dismissed.is_(False))
+        .order_by(ScoreSnapshot.score.desc())
+        .limit(limit)
+    )
+    if not include_demo:
+        q = q.where(Company.is_demo.is_(False))
+    if kinds:
+        q = q.where(Company.kind.in_(list(kinds)))
+    return list(session.scalars(q))
+
+
+def ranked_people(session: Session, *, limit: int = 20, include_demo: bool = True) -> list[Person]:
+    day = clock.today()
+    q = (
+        select(Person)
+        .join(ScoreSnapshot, and_(ScoreSnapshot.entity_id == Person.id, ScoreSnapshot.day == day))
+        .where(Person.dismissed.is_(False))
+        .order_by(ScoreSnapshot.score.desc())
+        .limit(limit)
+    )
+    if not include_demo:
+        q = q.where(Person.is_demo.is_(False))
+    return list(session.scalars(q))
+
+
+def resolve_entity(session: Session, model, id_or_slug: str):
+    try:
+        uid = uuid.UUID(str(id_or_slug))
+        row = session.get(model, uid)
+        if row:
+            return row
+    except ValueError:
+        pass
+    return session.scalar(select(model).where(model.slug == id_or_slug))
+
+
+def iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
