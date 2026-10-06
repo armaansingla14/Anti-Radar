@@ -63,7 +63,6 @@ from radar.schemas.api import (
     WatchChange,
 )
 from radar.services import presenters as P
-from radar.services.memo import memoized
 from radar.services.entities import (
     latest_score_subq,
     paper_cards,
@@ -72,6 +71,7 @@ from radar.services.entities import (
     theme_entity_ids,
     validate_theme,
 )
+from radar.services.memo import memoized
 from radar.settings import get_settings
 
 CARD_LIMIT = 12

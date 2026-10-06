@@ -13,7 +13,7 @@ from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from radar import clock
