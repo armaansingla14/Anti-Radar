@@ -9,10 +9,12 @@ export interface EvidenceListProps {
   limit?: number;
   dense?: boolean;
   className?: string;
+  /** Evidence about a fictional entity: never link to real hosts. */
+  demo?: boolean;
 }
 
 /** Evidence bullets: source glyph · title · detail · date · link. */
-export function EvidenceList({ items, limit, dense, className }: EvidenceListProps) {
+export function EvidenceList({ items, limit, dense, className, demo }: EvidenceListProps) {
   const shown = limit ? items.slice(0, limit) : items;
   if (shown.length === 0) return <p className="text-[13px] text-ink-3">No evidence recorded.</p>;
   return (
@@ -25,7 +27,7 @@ export function EvidenceList({ items, limit, dense, className }: EvidenceListPro
             {e.detail && !dense && <p className="mt-0.5 text-[12.5px] leading-snug text-ink-2">{e.detail}</p>}
             <p className="mt-0.5 flex flex-wrap items-baseline gap-x-3">
               {e.event_at && <span className="tnum font-mono text-[10.5px] text-ink-3">{fmtDate(e.event_at)}</span>}
-              <SourceLink url={e.source_url} />
+              <SourceLink url={e.source_url} demo={demo} />
             </p>
           </div>
         </li>

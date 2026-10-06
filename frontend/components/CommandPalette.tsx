@@ -93,7 +93,7 @@ function PaletteDialog({ initialQuery = "", onClose, commands, onShowHelp }: Com
           id: `entity-${r.entity_type}-${r.id}`,
           group: "Entities",
           label: r.name,
-          detail: [r.entity_type === "person" ? "Founder" : r.entity_type, r.subtitle].filter(Boolean).join(" · "),
+          detail: [r.entity_type === "person" ? "Person" : r.entity_type, r.subtitle].filter(Boolean).join(" · "),
           hint: r.score !== null ? String(r.score) : undefined,
           run: go(hrefFor(r.entity_type, r.slug)),
         });

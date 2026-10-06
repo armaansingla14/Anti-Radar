@@ -1,9 +1,10 @@
 import clsx from "clsx";
 import Link from "next/link";
-import { hrefFor, isSafeUrl, pad2 } from "@/lib/format";
+import { hrefFor, pad2, personKindLabel } from "@/lib/format";
 import type { PersonCard } from "@/lib/types";
 import { DemoBadge } from "./Badges";
 import { Delta } from "./Delta";
+import { HandleLinks } from "./HandleLinks";
 import { ScoreNumeral } from "./ScoreNumeral";
 
 export interface FounderCardProps {
@@ -22,13 +23,16 @@ export function FounderCard({ person, rank, href, className }: FounderCardProps)
     <article
       data-card
       data-href={target}
+      data-entity-type="person"
+      data-entity-id={person.id}
+      data-demo={String(person.is_demo)}
       tabIndex={0}
       aria-label={person.name}
       className={clsx("flex h-full flex-col gap-3 border-t border-ink pb-6 pt-3", className)}
     >
       <div className="flex items-center gap-3">
         {rank !== undefined && <span className="tnum font-mono text-[12px] text-ink">{pad2(rank)}</span>}
-        <span className="label">{person.is_founder ? "Founder" : "Technical operator"}</span>
+        <span className="label">{personKindLabel(person)}</span>
         {person.is_demo && <DemoBadge />}
       </div>
       <div className="flex items-start justify-between gap-4">
@@ -66,21 +70,7 @@ export function FounderCard({ person, rank, href, className }: FounderCardProps)
       )}
 
       <div className="mt-auto flex flex-wrap gap-x-4 gap-y-1 pt-1 font-mono text-[10.5px] text-ink-2">
-        {person.github_handle && (
-          <a href={`https://github.com/${encodeURIComponent(person.github_handle)}`} target="_blank" rel="noopener noreferrer" className="link">
-            GH @{person.github_handle}
-          </a>
-        )}
-        {person.x_handle && (
-          <a href={`https://x.com/${encodeURIComponent(person.x_handle)}`} target="_blank" rel="noopener noreferrer" className="link">
-            X @{person.x_handle}
-          </a>
-        )}
-        {isSafeUrl(person.personal_site) && (
-          <a href={person.personal_site} target="_blank" rel="noopener noreferrer" className="link">
-            Site ↗
-          </a>
-        )}
+        <HandleLinks github={person.github_handle} x={person.x_handle} site={person.personal_site} isDemo={person.is_demo} />
         {person.domains.length > 0 && <span className="text-ink-3">{person.domains.slice(0, 3).join(" · ")}</span>}
       </div>
     </article>

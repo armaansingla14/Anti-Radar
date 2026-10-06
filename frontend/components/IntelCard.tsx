@@ -102,7 +102,7 @@ export function IntelCard({
         <div className="mt-6 grid gap-x-8 gap-y-6 lg:grid-cols-2">
           <div>
             <h4 className="label mb-3 text-ink">Why it surfaced</h4>
-            <EvidenceList items={card.why_surfaced} limit={evidenceLimit} dense />
+            <EvidenceList items={card.why_surfaced} limit={evidenceLimit} dense demo={card.is_demo} />
           </div>
           <div>
             <h4 className="label mb-3 flex items-center gap-2 text-ink">
@@ -188,7 +188,7 @@ export function IntelCard({
 
       {!onWhy &&
         (score !== undefined || !canInvestigate ? (
-          <WhyDrawer open={whyOpen} onClose={() => setWhyOpen(false)} score={score ?? null} entityName={card.name} scoreLabel={scoreLabel} />
+          <WhyDrawer open={whyOpen} onClose={() => setWhyOpen(false)} score={score ?? null} entityName={card.name} scoreLabel={scoreLabel} isDemo={card.is_demo} />
         ) : (
           <WhyDrawerLoader
             open={whyOpen}
@@ -196,6 +196,7 @@ export function IntelCard({
             entityType={isPerson ? "person" : "company"}
             idOrSlug={card.slug}
             entityName={card.name}
+            isDemo={card.is_demo}
           />
         ))}
     </article>

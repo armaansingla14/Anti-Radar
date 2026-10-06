@@ -47,7 +47,7 @@ export function SignalTimeline({ events, limit, className }: SignalTimelineProps
               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <SourceGlyph sourceType={ev.source_type} />
                 <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-3">{humanize(ev.signal_type)}</span>
-                <SourceLink url={ev.source_url} />
+                <SourceLink url={ev.source_url} demo={ev.is_demo} />
                 <EpistemicBadge value={ev.epistemic} />
                 {ev.is_demo && <DemoBadge />}
               </div>

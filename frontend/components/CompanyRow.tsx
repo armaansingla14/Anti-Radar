@@ -18,7 +18,16 @@ const td = "px-2 py-2.5 align-top";
 export function CompanyRow({ company: c, rank, href }: CompanyRowProps) {
   const target = href ?? hrefFor("company", c.slug);
   return (
-    <tr data-card data-href={target} tabIndex={0} className="group border-b border-rule transition-colors hover:bg-panel/60">
+    <tr
+      data-card
+      data-href={target}
+      data-entity-type="company"
+      data-entity-id={c.id}
+      data-watched={String(c.watched)}
+      data-demo={String(c.is_demo)}
+      aria-label={c.name}
+      tabIndex={0}
+      className="group border-b border-rule transition-colors hover:bg-panel/60">
       <td className={clsx(td, "tnum w-10 font-mono text-[11px] text-ink-3")}>{rank !== undefined ? pad2(rank) : ""}</td>
       <td className={clsx(td, "min-w-[220px]")}>
         <div className="flex items-center gap-2">

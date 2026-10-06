@@ -91,6 +91,58 @@ export function isSafeUrl(url: string | null | undefined): url is string {
   }
 }
 
+/**
+ * RFC 2606 / 6761 reserved hosts. Fictional (demo) data may only ever link to
+ * these — never to a real third-party host where anyone could register the
+ * invented handle.
+ */
+export function isReservedHost(url: string | null | undefined): boolean {
+  if (!isSafeUrl(url)) return false;
+  const host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    /\.(example|test|invalid|localhost)$/.test(host) ||
+    ["example", "test", "invalid", "localhost"].includes(host) ||
+    /^(.+\.)?example\.(com|net|org)$/.test(host)
+  );
+}
+
+/**
+ * The href to render for an external URL, or null when it must not be a link:
+ * non-http(s) schemes always, and — for demo entities — anything outside the
+ * reserved example hosts.
+ */
+export function externalHref(url: string | null | undefined, isDemo = false): string | null {
+  if (!isSafeUrl(url)) return null;
+  if (isDemo && !isReservedHost(url)) return null;
+  return url;
+}
+
+const HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/;
+
+/** github.com profile/org URL for a real entity; null for demo entities or malformed handles. */
+export function githubUrl(handle: string | null | undefined, isDemo: boolean): string | null {
+  if (isDemo || !handle || !HANDLE_RE.test(handle)) return null;
+  return `https://github.com/${encodeURIComponent(handle)}`;
+}
+
+/** x.com profile URL for a real entity; null for demo entities or malformed handles. */
+export function xUrl(handle: string | null | undefined, isDemo: boolean): string | null {
+  const h = handle?.replace(/^@/, "");
+  if (isDemo || !h || !/^[A-Za-z0-9_]{1,15}$/.test(h)) return null;
+  return `https://x.com/${encodeURIComponent(h)}`;
+}
+
+/**
+ * Role label for a person. Only people with a recorded founder link are called
+ * "Founder"; everyone else is a person to watch — never presume a role.
+ */
+export function personKindLabel(p: { is_founder: boolean }): string {
+  return p.is_founder ? "Founder" : "Person to watch";
+}
+
+/** Factual marker for a person with no current company — states the record, not a prediction. */
+export const NO_COMPANY_LABEL = "No company on record";
+
 const SOURCE_META: Record<string, { glyph: string; label: string }> = {
   github: { glyph: "GH", label: "GitHub" },
   arxiv: { glyph: "AX", label: "arXiv" },

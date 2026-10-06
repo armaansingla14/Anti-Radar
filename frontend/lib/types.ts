@@ -59,7 +59,7 @@ export interface AttentionGapSource {
 
 export interface AttentionGap {
   technical: number;
-  attention: number;
+  attention: number | null;
   gap: number;
   flagged: boolean;
   coverage: "good" | "partial" | "low";

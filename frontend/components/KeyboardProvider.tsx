@@ -11,11 +11,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { addWatch, removeWatch } from "@/lib/api";
+import { planCardAction, type CardAction } from "@/lib/cardActions";
 import { ALL_NAV } from "@/lib/routes";
 import { CommandPalette } from "./CommandPalette";
 import { Sheet } from "./Sheet";
+import { useToast } from "./Toast";
+import { WhyDrawerLoader } from "./WhyDrawer";
 
-export type CardAction = "open" | "watch" | "investigate" | "why";
+export type { CardAction };
 export type CardHandler = (card: HTMLElement) => void;
 export type CardHandlers = Partial<Record<CardAction, CardHandler>>;
 
@@ -134,6 +138,8 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [commands, setCommands] = useState<PaletteCommand[]>([]);
   const handlerStack = useRef<CardHandlers[]>([]);
+  const toast = useToast();
+  const [why, setWhy] = useState<{ entityType: "company" | "person"; idOrSlug: string; name?: string; demo: boolean } | null>(null);
   const activeRef = useRef<HTMLElement | null>(null);
   const gPending = useRef<number | null>(null);
 
@@ -194,14 +200,31 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
       if (!card) return;
       const handler = handlerStack.current[handlerStack.current.length - 1]?.[action];
       if (handler) return handler(card);
-      if (action === "open") {
-        const href = card.dataset.href;
-        if (href) router.push(href);
-        return;
+      if (action !== "open" && clickAction(card, action)) return;
+      // No control on this card: act on the entity it describes, or say why not.
+      const plan = planCardAction(action, card.dataset);
+      switch (plan.kind) {
+        case "navigate":
+          router.push(plan.href);
+          return;
+        case "why":
+          setWhy({ entityType: plan.entityType, idOrSlug: plan.idOrSlug, name: card.getAttribute("aria-label") ?? undefined, demo: card.dataset.demo === "true" });
+          return;
+        case "watch":
+          (plan.next ? addWatch({ entity_type: plan.entityType, entity_id: plan.entityId }) : removeWatch(plan.entityId))
+            .then(() => {
+              card.dataset.watched = String(plan.next);
+              toast(plan.next ? "Added to watchlist" : "Removed from watchlist");
+              router.refresh();
+            })
+            .catch(() => toast("Could not update the watchlist", { tone: "error" }));
+          return;
+        case "unavailable":
+          toast(plan.message);
+          return;
       }
-      clickAction(card, action);
     },
-    [activeCard, router],
+    [activeCard, router, toast],
   );
 
   useEffect(() => {
@@ -315,6 +338,16 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
           setHelpOpen(true);
         }}
       />
+      {why && (
+        <WhyDrawerLoader
+          open
+          onClose={() => setWhy(null)}
+          entityType={why.entityType}
+          idOrSlug={why.idOrSlug}
+          entityName={why.name}
+          isDemo={why.demo}
+        />
+      )}
       <Sheet open={helpOpen} onClose={() => setHelpOpen(false)} title="Keyboard shortcuts" width={460}>
         <dl className="divide-y divide-rule border-y border-rule">
           {SHORTCUTS.map((s) => (

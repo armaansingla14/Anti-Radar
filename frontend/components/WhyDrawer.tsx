@@ -21,6 +21,8 @@ export interface WhyDrawerProps {
   scoreLabel?: string;
   loading?: boolean;
   error?: string | null;
+  /** Fictional entity: evidence links never point at real hosts. */
+  isDemo?: boolean;
 }
 
 function rawValue(v: unknown): string {
@@ -31,7 +33,7 @@ function rawValue(v: unknown): string {
   return JSON.stringify(v);
 }
 
-function ComponentBlock({ c, n }: { c: ScoreComponent; n: number }) {
+function ComponentBlock({ c, n, demo }: { c: ScoreComponent; n: number; demo: boolean }) {
   const raw = Object.entries(c.raw ?? {});
   return (
     <section className="border-t border-rule py-5 first:border-t-0 first:pt-0" aria-label={c.label}>
@@ -65,13 +67,13 @@ function ComponentBlock({ c, n }: { c: ScoreComponent; n: number }) {
           </table>
         </details>
       )}
-      {c.evidence.length > 0 && <EvidenceList items={c.evidence} limit={4} dense className="mt-3" />}
+      {c.evidence.length > 0 && <EvidenceList items={c.evidence} limit={4} dense className="mt-3" demo={demo} />}
     </section>
   );
 }
 
 /** "Why 87?" — the full, deterministic decomposition of a score. */
-export function WhyDrawer({ open, onClose, score, entityName, scoreLabel = "Anti Score", loading, error }: WhyDrawerProps) {
+export function WhyDrawer({ open, onClose, score, entityName, scoreLabel = "Anti Score", loading, error, isDemo = false }: WhyDrawerProps) {
   const title = score ? `Why ${score.total}?` : "Why this score?";
   const sum = score?.components.reduce((s, c) => s + c.value, 0) ?? 0;
   return (
@@ -115,7 +117,7 @@ export function WhyDrawer({ open, onClose, score, entityName, scoreLabel = "Anti
             </SectionLabel>
             <div className="mt-4">
               {score.components.map((c, i) => (
-                <ComponentBlock key={c.key} c={c} n={i + 1} />
+                <ComponentBlock key={c.key} c={c} n={i + 1} demo={isDemo} />
               ))}
             </div>
             <p className="tnum mt-1 border-t border-ink pt-2 font-mono text-[11px] text-ink-2">
@@ -136,7 +138,7 @@ export function WhyDrawer({ open, onClose, score, entityName, scoreLabel = "Anti
             <div>
               <SectionLabel as="h3">Signal collision</SectionLabel>
               <CollisionStrip collision={score.collision} asOf={score.computed_on} className="mt-4" />
-              {score.collision.evidence.length > 0 && <EvidenceList items={score.collision.evidence} limit={6} dense className="mt-4" />}
+              {score.collision.evidence.length > 0 && <EvidenceList items={score.collision.evidence} limit={6} dense className="mt-4" demo={isDemo} />}
             </div>
           )}
 
@@ -158,10 +160,11 @@ export interface WhyDrawerLoaderProps {
   /** Slug or id accepted by /api/companies/{x} or /api/founders/{x}. */
   idOrSlug: string;
   entityName?: string;
+  isDemo?: boolean;
 }
 
 /** WhyDrawer that fetches the score breakdown on first open. */
-export function WhyDrawerLoader({ open, onClose, entityType, idOrSlug, entityName }: WhyDrawerLoaderProps) {
+export function WhyDrawerLoader({ open, onClose, entityType, idOrSlug, entityName, isDemo }: WhyDrawerLoaderProps) {
   const key = `${entityType}:${idOrSlug}`;
   const [result, setResult] = useState<{ key: string; score: AntiScore | null; error: string | null } | null>(null);
 
@@ -189,6 +192,7 @@ export function WhyDrawerLoader({ open, onClose, entityType, idOrSlug, entityNam
       error={ready ? result.error : null}
       loading={!ready}
       entityName={entityName}
+      isDemo={isDemo}
       scoreLabel={entityType === "person" ? "Founder Score" : "Anti Score"}
     />
   );
