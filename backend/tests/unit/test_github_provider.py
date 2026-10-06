@@ -320,8 +320,12 @@ def test_fetch_repo_org_deep_end_to_end(provider, sleeps):
     assert any(r.kind == "owns" and r.src == gh_org_ref("acme-robotics") for r in batch.relations)
     # Observed metrics for today, backfill strictly before today.
     observed = {(m.metric, m.value) for m in batch.metrics if m.source == "observed"}
+    # 'contributors' today uses the backfill's definition (distinct non-bot authors from /stats/contributors);
+    # the /contributors count (bots included) is a separate metric so deltas never mix the two.
     assert observed == {("stars", 1000), ("forks", 87), ("open_issues", 12), ("watchers", 41),
-                        ("contributors", 5)}
+                        ("contributors", 4), ("contributors_total", 5)}
+    contrib_bf = [m for m in batch.metrics if m.metric == "contributors" and m.source == "backfill"]
+    assert contrib_bf and max(contrib_bf, key=lambda m: m.day).value <= 4
     star_bf = [m for m in batch.metrics if m.metric == "stars" and m.source == "backfill"]
     assert star_bf and max(m.day for m in star_bf) == date(2026, 10, 5)
     assert next(m for m in star_bf if m.day == date(2026, 9, 29)).value == 930

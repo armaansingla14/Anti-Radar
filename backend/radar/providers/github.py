@@ -885,6 +885,10 @@ class GitHubProvider:
             first = contributor_stats_to_first_weeks(cstats)
             if len(cstats) < 100:  # stats cover only the top 100 authors; a truncated series would be wrong
                 batch.metrics.extend(p for p in contributors_cumulative_points(first, repo.ref) if p.day < today)
+                # Today's point uses the same definition as the backfill (distinct non-bot authors), so
+                # window deltas over 'contributors' measure newcomers, not a change of definition.
+                batch.metrics.append(MetricPoint(entity=repo.ref, metric="contributors", day=today,
+                                                 value=float(len(first))))
             for login, wk in first.items():
                 if login.lower() in relations:
                     relations[login.lower()].attrs["first_commit_week"] = wk.isoformat()
@@ -900,7 +904,8 @@ class GitHubProvider:
             if sig := build_new_contributors_signal(repo, newcomers, first, stats_truncated=len(cstats) >= 100):
                 batch.signals.append(sig)
         if repo.contributors_count is not None:
-            batch.metrics.append(MetricPoint(entity=repo.ref, metric="contributors", day=today,
+            # /contributors count (includes bots, Link-header estimate): a different measure, kept separate.
+            batch.metrics.append(MetricPoint(entity=repo.ref, metric="contributors_total", day=today,
                                              value=float(repo.contributors_count)))
 
         # Releases.
