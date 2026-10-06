@@ -44,7 +44,7 @@ function ComponentBlock({ c, n }: { c: ScoreComponent; n: number }) {
           {fmtNum(c.value, 1)} <span className="text-ink-3">/ {fmtNum(c.max, 0)}</span>
         </span>
       </div>
-      <ScoreBar value={c.value} max={c.max} label={c.label} />
+      <ScoreBar value={c.value} max={c.max} />
       <p className="mt-2.5 text-[13px] leading-relaxed text-ink-2">{c.explanation}</p>
       {raw.length > 0 && (
         <details className="group mt-3">
