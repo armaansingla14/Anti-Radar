@@ -1,0 +1,23 @@
+[
+  {
+    "additionalPlain": "",
+    "categories": {"commitment": "Full-time", "department": "Engineering", "location": "San Francisco, CA",
+                   "team": "Perception", "allLocations": ["San Francisco, CA"]},
+    "createdAt": 1786469891368,
+    "descriptionPlain": "You will build perception systems.",
+    "id": "6ed76ce8-4156-4b60-b120-403538bd66cd",
+    "lists": [],
+    "text": "Perception Engineer",
+    "country": "US",
+    "workplaceType": "onsite",
+    "hostedUrl": "https://jobs.lever.co/acmerobotics/6ed76ce8-4156-4b60-b120-403538bd66cd",
+    "applyUrl": "https://jobs.lever.co/acmerobotics/6ed76ce8-4156-4b60-b120-403538bd66cd/apply"
+  },
+  {
+    "categories": {"commitment": "Full-time", "location": "Boston, MA", "team": "Silicon"},
+    "createdAt": 1785000000000,
+    "id": "0b5e2c11-9e8f-4b8e-a7f5-2b36a8f0b001",
+    "text": "Staff Engineer",
+    "hostedUrl": "https://jobs.lever.co/acmerobotics/0b5e2c11-9e8f-4b8e-a7f5-2b36a8f0b001"
+  }
+]
