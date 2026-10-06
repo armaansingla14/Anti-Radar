@@ -17,7 +17,6 @@ import type {
   IngestXRequest,
   InvestigateEvent,
   InvestigateRequest,
-  JsonObject,
   MemoRequest,
   MorningBrief,
   PersonCard,
