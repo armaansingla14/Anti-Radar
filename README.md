@@ -16,7 +16,24 @@ Instead of relying primarily on funding announcements or databases of establishe
 
 It converts those signals into a continuously updated map of people and companies worth investigating.
 
-<!-- SCREENSHOTS -->
+![Morning Intelligence](docs/screenshots/01-radar.png)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/02-why-score.png" alt="Why 77? — every score explained"><br><sub><b>Why 77?</b> Every component, its raw inputs and the evidence behind it.</sub></td>
+<td width="50%"><img src="docs/screenshots/05-anti-brief.png" alt="Anti Brief"><br><sub><b>Anti Brief.</b> RADAR ANALYST on real public data — every claim cited, FACT / INFERENCE marked.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/03-company.png" alt="Company intelligence page"><br><sub><b>Company page.</b> Why now, verified facts, signal timeline, attention gap, collision.</sub></td>
+<td><img src="docs/screenshots/06-thesis.png" alt="Thesis Map"><br><sub><b>Thesis Map.</b> Categories where technical momentum runs ahead of attention.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/04-founder.png" alt="Founder page"><br><sub><b>Founder Radar.</b> People before they have companies.</sub></td>
+<td><img src="docs/screenshots/07-search.png" alt="Search"><br><sub><b>Search.</b> Natural language → visible, deterministic filters.</sub></td>
+</tr>
+</table>
+
+<sub>Screenshots show demo mode: real public data captured Oct 6, 2026 alongside clearly-labeled fictional examples (<code>DEMO DATA</code>).</sub>
 
 ---
 
