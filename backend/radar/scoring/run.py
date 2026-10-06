@@ -138,6 +138,17 @@ def score_all(
     return summary
 
 
+# jsonb does not preserve key order; present components in the order the score is defined.
+COMPANY_ORDER = ("technical_momentum", "founder_signal", "acceleration", "thesis_fit", "novelty", "attention_gap")
+FOUNDER_ORDER = ("technical_output", "research", "pedigree", "formation", "thesis_fit", "attention_gap")
+
+
+def _ordered(components: dict[str, Any]) -> list[dict[str, Any]]:
+    order = FOUNDER_ORDER if "technical_output" in components else COMPANY_ORDER
+    rank = {k: i for i, k in enumerate(order)}
+    return [components[k] for k in sorted(components, key=lambda k: rank.get(k, len(rank)))]
+
+
 def anti_score_from_snapshot(
     snap: ScoreSnapshot, delta_7d: float | None = None, delta_30d: float | None = None
 ) -> AntiScore:
@@ -147,7 +158,7 @@ def anti_score_from_snapshot(
         total=round(snap.score),
         delta_7d=delta_7d,
         delta_30d=delta_30d,
-        components=[ScoreComponent.model_validate(c) for c in (snap.components or {}).values()],
+        components=[ScoreComponent.model_validate(c) for c in _ordered(snap.components or {})],
         attention_gap=AttentionGap.model_validate(att) if att else None,
         collision=Collision.model_validate(snap.collision) if snap.collision else None,
         version=snap.version,
