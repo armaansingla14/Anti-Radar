@@ -43,8 +43,8 @@ class ScoreComponent(BaseModel):
 
 class AttentionGap(BaseModel):
     technical: float  # 0..100 percentile of technical signal
-    attention: float  # 0..100 percentile of public attention
-    gap: float  # technical - attention (can be negative)
+    attention: float | None  # 0..100 percentile of public attention; None when no source is measured
+    gap: float  # technical - attention (can be negative); 0 when attention is None (no gap claimed)
     flagged: bool
     coverage: Literal["good", "partial", "low"]
     sources: list[dict[str, Any]]  # [{key, label, available: bool, value, percentile, note}]
