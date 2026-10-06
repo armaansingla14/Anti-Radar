@@ -54,7 +54,7 @@ def run_provider(
     (commits on exit). Returns the (detached) run and the ingest stats, or None on failure.
     """
     with session_factory() as s:
-        run = IngestionRun(provider=provider_name, status="running", params=params, started_at=clock.now())
+        run = IngestionRun(provider=provider_name, status="running", params=params, started_at=clock.wall_now())
         s.add(run)
         s.flush()
         run_id = run.id
@@ -100,9 +100,13 @@ def run_provider(
             run.status = "partial"
         else:
             run.status = "ok"
-        run.finished_at = clock.now()
+        run.finished_at = clock.wall_now()
         run.params = {**(params or {}), "duration_s": round(time.monotonic() - t0, 3)}
         s.flush()
+    if run.status in ("ok", "partial") and not is_demo and clock.is_live_run(provider_name, params):
+        # Fresh data has arrived: stop reasoning "as of" the committed snapshot day, so this
+        # (possibly long-running) process scores, windows and dates on the real calendar from now on.
+        clock.set_as_of(None)
     level = logging.INFO if run.status == "ok" else logging.WARNING
     log.log(level, "provider %s: %s fetched=%d accepted=%d rejected=%d signals=%d errors=%d",
             provider_name, run.status, run.records_fetched, run.records_accepted, run.records_rejected,

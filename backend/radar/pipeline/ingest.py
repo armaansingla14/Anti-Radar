@@ -1,7 +1,7 @@
 """Ingest a `ProviderBatch`: resolve, upsert with provenance, snapshot, detect change.
 
 Change detection emitted here (all FACT, derived from comparing observations):
-``affiliation_changed``, ``bio_changed``, ``formation_language`` (people),
+``affiliation_changed`` (never from a name-only arXiv identity), ``bio_changed``, ``formation_language`` (people),
 ``website_changed`` (web pages) and ``job_posted`` (new ATS jobs after a
 company's first crawl). Everything is idempotent: re-ingesting the same batch
 creates no duplicate rows or signals.
@@ -28,6 +28,7 @@ from radar import clock
 from radar.models import (
     Company,
     CompanyPerson,
+    Epistemic,
     Job,
     MetricSnapshot,
     PaperAuthor,
@@ -40,7 +41,15 @@ from radar.models import (
     Source,
     WebPage,
 )
-from radar.pipeline.resolve import Entity, Resolver, canonical_url, record_provenance, split_key
+from radar.pipeline.resolve import (
+    CORROBORATED_AUTHOR_VIA,
+    AuthorContext,
+    Entity,
+    Resolver,
+    canonical_url,
+    record_provenance,
+    split_key,
+)
 from radar.providers.base import (
     CompanyRecord,
     EntityRef,
@@ -81,6 +90,16 @@ class IngestStats:
 
 
 @dataclass
+class _Authorship:
+    """One resolved (paper, arXiv author) pair of this batch."""
+
+    person: Person
+    via: str
+    affiliation: str | None
+    paper: ResearchPaper
+
+
+@dataclass
 class _Derived:
     signal: NormalizedSignal
     entity: Entity
@@ -104,12 +123,13 @@ class _Ingestor:
         self.derived: list[_Derived] = []
         self.source_ids: dict[str, uuid.UUID] = {}
         self.now = clock.now()
+        self.authorships: dict[tuple[str, str], _Authorship] = {}  # (paper key, arxiv_author key)
 
     # ── driver ──────────────────────────────────────────────────────────────
 
     def run(self) -> IngestStats:
         b = self.batch
-        self.contrib_repos, self.author_code, self.author_names = self._link_hints()
+        self.contrib_repos, self.author_names = self._link_hints()
         for rec in b.companies:
             self._guard(f"company {rec.ref.key}", self._company, rec)
         for rec in b.repositories:
@@ -118,9 +138,15 @@ class _Ingestor:
             self._guard(f"paper {rec.ref.key}", self._paper, rec)
         # Structural edges first so the person link rule can see paper code repos.
         early = [r for r in b.relations if r.kind in ("owns", "code_for")]
-        late = [r for r in b.relations if r.kind not in ("owns", "code_for")]
+        arxiv_authors = [r for r in b.relations if r.kind == "author" and _is_arxiv_author(r.src)]
+        late = [r for r in b.relations if r.kind not in ("owns", "code_for") and r not in arxiv_authors]
         for rel in early:
             self._guard(f"relation {rel.kind} {rel.src.key}->{rel.dst.key}", self._relation, rel)
+        # arXiv authors are resolved per (paper, position) before person records: the name is not an identity.
+        paper_recs = {p.ref.key.lower(): p for p in b.papers}
+        for rel in arxiv_authors:
+            self._guard(f"author {rel.src.key}->{rel.dst.key}", self._arxiv_author, rel,
+                        paper_recs.get(rel.dst.key.lower()))
         for rec in b.people:
             self._guard(f"person {rec.ref.key}", self._person, rec)
         for rel in late:
@@ -158,34 +184,23 @@ class _Ingestor:
             self.stats.errors.append(msg)
             log.warning("ingest rejected %s", msg)
 
-    def _link_hints(self) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, str]]:
-        """Pre-scan relations for the arXiv-author <-> GitHub-user link rule."""
+    def _link_hints(self) -> tuple[dict[str, set[str]], dict[str, str]]:
+        """Pre-scan the batch: repos each GitHub user contributes to (link rule) and arXiv author names."""
         contrib: dict[str, set[str]] = defaultdict(set)
-        paper_code: dict[str, set[str]] = defaultdict(set)
         author_names: dict[str, str] = {}
         for p in self.batch.papers:
-            for url in p.code_urls:
-                paper_code[p.ref.key].update(s.lower() for s in github_repos_in(url))
             for a in p.authors:
                 if a.get("name"):
                     author_names.setdefault(arxiv_author_ref(a["name"]).key, a["name"])
         for r in self.batch.relations:
             if r.kind == "contributor" and r.dst.type == "repository":
                 contrib[r.src.key].add(split_key(r.dst)[1].lower())
-            elif r.kind == "code_for" and r.dst.type == "repository":
-                paper_code[r.src.key].add(split_key(r.dst)[1].lower())
-        author_code: dict[str, set[str]] = defaultdict(set)
-        for r in self.batch.relations:
-            if r.kind == "author":
-                author_code[r.src.key] |= paper_code.get(r.dst.key, set())
-        return contrib, author_code, author_names
+        return contrib, author_names
 
     def _person_hint(self, ref: EntityRef) -> set[str]:
         kind, _ = split_key(ref)
         if kind == "github_user":
             return self.contrib_repos.get(ref.key, set())
-        if kind == "arxiv_author":
-            return self.author_code.get(ref.key, set())
         return set()
 
     # ── helpers ─────────────────────────────────────────────────────────────
@@ -209,9 +224,11 @@ class _Ingestor:
     def _prov(self, entity: Entity, etype: str, fld: str, value: Any, source_url: str | None) -> None:
         if value in (None, "", [], {}):
             return
+        # Fictional demo values are never VERIFIED facts: they are recorded as INFERENCE.
         record_provenance(
             self.s, etype, entity.id, fld, value,
             source_type=self.provider, source_url=source_url or canonical_url(entity),
+            epistemic=Epistemic.INFERENCE.value if self.is_demo or entity.is_demo else Epistemic.FACT.value,
         )
 
     def _observe(self, entity: Entity, fld: str, new: Any) -> tuple[bool, Any]:
@@ -314,12 +331,42 @@ class _Ingestor:
     # ── people ──────────────────────────────────────────────────────────────
 
     def _person(self, rec: PersonRecord) -> None:
+        if _is_arxiv_author(rec.ref):
+            self._arxiv_person(rec)
+            return
         res = self.resolver.resolve(rec.ref, rec, code_repos=self._person_hint(rec.ref))
         if res is None:
             raise LookupError(f"cannot resolve person {rec.ref.key}")
         p: Person = res.entity  # type: ignore[assignment]
         if res.created:
             self._apply_first_seen(p, rec)
+        self._apply_person(p, rec, created=res.created)
+
+    def _arxiv_person(self, rec: PersonRecord) -> None:
+        """Apply a name-keyed arXiv person record to each person that name resolved to in this batch.
+
+        The record's affiliation is the first one seen for the *name* across the batch, so each person
+        gets the affiliation printed on their own (most recent) paper instead.
+        """
+        key = rec.ref.key.lower()
+        by_person: dict[uuid.UUID, list[_Authorship]] = defaultdict(list)
+        for (_, akey), a in self.authorships.items():
+            if akey == key:
+                by_person[a.person.id].append(a)
+        created = {pid for t, pid in self.resolver.created if t == "person"}
+        for pid, items in by_person.items():
+            a = max(items, key=lambda x: (_aware(x.paper.published_at) or datetime.min.replace(tzinfo=UTC),
+                                          x.paper.arxiv_id))
+            attrs = {k: v for k, v in rec.attrs.items() if k != "arxiv_affiliation"}
+            if a.affiliation:
+                attrs["arxiv_affiliation"] = a.affiliation
+            ctx_rec = rec.model_copy(update={"current_company": a.affiliation, "attrs": attrs,
+                                             "source_url": a.paper.url or rec.source_url})
+            # An affiliation change is only claimed when the identity rests on more than the name.
+            self._apply_person(a.person, ctx_rec, created=pid in created,
+                               affiliation_signal=any(x.via in CORROBORATED_AUTHOR_VIA for x in items))
+
+    def _apply_person(self, p: Person, rec: PersonRecord, *, created: bool, affiliation_signal: bool = True) -> None:
         url = rec.source_url or canonical_url(p)
         changed = self._unstub(p)
         if changed:
@@ -331,23 +378,23 @@ class _Ingestor:
         if rec.x_handle and not p.x_handle:
             p.x_handle = rec.x_handle.lstrip("@")
             changed = True
-        changed |= self._person_affiliation(p, rec, url)
+        changed |= self._person_affiliation(p, rec, url, emit=affiliation_signal)
         changed |= self._person_bio(p, rec, url)
         extra = dict(rec.attrs)
         if rec.email_domain:
             extra["email_domain"] = rec.email_domain
         changed |= self._merge_attrs(p, extra)
-        self._count_update(res.created, changed)
+        self._count_update(created, changed)
         for fld in ("name", "bio", "location", "current_company", "github_handle"):
             self._prov(p, "person", fld, _clean_company(getattr(rec, fld)) if fld == "current_company"
                        else getattr(rec, fld), url)
 
-    def _person_affiliation(self, p: Person, rec: PersonRecord, url: str) -> bool:
+    def _person_affiliation(self, p: Person, rec: PersonRecord, url: str, *, emit: bool = True) -> bool:
         new = _clean_company(rec.current_company)
         if not new:
             return False
         changed, old = self._observe(p, "current_company", new)
-        if old and _affiliation_differs(old, new):
+        if emit and old and _affiliation_differs(old, new):
             if old.lower() not in {a.lower() for a in p.prior_affiliations or []}:
                 p.prior_affiliations = [*(p.prior_affiliations or []), old]
             self._derive(
@@ -380,6 +427,62 @@ class _Ingestor:
                 discriminator=_hash(new), source_url=url, normalized_value=0.7,
             )
         return True
+
+    # ── arXiv authorship ────────────────────────────────────────────────────
+
+    def _arxiv_author(self, rel: Relation, prec: PaperRecord | None) -> None:
+        paper = self.resolver.lookup(rel.dst)
+        if paper is None:
+            raise LookupError(f"paper {rel.dst.key} unknown")
+        pos = int(rel.attrs.get("position", 0))
+        norm = split_key(rel.src)[1]
+        authors = list((prec.authors if prec is not None else None) or paper.authors or [])  # type: ignore[union-attr]
+        norms = [normalize_person_name(a.get("name") or "") for a in authors]
+        entry: dict[str, Any] = {}
+        if pos < len(authors) and norms[pos] == norm:
+            entry = authors[pos]
+        elif norm in norms:
+            entry = authors[norms.index(norm)]
+        ctx = AuthorContext(
+            name=entry.get("name") or self.author_names.get(rel.src.key) or norm.title(),
+            position=pos,
+            affiliation=_clean_company(entry.get("affiliation")),
+            coauthors={n for n in norms if n != norm and len(n.split()) >= 2},
+            code_repos={s.lower() for u in (paper.code_urls or []) for s in github_repos_in(u)},  # type: ignore[union-attr]
+        )
+        res = self.resolver.resolve_arxiv_author(rel.src, paper, ctx)  # type: ignore[arg-type]
+        if res is None:
+            raise LookupError(f"cannot resolve arXiv author {rel.src.key}")
+        person: Person = res.entity  # type: ignore[assignment]
+        self.s.execute(
+            pg_insert(PaperAuthor)
+            .values(id=uuid.uuid4(), paper_id=paper.id, person_id=person.id, position=pos)
+            .on_conflict_do_update(constraint="uq_paper_author", set_={"position": pos})
+        )
+        self.authorships[(rel.dst.key.lower(), rel.src.key.lower())] = _Authorship(
+            person=person, via=res.via, affiliation=ctx.affiliation, paper=paper)  # type: ignore[arg-type]
+
+    def _arxiv_recurrence(self, sig: NormalizedSignal) -> None:
+        """Re-derive `author_recurrence` per resolved person: same-name authors that were not tied
+        together by evidence do not add up to one person's recurrence. Always INFERENCE."""
+        from radar.providers.arxiv import recurrence_signal
+
+        recs = {p.ref.key.lower(): p for p in self.batch.papers}
+        groups: dict[uuid.UUID, list[_Authorship]] = defaultdict(list)
+        for ref in sig.related:
+            a = self.authorships.get((ref.key.lower(), sig.entity.key.lower())) if ref.type == "paper" else None
+            if a is not None:
+                groups[a.person.id].append(a)
+        window = int((sig.metadata or {}).get("window_days") or 21)
+        for items in groups.values():
+            keys = (f"arxiv:{x.paper.arxiv_id}".lower() for x in items)
+            papers = [recs[k] for k in keys if k in recs]
+            new = recurrence_signal(
+                sig.entity, items[0].person.name, papers, window_days=window,
+                metadata={"identity_basis": sorted({x.via for x in items})},
+            )
+            if new is not None:
+                self._insert_signal(new, items[0].person, None)
 
     # ── repositories & papers ───────────────────────────────────────────────
 
@@ -416,7 +519,7 @@ class _Ingestor:
                 r.company_id = company.id
                 changed = True
         self._count_update(res.created, changed)
-        url = f"https://github.com/{r.full_name}"
+        url = canonical_url(r)
         self._prov(r, "repository", "description", rec.description, url)
         self._prov(r, "repository", "homepage", rec.homepage, url)
 
@@ -427,7 +530,14 @@ class _Ingestor:
         p: ResearchPaper = res.entity  # type: ignore[assignment]
         if res.created:
             self._apply_first_seen(p, rec)
-        changed = False
+        if rec.attrs.get("stub"):
+            # A link to a paper (e.g. from HN), not an observation of it: never overwrite the real title/url
+            # with the placeholder; a new row stays flagged as a stub until arXiv itself is ingested.
+            if res.created:
+                p.attrs = {**(p.attrs or {}), **{k: v for k, v in rec.attrs.items() if v is not None}, "stub": True}
+                self._set(p, "url", rec.url)
+            return
+        changed = self._unstub(p)
         for fld, val in (("title", rec.title), ("abstract", rec.abstract), ("primary_category", rec.primary_category),
                          ("published_at", rec.published_at), ("updated_at_src", rec.updated_at), ("url", rec.url)):
             changed |= self._set(p, fld, val)
@@ -458,6 +568,8 @@ class _Ingestor:
             if paper is None:
                 raise LookupError(f"paper {rel.src.key} unknown")
             repo = self._resolve(rel.dst)  # type: ignore[assignment]
+            # NOTE: services (graph/entities) still key paper<->repo links on github.com URLs, so this stays
+            # github.com even for demo rows until they also understand the `.example` host.
             _add_code_url(paper, f"https://github.com/{repo.full_name}")  # type: ignore[arg-type]
             if repo.company_id and paper.company_id is None:  # type: ignore[union-attr]
                 paper.company_id = repo.company_id  # type: ignore[union-attr]
@@ -503,7 +615,7 @@ class _Ingestor:
         if company is not None and _owned_by_young_org(repo, company):
             self._membership(company.id, person.id, role="contributor", is_founder=False,
                              confidence=CONTRIBUTOR_MEMBERSHIP_CONFIDENCE,
-                             source_url=f"https://github.com/{repo.full_name}", weak=True)
+                             source_url=canonical_url(repo), weak=True)
 
     def _membership(self, company_id: uuid.UUID, person_id: uuid.UUID, *, role: str | None, is_founder: bool,
                     confidence: float, source_url: str | None, weak: bool = False) -> None:
@@ -547,7 +659,7 @@ class _Ingestor:
         groups[self._resolve(job.company).id].append(job)
 
     def _company_jobs(self, company_id: uuid.UUID, recs: list[JobRecord]) -> None:
-        """Upsert one company's jobs. A batch's job list is a full refresh per (company, ATS)."""
+        """Upsert one company's jobs. A batch's job list is a full refresh per (company, ATS) when complete."""
         company = self.s.get(Company, company_id)
         if company is None:
             raise LookupError(f"company {company_id} vanished")
@@ -585,7 +697,8 @@ class _Ingestor:
                                  ("url", rec.url), ("role_class", role_class), ("posted_at", _aware(rec.posted_at))):
                     self._set(job, fld, val)
                 job.closed_at = None
-        ats_seen = {r.ats for r in recs}
+        # Full refresh only for boards fetched completely; a truncated list is a lower bound.
+        ats_seen = {r.ats for r in recs} - {r.ats for r in recs if not r.complete}
         for ext, job in existing.items():
             if ext not in seen and job.closed_at is None and job.ats in ats_seen:
                 job.closed_at = self.now
@@ -703,6 +816,11 @@ class _Ingestor:
     # ── signals ─────────────────────────────────────────────────────────────
 
     def _signal(self, sig: NormalizedSignal) -> None:
+        if _is_arxiv_author(sig.entity):
+            if sig.signal_type != "author_recurrence":
+                raise LookupError(f"{sig.signal_type} on name-only arXiv author {sig.entity.key}")
+            self._arxiv_recurrence(sig)
+            return
         ent = self._resolve(sig.entity) if sig.entity.type != "paper" else self.resolver.lookup(sig.entity)
         if ent is None:
             raise LookupError(f"paper {sig.entity.key} unknown")
@@ -728,8 +846,16 @@ class _Ingestor:
             return
         self.stats.signals_created += 1
         links: list[tuple[uuid.UUID, str, str]] = []
+        ctx_paper = sig.entity.key if sig.entity.type == "paper" else next(
+            (r.key for r in sig.related if r.type == "paper"), None)
         for ref in sig.related:
-            other = self.resolver.lookup(ref) if ref.type == "paper" else self._resolve(ref)
+            if _is_arxiv_author(ref):
+                a = self.authorships.get((ctx_paper.lower(), ref.key.lower())) if ctx_paper else None
+                other = a.person if a is not None else None  # no paper context: never link by name
+            elif ref.type == "paper":
+                other = self.resolver.lookup(ref)
+            else:
+                other = self._resolve(ref)
             if other is not None and other.id != ent.id:
                 links.append((other.id, ref.type, "related"))
         if isinstance(ent, Repository) and ent.company_id:
@@ -745,6 +871,10 @@ class _Ingestor:
 
 
 # ── pure helpers ─────────────────────────────────────────────────────────────
+
+
+def _is_arxiv_author(ref: EntityRef) -> bool:
+    return ref.type == "person" and split_key(ref)[0] == "arxiv_author"
 
 
 def _hash(text: str) -> str:

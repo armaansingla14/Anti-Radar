@@ -10,6 +10,12 @@ merge only costs a review click):
   nothing. If primary and alternate keys point at *different* rows we never merge:
   a `MatchCandidate(method='conflicting_keys')` is written and the primary row wins.
 * Fuzzy name similarity never merges; it only creates pending `MatchCandidate`s.
+* `arxiv_author:<normalized name>` is a name, not an identity: it never resolves on
+  its own. Each (paper, author) pair goes through `resolve_arxiv_author`, which
+  reuses the person already listed on that paper, or a same-name person only when
+  corroborated (shared co-author, identical affiliation string, or a shared code
+  repo). Otherwise a new person is created (same `arxiv_author_key`) with a pending
+  `MatchCandidate(method='same_name')` for review.
 * An arXiv author and a GitHub user are linked only when their normalized full
   names are identical AND the GitHub user contributes to a repository that is the
   code for a paper written by that author (evidence kept in FieldProvenance and
@@ -31,6 +37,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from radar import clock
+from radar.demo.fictional import CATEGORY_HOST as DEMO_ARXIV_HOST
+from radar.demo.fictional import GH_HOST as DEMO_GH_HOST
+from radar.demo.fictional import X_HOST as DEMO_X_HOST
 from radar.models import (
     Company,
     Epistemic,
@@ -74,19 +83,27 @@ def split_key(ref: EntityRef) -> tuple[str, str]:
 
 
 def canonical_url(entity: Entity) -> str:
-    """Best canonical public URL for an entity (used when a record has no source_url)."""
+    """Best canonical public URL for an entity (used when a record has no source_url).
+
+    Fictional demo rows only ever point at reserved `.example` hosts, never at real
+    github.com / x.com / arxiv.org pages that a stranger could register.
+    """
+    demo = bool(getattr(entity, "is_demo", False))
+    gh, x, arxiv = (DEMO_GH_HOST, DEMO_X_HOST, DEMO_ARXIV_HOST) if demo else (
+        "https://github.com/", "https://x.com/", "https://arxiv.org/abs/")
     if isinstance(entity, Repository):
-        return f"https://github.com/{entity.full_name}"
+        html = (entity.attrs or {}).get("html_url") if demo else None
+        return html or f"{gh}{entity.full_name}"
     if isinstance(entity, ResearchPaper):
-        return entity.url or f"https://arxiv.org/abs/{entity.arxiv_id}"
+        return entity.url or f"{arxiv}{entity.arxiv_id}"
     if isinstance(entity, Person):
         if entity.github_handle:
-            return f"https://github.com/{entity.github_handle}"
+            return f"{gh}{entity.github_handle}"
         if entity.x_handle:
-            return f"https://x.com/{entity.x_handle}"
+            return f"{x}{entity.x_handle}"
         return entity.personal_site or ""
     if entity.github_org:
-        return f"https://github.com/{entity.github_org}"
+        return f"{gh}{entity.github_org}"
     if entity.website:
         return entity.website
     return f"https://{entity.domain}" if entity.domain else ""
@@ -146,7 +163,25 @@ def record_provenance(
 class Resolved:
     entity: Entity
     created: bool
-    via: str  # "key" | "alt:<key>" | "code_for_link" | "created"
+    via: str  # "key" | "alt:<key>" | "code_for_link" | "created" | arXiv: "same_paper" | "corroborated:<how>"
+
+
+@dataclass
+class AuthorContext:
+    """What one paper says about one of its authors (input to `resolve_arxiv_author`)."""
+
+    name: str
+    position: int
+    affiliation: str | None
+    coauthors: set[str]  # normalized full names of the other authors on the paper
+    code_repos: set[str]  # lower-case owner/name of the paper's code repos
+
+
+# Ways an arXiv author is tied to an existing person by evidence beyond the name.
+CORROBORATED_AUTHOR_VIA = ("corroborated:shared_coauthor", "corroborated:same_affiliation",
+                           "corroborated:shared_code", "code_for_link")
+SAME_NAME_CANDIDATE_CONFIDENCE = 0.3
+MAX_SAME_NAME_CANDIDATES = 10
 
 
 class Resolver:
@@ -190,6 +225,8 @@ class Resolver:
         link rule for people: for a GitHub user, repos it contributes to; for an
         arXiv author, code repos of papers it authored.
         """
+        if ref.type == "person" and split_key(ref)[0] == "arxiv_author":
+            return None  # name-only key: needs paper context, see resolve_arxiv_author
         alts = [r for r in self._alt_refs(record) if r.type == ref.type and r.key.lower() != ref.key.lower()]
         primary = self.lookup(ref)
         alt_hits = [(r, self.lookup(r)) for r in alts]
@@ -204,6 +241,10 @@ class Resolver:
                     self._conflict(ref, r, primary, other)
         else:
             matched = [(r, e) for r, e in alt_hits if e is not None]
+            # A row that already carries a *different* value of this record's own primary key is a
+            # different entity (e.g. a sub-org sharing the parent's website): never link through it.
+            disjoint = [(r, e) for r, e in matched if self._holds_other_key(e, ref)]
+            matched = [(r, e) for r, e in matched if (r, e) not in disjoint]
             if matched:
                 link_ref, entity = matched[0]
                 via = f"alt:{link_ref.key}"
@@ -214,6 +255,7 @@ class Resolver:
                     self.session, ref.type, entity.id, "resolution_link",
                     {"ref": ref.key, "matched_via": link_ref.key, "method": "alt_ref_exact"},
                     source_type=self.provider, source_url=source_url or canonical_url(entity),
+                    epistemic=Epistemic.INFERENCE.value if self.is_demo else Epistemic.FACT.value,
                 )
             elif ref.type == "person" and code_repos:
                 name = getattr(record, "name", None) or name_hint
@@ -233,11 +275,111 @@ class Resolver:
 
         self._attach_keys(entity, [ref, *alts], record)
         self._cache[(ref.type, ref.key.lower())] = entity
+        if primary is None:
+            for r, other in disjoint:
+                if other.id != entity.id:
+                    self.add_candidate(
+                        ref.type, entity.id, other.id,
+                        method="shared_domain" if split_key(r)[0] == "domain" else "conflicting_keys", confidence=0.5,
+                        evidence={"keys": [ref.key, r.key], "provider": self.provider,
+                                  "note": f"shares {r.key} with a row that has a different "
+                                          f"{split_key(ref)[0]}; not merged"},
+                    )
         if created:
             self.created.append((ref.type, entity.id))
             if isinstance(entity, Company):
                 self._fuzzy_company_candidates(entity)
         return Resolved(entity=entity, created=created, via=via)
+
+    def resolve_arxiv_author(self, ref: EntityRef, paper: ResearchPaper, ctx: AuthorContext) -> Resolved | None:
+        """Person for one author position of one paper. Never merges on the name alone.
+
+        1. the person already recorded as this author of this paper (re-ingest) -> "same_paper"
+        2. exactly one same-name person with corroborating evidence -> "corroborated:<how>"
+        3. a GitHub person with the identical full name contributing to the paper's code -> "code_for_link"
+        4. otherwise a new person; every same-name person gets a pending `same_name` candidate.
+        """
+        norm = normalize_person_name(split_key(ref)[1])
+        if not norm:
+            return None
+        on_paper = self.session.scalars(
+            select(Person).join(PaperAuthor, PaperAuthor.person_id == Person.id)
+            .where(PaperAuthor.paper_id == paper.id, Person.arxiv_author_key == norm)
+            .order_by(func.abs(PaperAuthor.position - ctx.position), Person.id)
+        ).first()
+        if on_paper is not None:
+            return Resolved(entity=on_paper, created=False, via="same_paper")
+        same_name = self.session.scalars(
+            select(Person).where(Person.arxiv_author_key == norm).order_by(Person.created_at, Person.id)
+        ).all()
+        corroborated = [(p, ev) for p in same_name if (ev := self._author_corroboration(p, norm, ctx))]
+        if len(corroborated) == 1:
+            person, evidence = corroborated[0]
+            self._record_person_link(person, ref, {**evidence, "paper": paper.arxiv_id}, paper.url)
+            return Resolved(entity=person, created=False, via=f"corroborated:{evidence['method']}")
+        if not corroborated and ctx.code_repos:
+            link = self._code_for_link(ref, ctx.name, ctx.code_repos)
+            if link is not None:
+                person, evidence = link
+                if not person.arxiv_author_key:
+                    person.arxiv_author_key = norm
+                self._record_person_link(person, ref, evidence, paper.url)
+                return Resolved(entity=person, created=False, via="code_for_link")
+        person = self._create(ref, None, ctx.name)
+        assert isinstance(person, Person)
+        person.arxiv_author_key = norm
+        self.created.append(("person", person.id))
+        strong = {p.id: ev for p, ev in corroborated}
+        for other in same_name[:MAX_SAME_NAME_CANDIDATES]:
+            ev = strong.get(other.id)
+            self.add_candidate(
+                "person", person.id, other.id, method="same_name",
+                confidence=0.6 if ev else SAME_NAME_CANDIDATE_CONFIDENCE,
+                evidence={"name": norm, "key": ref.key, "paper": paper.arxiv_id, "provider": self.provider,
+                          **({"corroboration": ev, "note": "several same-name people corroborated; not merged"}
+                             if ev else {"note": "same arXiv author name only; no shared co-author, "
+                                                 "affiliation or code repo; not merged"})},
+            )
+        return Resolved(entity=person, created=True, via="created")
+
+    def _author_corroboration(self, person: Person, norm: str, ctx: AuthorContext) -> dict | None:
+        """Evidence beyond the name that `person` is the author described by `ctx`, or None."""
+        rows = self.session.execute(
+            select(ResearchPaper.arxiv_id, ResearchPaper.authors, ResearchPaper.code_urls, PaperAuthor.position)
+            .join(PaperAuthor, PaperAuthor.paper_id == ResearchPaper.id)
+            .where(PaperAuthor.person_id == person.id)
+        ).all()
+        coauthors: dict[str, set[str]] = defaultdict(set)
+        affiliations: dict[str, set[str]] = defaultdict(set)
+        repos: dict[str, set[str]] = defaultdict(set)
+        for aid, authors, code_urls, pos in rows:
+            for i, a in enumerate(authors or []):
+                n = normalize_person_name(a.get("name") or "")
+                if n == norm and (i == pos or pos >= len(authors)):
+                    if a.get("affiliation"):
+                        affiliations[_affiliation_norm(a["affiliation"])].add(aid)
+                elif n != norm and len(n.split()) >= 2:
+                    coauthors[n].add(aid)
+            for u in code_urls or []:
+                for slug in github_repos_in(u):
+                    repos[slug.lower()].add(aid)
+        shared = sorted(set(coauthors) & ctx.coauthors)
+        if shared:
+            return {"method": "shared_coauthor", "coauthors": shared[:5],
+                    "papers": sorted({a for n in shared for a in coauthors[n]})}
+        aff = _affiliation_norm(ctx.affiliation or "")
+        if aff and aff in affiliations:
+            return {"method": "same_affiliation", "affiliation": ctx.affiliation, "papers": sorted(affiliations[aff])}
+        for full in self.session.scalars(
+            select(Repository.full_name).join(RepoContributor, RepoContributor.repository_id == Repository.id)
+            .where(RepoContributor.person_id == person.id)
+        ):
+            repos[full.lower()].add("contributor")
+        code = sorted(set(repos) & {r.lower() for r in ctx.code_repos})
+        if code:
+            return {"method": "shared_code", "repos": code,
+                    "papers": sorted({a for r in code for a in repos[r] if a != "contributor"})}
+        return None
 
     def add_candidate(
         self, entity_type: str, a_id: uuid.UUID, b_id: uuid.UUID, *, method: str, confidence: float, evidence: dict
@@ -293,10 +435,7 @@ class Resolver:
             if kind == "x":
                 return self._unique(select(Person).where(func.lower(Person.x_handle) == v.lstrip("@")))
             if kind == "arxiv_author":
-                return s.scalars(
-                    select(Person).where(Person.arxiv_author_key == normalize_person_name(value))
-                    .order_by(Person.created_at, Person.id).limit(1)
-                ).first()
+                return None  # a name is not an identity; see resolve_arxiv_author
             if kind == "name":
                 ids = self.people_with_name(normalize_person_name(value))
                 return s.get(Person, ids[0]) if len(ids) == 1 else None
@@ -307,6 +446,16 @@ class Resolver:
                 select(ResearchPaper).where(ResearchPaper.arxiv_id == strip_arxiv_version(value))
             ).first()
         return None
+
+    @staticmethod
+    def _holds_other_key(entity: Entity, ref: EntityRef) -> bool:
+        """True when `entity` already stores a different value for `ref`'s deterministic key type."""
+        kind, value = split_key(ref)
+        field = _KEY_FIELDS.get((ref.type, kind))
+        current = getattr(entity, field, None) if field else None
+        if not current or not value:
+            return False
+        return str(current).lower().lstrip("@") != value.lower().lstrip("@")
 
     def _unique(self, stmt) -> Entity | None:
         rows = self.session.scalars(stmt.limit(2)).all()
@@ -526,6 +675,10 @@ class Resolver:
             source_type=self.provider, source_url=source_url or canonical_url(person),
             confidence=CODE_FOR_LINK_CONFIDENCE, epistemic=Epistemic.INFERENCE.value,
         )
+
+
+def _affiliation_norm(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
 
 _KEY_FIELDS: dict[tuple[str, str], str] = {

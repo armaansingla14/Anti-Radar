@@ -293,24 +293,48 @@ def test_stage_estimates_are_conservative(db):
     mid = Company(slug="m", name="Mid", attrs={"created_at": (today - timedelta(days=300)).isoformat()})
     old = Company(slug="o", name="Old", founded_date=today - timedelta(days=2000), attrs={})
     unknown = Company(slug="u", name="Unknown", attrs={})
-    assert estimate_stage(young, [], [], [1, 2])[0] == "formation"
-    assert estimate_stage(mid, [], [], [1] * 6)[0] == "pre_seed"
-    assert estimate_stage(mid, [], [], [1] * 30)[0] == "unknown"
+    founder = CompanyPerson(is_founder=True)
+    member = CompanyPerson(is_founder=False)
+    assert estimate_stage(young, [], [], [founder, member])[0] == "formation"
+    assert estimate_stage(mid, [], [], [founder] + [member] * 5)[0] == "pre_seed"
+    assert estimate_stage(mid, [], [], [founder] * 30)[0] == "unknown"
     assert estimate_stage(old, [], [], [])[0] == "unknown"
     stage, basis = estimate_stage(unknown, [], [], [])
     assert stage == "unknown" and "Insufficient" in basis
     old_repo = Repository(full_name="y/r", owner="y", gh_created_at=datetime(2019, 1, 1, tzinfo=UTC))
-    assert estimate_stage(young, [], [old_repo], [])[0] == "unknown"
+    assert estimate_stage(young, [], [old_repo], [founder])[0] == "unknown"
     seed = Signal(signal_type="funding_round", source_type="hackernews", title="Young raises $3M seed",
                   event_at=EVENT, meta={})
     assert estimate_stage(young, [seed], [], [])[0] == "seed"
 
 
+def test_young_org_alone_is_not_an_early_stage_company(db):
+    today = clock.today()
+    gh = {"founded_date_basis": "github_org_created_at"}
+    # Corporate team org: young, small, no funding — but nothing says it is a startup.
+    xiaomi = Company(slug="x", name="Xiaomi Robotics", kind="company", founded_date=today - timedelta(days=240),
+                     attrs=gh)
+    stage, basis = estimate_stage(xiaomi, [], [], [CompanyPerson(is_founder=True)])
+    assert stage == "unknown" and "Xiaomi" in basis
+    team = Company(slug="t", name="Plain Org", kind="company", founded_date=today - timedelta(days=240), attrs=gh)
+    stage, basis = estimate_stage(team, [], [], [CompanyPerson()] * 3)
+    assert stage == "unknown" and "GitHub org created" in basis and "founded date" not in basis
+    for kind in ("project", "lab"):
+        c = Company(slug=kind, name="Shanghai Innovation Institute", kind=kind,
+                    founded_date=today - timedelta(days=60), attrs=gh)
+        assert estimate_stage(c, [], [], [CompanyPerson(is_founder=True)])[0] == "unknown"
+    formation = Signal(signal_type="formation_language", source_type="github", title="x", event_at=EVENT, meta={})
+    stage, basis = estimate_stage(team, [formation], [], [CompanyPerson()] * 3)
+    assert stage == "pre_seed" and "formation signal" in basis
+
+
 def test_apply_stage_estimates_writes_inference_provenance(db):
-    ingest_batch(db, _github_batch(org_created=(clock.today() - timedelta(days=90)).isoformat()))
+    batch = _github_batch(org_created=(clock.today() - timedelta(days=90)).isoformat())
+    batch.relations.append(Relation(kind="founder", src=gh_user_ref("ada"), dst=gh_org_ref("tactica")))
+    ingest_batch(db, batch)
     assert apply_stage_estimates(db) == 1
     c = db.scalars(select(Company)).one()
-    assert c.stage == "formation" and "GitHub org creation date" in c.stage_basis
+    assert c.stage == "formation" and "GitHub org created" in c.stage_basis
     prov = db.scalars(select(FieldProvenance).where(FieldProvenance.field == "stage")).one()
     assert prov.epistemic == "INFERENCE"
     assert apply_stage_estimates(db) == 0
@@ -348,3 +372,115 @@ def test_bulk_metric_backfill_counts_rows(db):
            for i in range(90)]
     assert ingest_batch(db, ProviderBatch(provider="github", metrics=pts)).metrics_upserted == 90
     assert _count(db, MetricSnapshot) == 90
+
+
+# ── snapshot clock pin ───────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def pinned_clock(monkeypatch):
+    """No TODAY_OVERRIDE; restore the pin afterwards."""
+    from radar.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "today_override", None)
+    yield
+    clock.set_as_of(None)
+
+
+def test_ingestion_runs_use_wall_clock_not_the_pinned_day(db, pinned_clock):
+    clock.set_as_of(date(2026, 1, 15))  # a snapshot day that is not today
+    assert clock.now().date() == date(2026, 1, 15)
+    run, _ = run_provider(session_scope, "github", _github_batch, params={})
+    real = datetime.now(UTC)
+    assert abs((run.started_at - real).total_seconds()) < 120
+    assert abs((run.finished_at - real).total_seconds()) < 120
+
+
+def test_successful_live_run_clears_the_pin_but_demo_and_failures_do_not(db, pinned_clock):
+    pin = date(2026, 1, 15)
+    clock.set_as_of(pin)
+    run_provider(session_scope, "demo", lambda: ProviderBatch(provider="demo"), params={}, is_demo=True)
+    assert clock.as_of() == pin
+
+    def boom() -> ProviderBatch:
+        raise RuntimeError("down")
+
+    run_provider(session_scope, "github", boom, params={})
+    assert clock.as_of() == pin
+    run_provider(session_scope, "github", _github_batch, params={})
+    assert clock.as_of() is None and clock.today() == datetime.now(UTC).date()
+
+
+def test_init_from_db_detects_live_runs_by_provider_not_timestamp(db, pinned_clock):
+    pinned = datetime(2026, 1, 15, 18, tzinfo=UTC)  # legacy rows were stamped with the pinned time
+    db.add(IngestionRun(provider="snapshot", status="ok", started_at=pinned, finished_at=pinned,
+                        params={"as_of": "2026-01-15"}))
+    db.add(IngestionRun(provider="github", status="ok", started_at=pinned, finished_at=pinned,
+                        params={"snapshot": True, "file": "0003_github.json.gz"}))
+    db.add(IngestionRun(provider="demo", status="ok", started_at=pinned, finished_at=pinned, params={}))
+    db.add(IngestionRun(provider="arxiv", status="error", started_at=pinned, finished_at=pinned, params={}))
+    db.commit()
+    assert clock.init_from_db() == date(2026, 1, 15)  # only the snapshot replay, demo set and a failure
+    db.add(IngestionRun(provider="github", status="ok", started_at=pinned, finished_at=pinned, params={}))
+    db.commit()
+    assert clock.init_from_db() is None  # same timestamp as the snapshot, still a live run
+
+
+def test_fictional_dataset_never_points_at_real_hosts_or_claims_verified_facts(db):
+    from urllib.parse import urlparse
+
+    from radar.demo.fictional import build_fictional_batch
+    batch, _ = build_fictional_batch()
+    stats = ingest_batch(db, batch, is_demo=True)
+    assert stats.errors == []
+    prov = db.scalars(select(FieldProvenance)).all()
+    assert prov
+    hosts = {urlparse(p.source_url).hostname for p in prov if p.source_url}
+    assert hosts and all(h.endswith(".example") for h in hosts), hosts
+    assert {p.epistemic for p in prov} == {"INFERENCE"}  # fictional values are never VERIFIED
+    memberships = [cp.source_url for cp in db.scalars(select(CompanyPerson)) if cp.source_url]
+    assert all(urlparse(u).hostname.endswith(".example") for u in memberships)
+
+
+def test_canonical_url_for_demo_rows_uses_example_hosts():
+    from radar.pipeline.resolve import canonical_url
+
+    assert canonical_url(Company(name="Halcyon", github_org="demo-halcyon", is_demo=True)) == \
+        "https://github.example/demo-halcyon"
+    assert canonical_url(Person(name="Mira", x_handle="mira", is_demo=True)) == "https://x.example/mira"
+    assert canonical_url(Repository(full_name="a/b", is_demo=False)) == "https://github.com/a/b"
+
+
+def test_hn_paper_link_never_overwrites_the_real_title(db):
+    from radar.models import ResearchPaper
+    from radar.providers.base import PaperRecord, paper_ref
+    from radar.providers.hackernews import build_batch
+
+    hit = {"objectID": "1", "title": "Show HN: something", "url": "https://arxiv.org/abs/2610.04956v2",
+           "created_at_i": int(EVENT.timestamp()), "points": 50, "num_comments": 3, "author": "x"}
+    # HN first: the new row is a flagged stub
+    ingest_batch(db, build_batch([hit], now=EVENT))
+    p = db.scalars(select(ResearchPaper)).one()
+    assert p.attrs.get("stub") is True and p.url == "https://arxiv.org/abs/2610.04956"
+    # arXiv arrives: real title, stub cleared
+    ingest_batch(db, ProviderBatch(provider="arxiv", papers=[PaperRecord(
+        ref=paper_ref("2610.04956"), arxiv_id="2610.04956", title="Real Title About SLOs",
+        url="https://arxiv.org/abs/2610.04956", attrs={"author_count": 1})]))
+    db.refresh(p)
+    assert p.title == "Real Title About SLOs" and not p.attrs.get("stub")
+    # HN again: the real title stays
+    ingest_batch(db, build_batch([{**hit, "objectID": "2"}], now=EVENT))
+    db.refresh(p)
+    assert p.title == "Real Title About SLOs" and not p.attrs.get("stub")
+    titles = {f.value for f in db.scalars(select(FieldProvenance).where(FieldProvenance.field == "title"))}
+    assert titles == {"Real Title About SLOs"}
+
+
+def test_truncated_board_does_not_close_unseen_jobs(db):
+    ingest_batch(db, _jobs("1", "2", "3"))
+    partial = _jobs("1")
+    partial.jobs = [j.model_copy(update={"complete": False}) for j in partial.jobs]
+    ingest_batch(db, partial)
+    assert _count(db, Job, Job.closed_at.is_not(None)) == 0  # a lower bound is not a closure
+    ingest_batch(db, _jobs("1"))  # complete crawl: now the others really are gone
+    assert _count(db, Job, Job.closed_at.is_not(None)) == 2

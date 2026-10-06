@@ -1,8 +1,11 @@
 """Deterministic, conservative company stage estimation (epistemic: INFERENCE).
 
-We only claim an early stage when the evidence is strong (young org, tiny observed
-team, no funding signal). Everything else is 'unknown' — a wrong 'seed' label is
-worse than an honest 'unknown'.
+We only claim an early stage when the evidence is strong: a young org, a tiny
+observed team, no funding signal AND positive early-stage evidence (a founder on
+record, a formation signal, or a declared stealth company). A young GitHub org on
+its own is not enough — large companies and labs open new orgs all the time — and
+projects, labs and orgs named after a known large organization are never staged.
+Everything else is 'unknown' — a wrong 'seed' label is worse than an honest 'unknown'.
 """
 
 from __future__ import annotations
@@ -25,6 +28,15 @@ PRE_SEED_MAX_MONTHS = 18
 FORMATION_MAX_PEOPLE = 3
 PRE_SEED_MAX_PEOPLE = 10
 FUNDING_SIGNAL_TYPES = {"funding", "funding_round", "funding_announced"}
+EARLY_STAGE_SIGNAL_TYPES = {"formation_language", "x_formation_post", "affiliation_changed"}
+NON_COMPANY_KINDS = {"project", "lab"}
+# Large organizations beyond the thesis affiliation lists whose teams publish under their own GitHub orgs.
+LARGE_ORGS = (
+    "Alibaba", "Ant Group", "Baidu", "ByteDance", "Tencent", "Huawei", "Xiaomi", "RedNote", "Xiaohongshu",
+    "Meituan", "NetEase", "Samsung", "LG", "Sony", "Toyota", "Honda", "Hyundai", "Bosch", "Siemens",
+    "IBM", "Oracle", "Salesforce", "Adobe", "Uber", "Netflix", "Alphabet", "Cisco", "Intel Labs",
+    "Microsoft Research", "Amazon Science", "Apple Machine Learning", "Shanghai AI Laboratory",
+)
 
 _ROUND_STAGE = [
     (re.compile(r"pre[\s\-_]?seed"), "pre_seed"),
@@ -40,13 +52,17 @@ def _months_between(start: date, end: date) -> float:
 
 
 def _declared_created(company: Company) -> tuple[date | None, str]:
+    attrs = company.attrs or {}
     if company.founded_date:
+        # The GitHub provider fills founded_date from the org's created_at: say so, it is not a founding date.
+        if attrs.get("founded_date_basis") == "github_org_created_at":
+            return company.founded_date, "GitHub org created"
         return company.founded_date, "founded date"
     for k in ("created_at", "org_created_at", "github_created_at"):
-        raw = (company.attrs or {}).get(k)
+        raw = attrs.get(k)
         if raw:
             try:
-                return dateparser.isoparse(str(raw)).date(), "GitHub org creation date"
+                return dateparser.isoparse(str(raw)).date(), "GitHub org created"
             except (ValueError, OverflowError):
                 continue
     return None, ""
@@ -99,6 +115,33 @@ def _established(company: Company, repos: Sequence[Repository], created: date | 
     return None
 
 
+def _large_org(company: Company) -> str | None:
+    """Known large organization named by the company / GitHub org (likely a team of it, not a startup)."""
+    if company.is_demo:
+        return None
+    from radar.thesis.loader import get_thesis
+
+    names = [n for tier in get_thesis().affiliation_tiers.values() for n in tier] + list(LARGE_ORGS)
+    text = " ".join(x for x in (company.name, (company.github_org or "").replace("-", " ")) if x).lower()
+    for n in names:
+        if re.search(r"(?<![a-z0-9])" + re.escape(n.lower()) + r"(?![a-z0-9])", text):
+            return n
+    return None
+
+
+def _early_evidence(company: Company, signals: Sequence[Signal], people: Sequence[object]) -> str | None:
+    """Positive evidence of an early-stage *company* (not just a young GitHub org)."""
+    if company.kind == "stealth":
+        return "declared stealth company"
+    founders = sum(1 for p in people if getattr(p, "is_founder", False))
+    if founders:
+        return f"{founders} founder{'s' if founders != 1 else ''} on record"
+    kinds = sorted({s.signal_type for s in signals if s.signal_type in EARLY_STAGE_SIGNAL_TYPES})
+    if kinds:
+        return f"formation signal ({', '.join(kinds)})"
+    return None
+
+
 def estimate_stage(
     company: Company,
     signals: Sequence[Signal],
@@ -117,6 +160,12 @@ def estimate_stage(
     established = _established(company, repos, created)
     if established:
         return "growth", established
+    if company.kind in NON_COMPANY_KINDS:
+        return "unknown", f"Listed as a {company.kind}, not a company; stage not inferred."
+    big = _large_org(company)
+    if big:
+        return "unknown", (f"Name matches established organization '{big}' — likely a team or project of it; "
+                           "stage not inferred.")
     if created is None:
         if company.kind == "stealth" and 0 < n_people <= FORMATION_MAX_PEOPLE:
             return "formation", f"Stealth company with {n_people} known people and no funding signal."
@@ -126,10 +175,15 @@ def estimate_stage(
     age = f"{created_basis} {created.isoformat()} (~{max(months, 0):.0f} months ago)"
     if months < 0:
         return "unknown", f"Creation date {created.isoformat()} is in the future; not inferring stage."
+    young = months <= PRE_SEED_MAX_MONTHS and n_people <= PRE_SEED_MAX_PEOPLE
+    evidence = _early_evidence(company, signals, people) if young else None
+    if young and evidence is None:
+        return "unknown", (f"{age}; {n_people} known people; no founder, formation signal or stealth declaration "
+                           "— a young org alone does not establish an early-stage company.")
     if months <= FORMATION_MAX_MONTHS and n_people <= FORMATION_MAX_PEOPLE:
-        return "formation", f"{age}; {n_people} known people; no funding signal."
-    if months <= PRE_SEED_MAX_MONTHS and n_people <= PRE_SEED_MAX_PEOPLE:
-        return "pre_seed", f"{age}; {n_people} known people; no funding signal."
+        return "formation", f"{age}; {n_people} known people; {evidence}; no funding signal."
+    if young:
+        return "pre_seed", f"{age}; {n_people} known people; {evidence}; no funding signal."
     return "unknown", f"{age}; {n_people} known people; too old or too large to infer stage without funding data."
 
 
@@ -149,8 +203,16 @@ def apply_stage_estimates(session: Session, *, only_ids: Sequence | None = None)
     for r in session.scalars(select(Repository).where(Repository.company_id.in_(ids))):
         repos[r.company_id].append(r)
     people: dict = defaultdict(list)
+    members: dict = defaultdict(set)
     for cp in session.scalars(select(CompanyPerson).where(CompanyPerson.company_id.in_(ids))):
         people[cp.company_id].append(cp)
+        members[cp.person_id].add(cp.company_id)
+    if members:  # formation signals on the company's people count as early-stage evidence too
+        for s in session.scalars(select(Signal).where(
+                Signal.entity_type == "person", Signal.entity_id.in_(list(members)),
+                Signal.signal_type.in_(EARLY_STAGE_SIGNAL_TYPES))):
+            for cid in members[s.entity_id]:
+                sigs[cid].append(s)
 
     changed = 0
     for c in companies:
