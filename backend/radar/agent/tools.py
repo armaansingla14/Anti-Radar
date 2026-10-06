@@ -111,7 +111,8 @@ class SourceRegistry:
         if dedupe in self._by_key:
             return self._by_id[self._by_key[dedupe]]
         sid = f"S{len(self._by_id) + 1}"
-        suspicious = detect_injection(f"{title}\n{content}")
+        # RADAR's own computed records (radar://...) are not external content; everything else is scanned.
+        suspicious = [] if url.startswith("radar://") else detect_injection(f"{title}\n{content}")
         src = RegisteredSource(
             id=sid, url=url, title=title, source_type=source_type, content=content,
             fetched_at=fetched_at or clock.now(), suspicious=suspicious,
