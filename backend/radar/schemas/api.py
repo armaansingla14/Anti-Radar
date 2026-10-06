@@ -593,3 +593,64 @@ class GraphEdge(BaseModel):
 class GraphOut(BaseModel):
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+# ── Workflow responses (watchlist, feedback, ingest) ─────────────────────────
+
+
+class WatchItemOut(BaseModel):
+    id: str
+    entity_type: str  # company | person | repository | topic
+    entity_id: str
+    topic_key: str | None = None
+    name: str
+    slug: str | None = None
+    note: str | None = None
+    created_at: datetime
+    last_seen_at: datetime
+    score: int | None = None
+    delta_7d: float | None = None
+    is_demo: bool = False
+    changes: list[str] = Field(default_factory=list)  # deterministic, since last_seen_at
+
+
+class WatchlistOut(BaseModel):
+    name: str
+    items: list[WatchItemOut]
+    changes_since_last_visit: int  # total change lines across items
+
+
+class OkOut(BaseModel):
+    ok: bool = True
+    detail: str | None = None
+
+
+class FeedbackOut(BaseModel):
+    ok: bool = True
+    weights: dict[str, float]  # all learned preference multipliers after this feedback
+    changed: dict[str, float] = Field(default_factory=dict)  # the multipliers this feedback moved
+    dismissed: bool = False
+
+
+class IngestRunOut(BaseModel):
+    provider: str
+    status: str
+    records_fetched: int = 0
+    records_accepted: int = 0
+    records_rejected: int = 0
+    signals_created: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class IngestEntityRef(BaseModel):
+    type: str  # company | person | repository
+    id: str
+    slug: str
+    name: str
+
+
+class IngestOut(BaseModel):
+    run: IngestRunOut
+    entity: IngestEntityRef | None = None
+    info: dict[str, Any] = Field(default_factory=dict)  # e.g. X text_source: oembed | user_provided
+    recomputed: bool = False
