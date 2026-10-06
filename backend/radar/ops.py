@@ -193,6 +193,58 @@ def crawl_company_sites(limit: int = 25, *, only_missing: bool = True):
     return results
 
 
+def probe_attention(limit: int = 60):
+    """Measure Hacker News attention for the highest-momentum companies.
+
+    Absence of a story in our corpus is not evidence of zero attention, so before RADAR
+    claims "no HN discussion" (Attention Gap, quiet-velocity strange signal) it asks HN
+    directly: Algolia search over 90 days for the company's flagship repo and domain.
+    Stored as metric_snapshots `hn_probe_mentions` / `hn_probe_points` (FACT, dated)."""
+    from sqlalchemy import select
+
+    from radar.models import Company, Repository, ScoreSnapshot
+    from radar.providers.base import MetricPoint, ProviderBatch, domain_ref, gh_org_ref
+    from radar.providers.hackernews import HackerNewsProvider
+
+    day = clock.today()
+    with session_scope() as s:
+        rows = s.execute(
+            select(Company, ScoreSnapshot)
+            .join(ScoreSnapshot, ScoreSnapshot.entity_id == Company.id)
+            .where(Company.is_demo.is_(False), ScoreSnapshot.day == day)
+        ).all()
+        rows.sort(key=lambda cs: -float(((cs[1].components or {}).get("technical_momentum") or {}).get("value", 0)))
+        targets = []
+        for c, _snap in rows[:limit]:
+            repo = s.scalar(select(Repository).where(Repository.company_id == c.id)
+                            .order_by(Repository.stars.desc()).limit(1))
+            terms = [t for t in (repo.full_name if repo else None, c.domain) if t]
+            ref = gh_org_ref(c.github_org) if c.github_org else (domain_ref(c.domain) if c.domain else None)
+            if terms and ref is not None:
+                targets.append((ref, terms))
+    hn = HackerNewsProvider()
+
+    def fn() -> ProviderBatch:
+        batch = ProviderBatch(provider="hackernews")
+        for ref, terms in targets:
+            mentions, points, failed = 0, 0, False
+            for term in terms:
+                m = hn.mentions(term, days=90)
+                if m.get("error"):
+                    failed = True
+                    batch.errors.append(f"probe {term}: {m['error']}")
+                    break
+                mentions += m.get("count", 0)
+                points += m.get("points_total", 0)
+            if failed:
+                continue
+            batch.metrics.append(MetricPoint(entity=ref, metric="hn_probe_mentions", day=day, value=mentions))
+            batch.metrics.append(MetricPoint(entity=ref, metric="hn_probe_points", day=day, value=points))
+        return batch
+
+    return _run("hackernews", fn, {"probe": "attention", "targets": len(targets)}, hn.client.stats)
+
+
 # ── Derivation ───────────────────────────────────────────────────────────────
 
 

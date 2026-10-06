@@ -100,6 +100,40 @@ def load_snapshot(directory: Path = SNAPSHOT_DIR) -> dict[str, Any]:
     return {**totals, "as_of": as_of.isoformat()}
 
 
+def backfill_first_seen() -> None:
+    """Bootstrap only: when the radar starts from a snapshot, every entity was "seen" on capture
+    day. Use the earliest public evidence instead (repo/org creation, paper date, earliest signal),
+    so "Unknown Yesterday" means *appeared recently*, not "loaded today"."""
+    stmts = [
+        """UPDATE repositories SET first_seen_at = LEAST(first_seen_at, gh_created_at)
+           WHERE is_demo = false AND gh_created_at IS NOT NULL""",
+        """UPDATE research_papers SET first_seen_at = LEAST(first_seen_at, published_at)
+           WHERE is_demo = false AND published_at IS NOT NULL""",
+        """UPDATE companies c SET first_seen_at = LEAST(c.first_seen_at, x.t) FROM (
+             SELECT company_id, MIN(gh_created_at) t FROM repositories WHERE company_id IS NOT NULL GROUP BY 1
+           ) x WHERE c.id = x.company_id AND c.is_demo = false AND x.t IS NOT NULL""",
+        """UPDATE companies SET first_seen_at = LEAST(first_seen_at, founded_date::timestamptz)
+           WHERE is_demo = false AND founded_date IS NOT NULL""",
+        """UPDATE companies c SET first_seen_at = LEAST(c.first_seen_at, x.t) FROM (
+             SELECT entity_id, MIN(event_at) t FROM signals WHERE is_demo = false GROUP BY 1
+           ) x WHERE c.id = x.entity_id AND c.is_demo = false""",
+        """UPDATE people p SET first_seen_at = LEAST(p.first_seen_at, x.t) FROM (
+             SELECT pa.person_id, MIN(rp.published_at) t FROM paper_authors pa
+             JOIN research_papers rp ON rp.id = pa.paper_id GROUP BY 1
+           ) x WHERE p.id = x.person_id AND p.is_demo = false AND x.t IS NOT NULL""",
+        """UPDATE people p SET first_seen_at = LEAST(p.first_seen_at, x.t) FROM (
+             SELECT rc.person_id, MIN(r.gh_created_at) t FROM repo_contributors rc
+             JOIN repositories r ON r.id = rc.repository_id GROUP BY 1
+           ) x WHERE p.id = x.person_id AND p.is_demo = false AND x.t IS NOT NULL""",
+        """UPDATE people p SET first_seen_at = LEAST(p.first_seen_at, x.t) FROM (
+             SELECT entity_id, MIN(event_at) t FROM signals WHERE is_demo = false GROUP BY 1
+           ) x WHERE p.id = x.entity_id AND p.is_demo = false""",
+    ]
+    with engine().begin() as c:
+        for q in stmts:
+            c.execute(text(q))
+
+
 def _dt(v: str | None) -> datetime | None:
     return datetime.fromisoformat(v) if v else None
 
@@ -232,6 +266,7 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
     out: dict[str, Any] = {}
     if snapshot:
         out["snapshot"] = load_snapshot()
+        backfill_first_seen()
     if fictional:
         out["fictional"] = seed_fictional()
     out["llm_cache"] = import_llm_cache()
