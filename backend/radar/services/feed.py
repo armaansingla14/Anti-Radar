@@ -74,6 +74,12 @@ from radar.services.entities import (
 from radar.settings import get_settings
 
 CARD_LIMIT = 12
+EMERGING_MIN_SCORE = 45  # "emerging companies" headline count: early-stage and scoring at least this
+NEW_MIN_SCORE = 30  # "entered the radar" count ignores unscored noise
+# Measurements are dated when observed (not when the underlying change happened), so they
+# can't be compared week-over-week; topic momentum counts discrete events only.
+MEASUREMENT_SIGNALS = frozenset({"star_velocity", "star_acceleration", "commit_acceleration", "hiring_active",
+                                 "new_contributors"})
 FOUNDER_LIMIT = 8
 FOUNDER_FLOOR = 30  # founder cards need at least this founder score
 STRANGE_LIMIT = 5
@@ -195,16 +201,32 @@ def candidate_people(session: Session, *, include_demo: bool, theme: str | None 
     return list(session.scalars(q))
 
 
+def _cap_demo(ranked: list[Ranked], limit: int) -> list[Ranked]:
+    """Fictional examples are there to demonstrate behaviour; they never take more than half of a
+    list when real entities are available. Order (by priority) is preserved."""
+    max_demo = (limit + 1) // 2
+    out, n_demo = [], 0
+    for r in ranked:
+        if getattr(r.entity, "is_demo", False):
+            if n_demo >= max_demo:
+                continue
+            n_demo += 1
+        out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def top_company_cards(session: Session, *, include_demo: bool, theme: str | None = None, new_only: bool = False,
                       limit: int = CARD_LIMIT) -> list[IntelCard]:
     ranked = _rank(session, candidate_companies(session, include_demo=include_demo, theme=theme, new_only=new_only))
-    return P.company_cards(session, [r.entity for r in ranked[:limit]])
+    return P.company_cards(session, [r.entity for r in _cap_demo(ranked, limit)])
 
 
 def top_founder_cards(session: Session, *, include_demo: bool, theme: str | None = None, new_only: bool = False,
                       limit: int = FOUNDER_LIMIT) -> list[IntelCard]:
     ranked = _rank(session, candidate_people(session, include_demo=include_demo, theme=theme, new_only=new_only))
-    return P.founder_intel_cards(session, [r.entity for r in ranked[:limit]])
+    return P.founder_intel_cards(session, [r.entity for r in _cap_demo(ranked, limit)])
 
 
 def strange_signals(session: Session, *, include_demo: bool, limit: int | None = STRANGE_LIMIT
@@ -264,6 +286,8 @@ def topic_moves(session: Session, *, include_demo: bool) -> list[TopicMove]:
     paper_ids = {e for t in by_topic.values() for e in t["paper"]}
     new_papers = set(session.scalars(select(ResearchPaper.id).where(
         ResearchPaper.id.in_(paper_ids), ResearchPaper.published_at >= now - timedelta(days=7)))) if paper_ids else set()
+    paper_signal_ids = {str(sid) for sid in session.scalars(
+        select(Signal.id).where(Signal.source_type == "arxiv"))}
     out = []
     for key, t in by_topic.items():
         cids = [c for c in dict.fromkeys(t["company"]) if c in snaps]
@@ -272,11 +296,17 @@ def topic_moves(session: Session, *, include_demo: bool) -> list[TopicMove]:
         sids_prev: set[str] = set()
         for e in dict.fromkeys(t["all"]):
             for s in act_now.get(e, {}).get("signals", []):
-                sids_now[str(s.id)] = None
+                if s.signal_type not in MEASUREMENT_SIGNALS:
+                    sids_now[str(s.id)] = None
             for s in act_prev.get(e, {}).get("signals", []):
-                sids_prev.add(str(s.id))
+                if s.signal_type not in MEASUREMENT_SIGNALS:
+                    sids_prev.add(str(s.id))
         mean = sum(deltas.values()) / len(deltas) if deltas else 0.0
-        momentum = round(mean + 0.5 * (len(sids_now) - len(sids_prev)), 1)
+        # Paper volume depends on how deep each arXiv category was fetched, so it is reported
+        # but not used for week-over-week momentum.
+        ev_now = [x for x in sids_now if x not in paper_signal_ids]
+        ev_prev = [x for x in sids_prev if x not in paper_signal_ids]
+        momentum = round(mean + 0.5 * (len(ev_now) - len(ev_prev)), 1)
         out.append(TopicMove(key, t["label"], t["theme"], cids, deltas, len(sids_now), len(sids_prev),
                              list(sids_now), sum(1 for p in dict.fromkeys(t["paper"]) if p in new_papers), momentum))
     return out
@@ -295,16 +325,25 @@ def thesis_shifts(session: Session, *, include_demo: bool, moves: list[TopicMove
         heating = m.momentum > 0
         parts = []
         moved = [d for d in m.deltas.values() if (d > 0 if heating else d < 0)]
+        if not _shift_supported(m, moved, heating):
+            continue
         if moved:
+            mean = sum(moved) / len(moved)
             parts.append(f"{_plural(len(moved), 'tracked company', 'tracked companies')} "
-                         f"{'accelerated' if heating else 'cooled'} (score Δ7d)")
+                         f"{'accelerated' if heating else 'cooled'} this week (mean {mean:+.1f} score points)")
         if m.new_papers:
-            parts.append(_plural(m.new_papers, "new paper"))
-        parts.append(f"{_plural(m.signals_7d, 'signal')} this week vs {m.signals_prev_7d} the week before")
+            parts.append(f"{_plural(m.new_papers, 'new paper')} in the last 7 days")
         out.append(ThesisShift(topic_key=m.key, label=m.label, theme=m.theme,
                                direction="heating" if heating else "cooling", detail="; ".join(parts),
                                momentum=m.momentum))
     return _select_shifts(out, moves)
+
+
+def _shift_supported(m: TopicMove, moved: list[float], heating: bool) -> bool:
+    """A thesis shift needs real breadth of evidence, not one entity or one week of noise."""
+    if heating:
+        return len(moved) >= 2 and m.momentum >= 2
+    return len(moved) >= 2 and sum(moved) / len(moved) <= -3
 
 
 def _select_shifts(shifts: list[ThesisShift], moves: list[TopicMove]) -> list[ThesisShift]:
@@ -330,10 +369,9 @@ def _select_shifts(shifts: list[ThesisShift], moves: list[TopicMove]) -> list[Th
 def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: int) -> RadarCounts:
     today, now = clock.today(), clock.now()
     cur = latest_score_subq("company", today, min_day=today - timedelta(days=14))
-    early = or_(Company.stage.in_(("formation", "pre_seed", "unknown")), Company.kind.in_(("stealth", "project")))
-    q = (select(func.count()).select_from(Company).outerjoin(cur, cur.c.entity_id == Company.id)
-         .where(Company.dismissed.is_(False), early,
-                or_(cur.c.score >= 40, Company.first_seen_at >= now - timedelta(days=30))))
+    early = Company.stage.not_in(("growth", "public", "series_a"))
+    q = (select(func.count()).select_from(Company).join(cur, cur.c.entity_id == Company.id)
+         .where(Company.dismissed.is_(False), early, cur.c.score >= EMERGING_MIN_SCORE))
     pcur = latest_score_subq("person", today, min_day=today - timedelta(days=14))
     pq = (select(func.count()).select_from(Person).join(pcur, pcur.c.entity_id == Person.id)
           .where(Person.dismissed.is_(False), pcur.c.score >= 50))
@@ -343,7 +381,8 @@ def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: i
         q, pq, sq = (q.where(Company.is_demo.is_(False)), pq.where(Person.is_demo.is_(False)),
                      sq.where(Signal.is_demo.is_(False)))
     ne = new_entities(session, today, days=NEW_DAYS)
-    n_new = sum(1 for rows in ne.values() for r in rows if include_demo or not r["is_demo"])
+    n_new = sum(1 for rows in ne.values() for r in rows
+                if (include_demo or not r["is_demo"]) and (r.get("score") or 0) >= NEW_MIN_SCORE)
     return RadarCounts(emerging_companies=session.scalar(q) or 0, founders=session.scalar(pq) or 0,
                        strange_signals=n_strange, thesis_shifts=n_shifts, new_entities_7d=n_new,
                        signals_24h=session.scalar(sq) or 0)
