@@ -6,6 +6,11 @@ Precedence:
    real-data snapshot (no live ingestion yet) — so a snapshot captured on
    2026-10-06 still reads correctly when the repo is cloned months later
 3. the real current time
+
+`now()`/`today()` are the *data* clock (what day the radar is reasoning about).
+Operational timestamps (IngestionRun.started_at/finished_at) must use
+`wall_now()` — real time, never pinned — so they can't be confused with the
+snapshot day.
 """
 
 from __future__ import annotations
@@ -38,6 +43,11 @@ def today() -> date:
     return d or datetime.now(timezone.utc).date()
 
 
+def wall_now() -> datetime:
+    """Real wall-clock time; ignores TODAY_OVERRIDE and the snapshot pin."""
+    return datetime.now(timezone.utc)
+
+
 def now() -> datetime:
     real = datetime.now(timezone.utc)
     d = _fixed_day()
@@ -46,8 +56,17 @@ def now() -> datetime:
     return datetime.combine(d, time(18, 0), tzinfo=timezone.utc)
 
 
+def is_live_run(provider: str, params: dict | None) -> bool:
+    """A run that fetched fresh data (not the snapshot replay, not the fictional demo set)."""
+    return provider not in ("snapshot", "demo") and not (params or {}).get("snapshot")
+
+
 def init_from_db() -> date | None:
-    """Pin "today" to the snapshot date when no live ingestion has happened since it was loaded."""
+    """Pin "today" to the snapshot date when no live ingestion has happened in this database.
+
+    Live runs are recognised by provider/params (see `is_live_run`), not by comparing
+    timestamps: older databases stamped runs with the pinned time, so ordering is unreliable.
+    """
     from sqlalchemy import select
 
     from radar.db import session_scope
@@ -63,13 +82,13 @@ def init_from_db() -> date | None:
                 set_as_of(None)
                 return None
             snap_day = date.fromisoformat(snap.params.get("as_of"))
-            live = s.execute(
-                select(IngestionRun.id).where(
+            rows = s.execute(
+                select(IngestionRun.provider, IngestionRun.params).where(
                     IngestionRun.provider.not_in(["snapshot", "demo"]),
-                    IngestionRun.started_at > snap.finished_at,
                     IngestionRun.status.in_(["ok", "partial"]),
-                ).limit(1)
-            ).first()
+                )
+            )
+            live = any(is_live_run(p, params) for p, params in rows)
             set_as_of(None if live else snap_day)
             return _as_of
     except Exception:  # noqa: BLE001 — DB not ready: fall back to real time
