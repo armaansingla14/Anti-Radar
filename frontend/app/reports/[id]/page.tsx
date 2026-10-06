@@ -144,7 +144,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           <span className="font-serif text-[24px] text-ink">Sources</span>
           <span className="label tnum">{report.sources.length} cited</span>
         </h2>
-        <Sources sources={report.sources} />
+        <Sources sources={report.sources} demo={report.is_demo} />
       </section>
 
       <footer className="mt-10 flex flex-wrap justify-between gap-3 border-t border-rule pt-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">

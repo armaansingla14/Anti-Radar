@@ -1,8 +1,9 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { DemoBadge, EpistemicBadge } from "@/components/Badges";
+import { MaybeExternal } from "@/components/HandleLinks";
 import { SourceLink } from "@/components/SourceLink";
-import { fmtCompact, fmtDate, fmtNum, hrefFor, humanize, isSafeUrl } from "@/lib/format";
+import { externalHref, fmtCompact, fmtDate, fmtNum, hrefFor, humanize } from "@/lib/format";
 import type { EntityLink, JsonObject, Narrative, PaperCard, ReportRef, RepoCard } from "@/lib/types";
 import { GeneratorLabel, Quiet } from "./primitives";
 
@@ -32,13 +33,9 @@ export function RepoTable({ repos }: { repos: RepoCard[] }) {
             <tr key={r.id} className="border-b border-rule">
               <td className={clsx(td, "min-w-[260px]")}>
                 <div className="flex flex-wrap items-center gap-2">
-                  {isSafeUrl(r.url) ? (
-                    <a href={r.url} target="_blank" rel="noopener noreferrer nofollow" className="link font-mono text-[12.5px] text-ink">
-                      {r.full_name}
-                    </a>
-                  ) : (
-                    <span className="font-mono text-[12.5px] text-ink">{r.full_name}</span>
-                  )}
+                  <MaybeExternal href={externalHref(r.url, r.is_demo)} className="font-mono text-[12.5px] text-ink">
+                    {r.full_name}
+                  </MaybeExternal>
                   {r.is_demo && <DemoBadge />}
                 </div>
                 {r.description && <p className="mt-0.5 line-clamp-2 max-w-[62ch] text-[12.5px] leading-snug text-ink-2">{r.description}</p>}
@@ -79,13 +76,9 @@ export function PaperList({ papers, focusName }: { papers: PaperCard[]; focusNam
             {p.is_demo && <DemoBadge />}
           </div>
           <h4 className="mt-1 font-serif text-[18px] leading-snug text-ink">
-            {isSafeUrl(p.url) ? (
-              <a href={p.url} target="_blank" rel="noopener noreferrer nofollow" className="decoration-accent decoration-1 underline-offset-4 hover:underline">
-                {p.title}
-              </a>
-            ) : (
-              p.title
-            )}
+            <MaybeExternal href={externalHref(p.url, p.is_demo)} plain className="decoration-accent decoration-1 underline-offset-4 hover:underline">
+              {p.title}
+            </MaybeExternal>
           </h4>
           <p className="mt-1 text-[12.5px] text-ink-2">
             {p.authors.slice(0, 8).map((a, i) => (
@@ -100,8 +93,8 @@ export function PaperList({ papers, focusName }: { papers: PaperCard[]; focusNam
           {p.why_it_matters && <p className="mt-2 max-w-[72ch] border-l-2 border-accent pl-3 text-[13px] leading-snug text-ink">{p.why_it_matters}</p>}
           <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
             <span className="font-mono text-[10.5px] text-ink-3">arXiv {p.arxiv_id}</span>
-            {p.code_urls.filter(isSafeUrl).slice(0, 2).map((u) => (
-              <SourceLink key={u} url={u}>
+            {p.code_urls.filter((u) => externalHref(u, p.is_demo)).slice(0, 2).map((u) => (
+              <SourceLink key={u} url={u} demo={p.is_demo}>
                 code
               </SourceLink>
             ))}
@@ -127,7 +120,7 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 
 /** Hiring summary (roles by class, new in 30d) plus the job list. */
-export function HiringPanel({ hiring, jobs }: { hiring: JsonObject; jobs: JsonObject[] }) {
+export function HiringPanel({ hiring, jobs, demo = false }: { hiring: JsonObject; jobs: JsonObject[]; /** Fictional company: never link to real hosts. */ demo?: boolean }) {
   const open = num(hiring.open_roles) ?? jobs.length;
   const technical = num(hiring.technical_roles);
   const new30 = num(hiring.new_30d);
@@ -172,12 +165,12 @@ export function HiringPanel({ hiring, jobs }: { hiring: JsonObject; jobs: JsonOb
       {jobs.length > 0 && (
         <ul className="mt-5 divide-y divide-rule border-y border-rule">
           {jobs.map((j, i) => {
-            const url = str(j.url);
+            const url = externalHref(str(j.url), demo);
             const title = str(j.title) ?? "Untitled role";
             return (
               <li key={str(j.id) ?? i} className="grid grid-cols-[1fr_auto] items-baseline gap-3 py-2">
                 <span className="min-w-0">
-                  {isSafeUrl(url) ? (
+                  {url ? (
                     <a href={url} target="_blank" rel="noopener noreferrer nofollow" className="link text-[13.5px] text-ink">
                       {title}
                     </a>

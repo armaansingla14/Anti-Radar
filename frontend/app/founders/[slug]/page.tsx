@@ -16,12 +16,13 @@ import { PaperList, RepoTable } from "@/components/entity/Lists";
 import { evidenceIndex, NarrativeBlock } from "@/components/entity/NarrativeBlock";
 import { Contents, Quiet, Section } from "@/components/entity/primitives";
 import { Sources } from "@/components/entity/Sources";
-import { fmtDate, isSafeUrl } from "@/lib/format";
+import { HandleLinks } from "@/components/HandleLinks";
+import { fmtDate, NO_COMPANY_LABEL, personKindLabel } from "@/lib/format";
 
 export async function generateMetadata({ params }: PageProps<"/founders/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const p = await loadFounder(decodeURIComponent(slug)).catch(() => null);
-  return { title: p ? p.card.name : "Founder" };
+  return { title: p ? p.card.name : "Person" };
 }
 
 export default async function FounderPage({ params, searchParams }: PageProps<"/founders/[slug]">) {
@@ -51,7 +52,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
     "why-now",
     "Why now",
     detail.why_now ? (
-      <NarrativeBlock narrative={detail.why_now} evidence={evidence} size="lead" />
+      <NarrativeBlock narrative={detail.why_now} evidence={evidence} size="lead" demo={p.is_demo} />
     ) : p.why_now.length > 0 ? (
       <ul className="space-y-2">
         {p.why_now.map((w, i) => (
@@ -65,7 +66,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
       <Quiet>No why-now narrative yet — not enough dated signals to say what changed.</Quiet>
     ),
   );
-  const facts = sec("facts", "Facts", <FactsTable facts={detail.facts} />);
+  const facts = sec("facts", "Facts", <FactsTable facts={detail.facts} demo={p.is_demo} />);
   const companies = sec(
     "companies",
     "Companies",
@@ -73,7 +74,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
       <CompanyTable companies={detail.companies} caption={`Companies linked to ${p.name}`} />
     ) : (
       <Quiet>
-        No company on record. {p.name} is a formation-stage target: watch for a new GitHub org, domain or “starting something” post.
+        {NO_COMPANY_LABEL}. Watch for a new GitHub org, domain or “starting something” post.
       </Quiet>
     ),
     <span className="tnum">{detail.companies.length}</span>,
@@ -109,7 +110,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
       {detail.collaborators.length > 9 ? " · top 9 shown" : ""}
     </span>,
   );
-  const sources = sec("sources", "Sources", <Sources sources={detail.sources} />, <span className="tnum">{detail.sources.length}</span>);
+  const sources = sec("sources", "Sources", <Sources sources={detail.sources} demo={p.is_demo} />, <span className="tnum">{detail.sources.length}</span>);
 
   return (
     <article className="pb-10">
@@ -121,7 +122,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
                 Founders
               </Link>
               <span aria-hidden className="h-px w-5 bg-ink-3" />
-              <span className="label text-ink">{p.is_founder ? "Founder" : "Technical operator"}</span>
+              <span className="label text-ink">{personKindLabel(p)}</span>
               {!p.current_company && <PreCompanyMark />}
               {p.is_demo && <DemoBadge note={detail.data_note} />}
               {p.first_seen_at && <span className="label text-ink-3">First seen {fmtDate(p.first_seen_at)}</span>}
@@ -145,7 +146,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
                     )}
                   </>
                 ) : (
-                  <span className="text-ink-2">No current company on record — formation-stage target.</span>
+                  <span className="text-ink-2">{NO_COMPANY_LABEL}.</span>
                 )}
               </p>
               {p.prior_affiliations.length > 0 && (
@@ -161,21 +162,17 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
               )}
               <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 font-mono text-[11px] text-ink-2">
                 {p.domains.length > 0 && <span className="uppercase tracking-[0.06em] text-ink-3">{p.domains.join(" · ")}</span>}
-                {p.github_handle && (
-                  <a href={`https://github.com/${encodeURIComponent(p.github_handle)}`} target="_blank" rel="noopener noreferrer nofollow" className="link">
-                    github/{p.github_handle} ↗
-                  </a>
-                )}
-                {p.x_handle && (
-                  <a href={`https://x.com/${encodeURIComponent(p.x_handle)}`} target="_blank" rel="noopener noreferrer nofollow" className="link">
-                    x/@{p.x_handle} ↗
-                  </a>
-                )}
-                {isSafeUrl(p.personal_site) && (
-                  <a href={p.personal_site} target="_blank" rel="noopener noreferrer nofollow" className="link">
-                    site ↗
-                  </a>
-                )}
+                <HandleLinks
+                  github={p.github_handle}
+                  x={p.x_handle}
+                  site={p.personal_site}
+                  isDemo={p.is_demo}
+                  format={{
+                    github: (h) => (p.is_demo ? `github/${h} (fictional)` : `github/${h} ↗`),
+                    x: (h) => (p.is_demo ? `x/@${h} (fictional)` : `x/@${h} ↗`),
+                    site: "site ↗",
+                  }}
+                />
               </div>
               {p.is_demo && detail.data_note && (
                 <p className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-3">{detail.data_note} — this person is invented.</p>
@@ -187,6 +184,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
           scoreLabel="Founder Score"
           history={detail.score_history}
           delta7d={p.delta_7d}
+          isDemo={p.is_demo}
         />
         <EntityActions
           entityType="person"

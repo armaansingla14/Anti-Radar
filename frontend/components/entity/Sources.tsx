@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { SourceGlyph } from "@/components/SourceLink";
-import { domainOf, fmtDate, isSafeUrl, sourceLabel } from "@/lib/format";
+import { domainOf, externalHref, fmtDate, sourceLabel } from "@/lib/format";
 import type { JsonObject, SourceRef } from "@/lib/types";
 
 /** radar://company/<slug> → /companies/<slug>; other internal refs → null. */
@@ -28,7 +28,16 @@ export function asSourceRef(s: JsonObject | SourceRef, i: number): SourceRef {
  * to. Internal radar:// references resolve to in-app pages; non-http URLs
  * never become links.
  */
-export function Sources({ sources, idPrefix = "source" }: { sources: (SourceRef | JsonObject)[]; idPrefix?: string }) {
+export function Sources({
+  sources,
+  idPrefix = "source",
+  demo = false,
+}: {
+  sources: (SourceRef | JsonObject)[];
+  idPrefix?: string;
+  /** Sources for a fictional entity: never link to real hosts. */
+  demo?: boolean;
+}) {
   const refs = sources.map(asSourceRef);
   if (refs.length === 0) return <p className="border-y border-rule py-4 text-[13px] text-ink-3">No sources recorded.</p>;
   return (
@@ -38,6 +47,7 @@ export function Sources({ sources, idPrefix = "source" }: { sources: (SourceRef 
         const internal = internalHref(s.url);
         const domain = internal ? "anti radar" : (domainOf(s.url) ?? sourceLabel(s.source_type));
         const title = s.title || s.url || "Untitled source";
+        const href = internal ? null : externalHref(s.url, demo);
         return (
           <li
             key={`${s.id}-${i}`}
@@ -51,8 +61,8 @@ export function Sources({ sources, idPrefix = "source" }: { sources: (SourceRef 
                 <Link href={internal} className="link text-[13px] text-ink">
                   {title}
                 </Link>
-              ) : isSafeUrl(s.url) ? (
-                <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="link text-[13px] text-ink">
+              ) : href ? (
+                <a href={href} target="_blank" rel="noopener noreferrer nofollow" className="link text-[13px] text-ink">
                   {title}
                   <span aria-hidden className="ml-1 text-ink-3">↗</span>
                 </a>

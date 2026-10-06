@@ -3,39 +3,26 @@ import Link from "next/link";
 import { DemoBadge } from "@/components/Badges";
 import { Delta } from "@/components/Delta";
 import { ScoreNumeral } from "@/components/ScoreNumeral";
-import { fmtDate, hrefFor, isSafeUrl, pad2 } from "@/lib/format";
+import { HandleLinks } from "@/components/HandleLinks";
+import { fmtDate, hrefFor, NO_COMPANY_LABEL, pad2 } from "@/lib/format";
 import type { PersonCard } from "@/lib/types";
 
 function Handles({ p }: { p: PersonCard }) {
   return (
     <span className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10.5px] text-ink-2">
-      {p.github_handle && (
-        <a href={`https://github.com/${encodeURIComponent(p.github_handle)}`} target="_blank" rel="noopener noreferrer nofollow" className="link">
-          GH @{p.github_handle}
-        </a>
-      )}
-      {p.x_handle && (
-        <a href={`https://x.com/${encodeURIComponent(p.x_handle)}`} target="_blank" rel="noopener noreferrer nofollow" className="link">
-          X @{p.x_handle}
-        </a>
-      )}
-      {isSafeUrl(p.personal_site) && (
-        <a href={p.personal_site} target="_blank" rel="noopener noreferrer nofollow" className="link">
-          Site ↗
-        </a>
-      )}
+      <HandleLinks github={p.github_handle} x={p.x_handle} site={p.personal_site} isDemo={p.is_demo} />
     </span>
   );
 }
 
-/** The formation-stage marker: no company on record yet. */
+/** Factual marker: no current company on record (not a prediction that one is coming). */
 export function PreCompanyMark({ className }: { className?: string }) {
   return (
     <span
       className={clsx("inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-accent", className)}
-      title="No current company on record — a formation-stage target"
+      title="No current company on record"
     >
-      <span aria-hidden>◆</span> No company yet
+      <span aria-hidden>◆</span> {NO_COMPANY_LABEL}
     </span>
   );
 }
@@ -49,6 +36,9 @@ export function FounderRow({ person: p, rank }: { person: PersonCard; rank: numb
     <li
       data-card
       data-href={href}
+      data-entity-type="person"
+      data-entity-id={p.id}
+      data-demo={String(p.is_demo)}
       tabIndex={0}
       aria-label={p.name}
       className={clsx(
@@ -104,11 +94,11 @@ export function FounderRow({ person: p, rank }: { person: PersonCard; rank: numb
   );
 }
 
-/** Larger spotlight card for pre-company founders — the formation-stage targets. */
+/** Larger spotlight card for people with no company on record. */
 export function PreCompanyCard({ person: p, rank }: { person: PersonCard; rank: number }) {
   const href = hrefFor("person", p.slug);
   return (
-    <article data-card data-href={href} tabIndex={0} aria-label={p.name} className="group flex h-full flex-col gap-3 border-t-2 border-accent pb-6 pt-3">
+    <article data-card data-href={href} data-entity-type="person" data-entity-id={p.id} data-demo={String(p.is_demo)} tabIndex={0} aria-label={p.name} className="group flex h-full flex-col gap-3 border-t-2 border-accent pb-6 pt-3">
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-3">
           <span className="tnum font-mono text-[12px] text-ink">{pad2(rank)}</span>

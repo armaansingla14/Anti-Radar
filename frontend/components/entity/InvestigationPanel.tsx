@@ -147,7 +147,7 @@ export function InvestigationPanel({ entityType, entityId, entityName, onClose }
               <ReportBody kind={report.kind} body={report.body} markdown={report.markdown} density="panel" citePrefix="brief-source" />
               <div className="mt-2 border-t border-ink pt-3">
                 <h3 className="label mb-3 text-ink">Sources · {report.sources.length}</h3>
-                <Sources sources={report.sources} idPrefix="brief-source" />
+                <Sources sources={report.sources} idPrefix="brief-source" demo={report.is_demo} />
               </div>
             </article>
           )}

@@ -19,7 +19,7 @@ import { evidenceIndex, NarrativeBlock } from "@/components/entity/NarrativeBloc
 import { Contents, Quiet, Section, stageText } from "@/components/entity/primitives";
 import { Sources } from "@/components/entity/Sources";
 import { today } from "@/lib/clock";
-import { daysBetween, fmtDate, humanize, isSafeUrl, parseDate } from "@/lib/format";
+import { daysBetween, externalHref, fmtDate, githubUrl, humanize, isSafeUrl, parseDate } from "@/lib/format";
 import type { ChartMarker } from "@/components/LineChart";
 
 export async function generateMetadata({ params }: PageProps<"/companies/[slug]">): Promise<Metadata> {
@@ -64,12 +64,12 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
     "why-now",
     "Why now",
     detail.why_now ? (
-      <NarrativeBlock narrative={detail.why_now} evidence={evidence} size="lead" />
+      <NarrativeBlock narrative={detail.why_now} evidence={evidence} size="lead" demo={c.is_demo} />
     ) : (
       <Quiet>No why-now narrative yet — not enough dated signals to say what changed.</Quiet>
     ),
   );
-  const facts = sec("facts", "Facts", <FactsTable facts={detail.facts} />);
+  const facts = sec("facts", "Facts", <FactsTable facts={detail.facts} demo={c.is_demo} />);
   const timeline = sec(
     "timeline",
     "Signal timeline",
@@ -120,12 +120,12 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
       : null;
   const repos = sec("repositories", "Repositories", <RepoTable repos={detail.repositories} />, <span className="tnum">{detail.repositories.length}</span>);
   const research = sec("research", "Research", <PaperList papers={detail.papers} />, <span className="tnum">{detail.papers.length} papers</span>);
-  const hiring = sec("hiring", "Hiring", <HiringPanel hiring={detail.hiring} jobs={detail.jobs} />);
+  const hiring = sec("hiring", "Hiring", <HiringPanel hiring={detail.hiring} jobs={detail.jobs} demo={c.is_demo} />);
   const whyAnti = sec(
     "why-anti",
     "Why Anti Fund",
     detail.why_anti ? (
-      <NarrativeBlock narrative={detail.why_anti} evidence={evidence} />
+      <NarrativeBlock narrative={detail.why_anti} evidence={evidence} demo={c.is_demo} />
     ) : (
       <Quiet>No thesis rationale generated yet.</Quiet>
     ),
@@ -133,11 +133,13 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
   const risks = sec("risks", "Risks / questions", <RiskList risks={detail.risks} />, <span>deliberately skeptical</span>);
   const reports = sec("reports", "Reports", <ReportsList reports={detail.reports} />, <span className="tnum">{detail.reports.length}</span>);
   const dupes = sec("duplicates", "Possible duplicates", <MatchCandidates candidates={detail.match_candidates} basePath="/companies" />);
-  const sources = sec("sources", "Sources", <Sources sources={detail.sources} />, <span className="tnum">{detail.sources.length}</span>);
+  const sources = sec("sources", "Sources", <Sources sources={detail.sources} demo={c.is_demo} />, <span className="tnum">{detail.sources.length}</span>);
 
-  const links: { href: string; text: string }[] = [];
-  if (isSafeUrl(c.website)) links.push({ href: c.website, text: c.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "") });
-  if (c.github_org) links.push({ href: `https://github.com/${encodeURIComponent(c.github_org)}`, text: `github/${c.github_org}` });
+  // Demo companies never link out to real hosts (github.com etc.); their
+  // identifiers still render as plain text, labelled fictional.
+  const links: { href: string | null; text: string }[] = [];
+  if (isSafeUrl(c.website)) links.push({ href: externalHref(c.website, c.is_demo), text: c.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "") });
+  if (c.github_org) links.push({ href: githubUrl(c.github_org, c.is_demo), text: `github/${c.github_org}` });
 
   return (
     <article className="pb-10">
@@ -173,11 +175,17 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
                   <VerificationBadge value={stageFact?.status ?? (c.stage === "unknown" ? "UNKNOWN" : "INFERRED")} />
                   {stageFact?.note && <span className="text-[12px] text-ink-3">— {stageFact.note}</span>}
                 </span>
-                {links.map((l) => (
-                  <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer nofollow" className="link font-mono text-[11px] text-ink-2">
-                    {l.text} ↗
-                  </a>
-                ))}
+                {links.map((l) =>
+                  l.href ? (
+                    <a key={l.text} href={l.href} target="_blank" rel="noopener noreferrer nofollow" className="link font-mono text-[11px] text-ink-2">
+                      {l.text} ↗
+                    </a>
+                  ) : (
+                    <span key={l.text} className="font-mono text-[11px] text-ink-3" title="Fictional identifier — not linked">
+                      {l.text} (fictional)
+                    </span>
+                  ),
+                )}
               </div>
               {c.is_demo && detail.data_note && (
                 <p className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-3">{detail.data_note} — names, people and links are invented.</p>
@@ -189,6 +197,7 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
           scoreLabel="Anti Score"
           history={detail.score_history}
           delta7d={c.delta_7d}
+          isDemo={c.is_demo}
         />
         <EntityActions
           entityType="company"

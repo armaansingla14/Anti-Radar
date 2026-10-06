@@ -12,11 +12,13 @@ export function WhyButton({
   entityName,
   scoreLabel,
   className,
+  isDemo = false,
 }: {
   score: AntiScore | null;
   entityName: string;
   scoreLabel: string;
   className?: string;
+  isDemo?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   useCommand({
@@ -41,7 +43,7 @@ export function WhyButton({
         Why {score ? score.total : "this score"}?
         <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
       </button>
-      <WhyDrawer open={open} onClose={() => setOpen(false)} score={score} entityName={entityName} scoreLabel={scoreLabel} />
+      <WhyDrawer open={open} onClose={() => setOpen(false)} score={score} entityName={entityName} scoreLabel={scoreLabel} isDemo={isDemo} />
     </>
   );
 }

@@ -19,10 +19,12 @@ export interface EntityHeaderProps {
   scoreLabel: "Anti Score" | "Founder Score";
   history: ScorePoint[];
   delta7d?: number | null;
+  /** Fictional entity: evidence links never point at real hosts. */
+  isDemo?: boolean;
 }
 
 /** Editorial entity header: big serif name on the left, the score column on the right. */
-export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, scoreLabel, history, delta7d }: EntityHeaderProps) {
+export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, scoreLabel, history, delta7d, isDemo = false }: EntityHeaderProps) {
   const total = score?.total ?? scoreValue ?? null;
   const d7 = score?.delta_7d ?? delta7d ?? null;
   const d30 = score?.delta_30d ?? null;
@@ -51,7 +53,7 @@ export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, sco
           </div>
         )}
         <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <WhyButton score={score} entityName={name} scoreLabel={scoreLabel} />
+          <WhyButton score={score} entityName={name} scoreLabel={scoreLabel} isDemo={isDemo} />
           {score && (
             <span className={clsx("tnum font-mono text-[10px] uppercase tracking-[0.06em]", score.low_coverage ? "text-accent" : "text-ink-3")}>
               {score.low_coverage ? "Low coverage · " : ""}v{score.version} · n={score.cohort_size}

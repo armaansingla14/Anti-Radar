@@ -20,6 +20,8 @@ export interface NarrativeBlockProps {
   evidence?: Map<string, EvidenceItem>;
   size?: "lead" | "body";
   className?: string;
+  /** Narrative about a fictional entity: never link to real hosts. */
+  demo?: boolean;
 }
 
 /**
@@ -27,7 +29,7 @@ export interface NarrativeBlockProps {
  * epistemic status and numbered citations. Signal-id citations resolve to
  * footnotes; "S#" citations link to the page source list.
  */
-export function NarrativeBlock({ narrative, evidence, size = "body", className }: NarrativeBlockProps) {
+export function NarrativeBlock({ narrative, evidence, size = "body", className, demo }: NarrativeBlockProps) {
   const sIds = narrative.citations.filter((c) => /^S\d+$/.test(c));
   const notes = narrative.citations
     .filter((c) => !/^S\d+$/.test(c))
@@ -67,7 +69,7 @@ export function NarrativeBlock({ narrative, evidence, size = "body", className }
                   <>
                     <span className="text-ink">{n.ev.title}</span>
                     {n.ev.event_at && <span className="tnum ml-2 font-mono text-[10px] text-ink-3">{fmtDate(n.ev.event_at)}</span>}
-                    <SourceLink url={n.ev.source_url} className="ml-2" />
+                    <SourceLink url={n.ev.source_url} className="ml-2" demo={demo} />
                   </>
                 ) : (
                   <span className="font-mono text-[10.5px] text-ink-3" title={n.id}>

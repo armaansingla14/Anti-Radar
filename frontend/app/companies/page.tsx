@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { CompanyResults } from "@/components/entity/CompanyResults";
 import { IndexControls, type FilterDef } from "@/components/entity/IndexControls";
 import { ScoreAnatomy } from "@/components/entity/ScoreAnatomy";
 import { themeOptions } from "@/components/entity/themes";
 import { EmptyState } from "@/components/EmptyState";
-import { getCompanies, type QueryParams } from "@/lib/api";
+import { FilterNotice } from "@/components/entity/FilterNotice";
+import { ApiError, getCompanies, type QueryParams } from "@/lib/api";
+import { resolveFilter } from "@/lib/filters";
+import type { CompanySummary } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Companies" };
 
@@ -21,11 +25,20 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
   const stage = STAGES.find((s) => s === one(sp.stage));
   const kind = KINDS.find((s) => s === one(sp.kind));
   const q = one(sp.q)?.slice(0, 200);
-  const theme = one(sp.theme)?.slice(0, 120);
   const demo = one(sp.demo);
+  const themes = await themeOptions();
+  const { value: theme, unknown: unknownTheme } = resolveFilter(one(sp.theme)?.slice(0, 120), themes.map((t) => t.value));
   const query: QueryParams = { q, sort, stage, kind, theme, include_demo: demo === "0" ? false : undefined };
 
-  const [companies, themes] = await Promise.all([getCompanies({ ...query, limit: PAGE, offset: 0 }), themeOptions()]);
+  // A rejected filter is the input's fault, not an outage: say so instead of the route error page.
+  let companies: CompanySummary[] = [];
+  let rejected: string | null = null;
+  try {
+    companies = await getCompanies({ ...query, limit: PAGE, offset: 0 });
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 422)) throw e;
+    rejected = e.detail;
+  }
   const filtered = Boolean(q || stage || kind || theme || demo === "0");
 
   const sortDef: FilterDef = {
@@ -106,7 +119,12 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
         />
       </div>
 
-      {companies.length === 0 ? (
+      {unknownTheme && <FilterNotice label="thesis filter" value={unknownTheme} resetHref="/companies" />}
+      {rejected ? (
+        <EmptyState title="The radar rejected these filters." action={<Link href="/companies" className="link font-mono text-[11px] uppercase tracking-[0.08em]">Reset filters</Link>}>
+          {rejected}
+        </EmptyState>
+      ) : companies.length === 0 ? (
         <EmptyState title={filtered ? "No companies match these filters." : "No companies on the radar yet."}>
           {filtered
             ? "Try a broader thesis area or clear the search. Stage is inferred, so most early projects are “Unknown”."
