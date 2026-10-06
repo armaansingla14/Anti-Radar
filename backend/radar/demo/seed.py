@@ -283,5 +283,8 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
 
         with session_scope() as s:
             score_all(s, clock.today())
+    from radar.demo.warm import import_reports
+
+    out["reports"] = import_reports()
     clock.init_from_db()
     return out

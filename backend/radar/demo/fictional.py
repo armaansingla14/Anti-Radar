@@ -318,12 +318,21 @@ def build_fictional_batch(data: dict[str, Any] | None = None) -> tuple[ProviderB
             )
         )
 
-    # X posts: dedicated signal rows so the founder timeline shows the (fictional) post text.
+    # X posts: attach the (fictional) post text to the matching founder-post signal, so one post
+    # is one signal; only posts without a matching signal get their own row.
     for xp in post.get("x_posts", []):
         person = people[xp["person"]]
+        pref_key = pref[xp["person"]]
+        when = _at(xp["days_ago"])
+        match = next((sg for sg in b.signals if sg.entity == pref_key and sg.source_type == "x"
+                      and sg.event_at.date() == when.date()), None)
+        if match is not None:
+            match.description = f"{match.description} — “{xp['text']}”" if match.description else f"“{xp['text']}”"
+            match.metadata = {**match.metadata, "text": xp["text"]}
+            continue
         b.signals.append(
             NormalizedSignal(
-                entity=pref[xp["person"]],
+                entity=pref_key,
                 signal_type="x_post",
                 source_type="x",
                 source_url=f"{X_HOST}{person.get('x', 'demo')}/status/{_stable_id(xp['text'], 10**12)}",

@@ -329,6 +329,26 @@ def demo_capture(
     console.print(f"  Snapshot written to {SNAPSHOT_DIR} ({size:.1f} MB)")
 
 
+@demo_app.command("warm")
+def demo_warm(
+    investigate: Annotated[list[str] | None, typer.Option("--investigate", "-i", help="Entity slug (repeatable)")] = None,
+    companies: int = 16,
+    founders: int = 12,
+    live: bool = True,
+) -> None:
+    """Pre-generate LLM narratives + showcase Anti Briefs/Memos and export them for keyless demo mode."""
+    from radar.demo.seed import LLM_CACHE_FILE
+    from radar.demo.warm import export_reports, investigate_showcase, warm_pages
+    from radar.llm.cache import export_cache
+
+    _banner("Warming demo LLM outputs")
+    console.print(f"  pages: {warm_pages(companies, founders)}")
+    for line in investigate_showcase(investigate or [], live_fetch=live):
+        console.print(f"  {line}")
+    console.print(f"  exported {export_cache(LLM_CACHE_FILE)} cached responses → {LLM_CACHE_FILE.name}")
+    console.print(f"  exported {export_reports()} reports → reports.jsonl")
+
+
 @demo_app.command("export-llm-cache")
 def export_llm_cache(path: Path | None = None) -> None:
     """Export cached LLM outputs so the demo works without an API key."""

@@ -57,7 +57,6 @@ companies:
     signals:
       - {type: org_created, family: github, days_ago: 41, title: "GitHub organization demo-halcyon created", strength: 0.6}
       - {type: affiliation_changed, family: x, days_ago: 44, person: mira-okafor, title: "Mira Okafor's bio no longer lists Brightline Robotics Institute", detail: "Bio changed from 'Manipulation research lead @ Brightline Robotics Institute' to 'building something new in robot touch.'", strength: 0.8}
-      - {type: paper_published, family: arxiv, days_ago: 19, title: "TactileVLA: Vision-Language-Action Policies with Dense Tactile Tokens", detail: "Okafor, Raman, Lindqvist, Sato et al. — code released at demo-halcyon/tactile-vla", strength: 0.7}
       - {type: new_contributors, family: github, days_ago: 17, title: "3 new contributors joined demo-halcyon/tactile-vla in 3 weeks", detail: "ana-lindqvist, kenji-sato, rafael-ortiz — all previously at Brightline Robotics Institute", strength: 0.75}
       - {type: commit_acceleration, family: github, days_ago: 3, title: "Commit activity up 310% over the previous 4 weeks", detail: "74 commits in the last 4 weeks vs 18 in the prior 4", strength: 0.8}
       - {type: star_velocity, family: github, days_ago: 0, title: "+437 stars in 35 days on tactile-vla", detail: "From 31 to 468 stars; 7-day rate is 3.4× the prior 4-week average", strength: 0.85}
