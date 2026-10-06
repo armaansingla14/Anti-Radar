@@ -24,6 +24,10 @@ PLATFORM_DOMAINS = {
     "techcrunch.com", "bloomberg.com", "wsj.com", "theverge.com", "arstechnica.com", "wired.com",
     "blogspot.com", "wordpress.com", "ghost.io", "dev.to", "hashnode.dev", "itch.io", "gist.github.com",
     "producthunt.com", "apps.apple.com", "play.google.com", "drive.google.com", "dropbox.com",
+    # App hosting: a subdomain here identifies a project, never a company domain.
+    "fly.dev", "pages.dev", "workers.dev", "onrender.com", "railway.app", "up.railway.app", "replit.app",
+    "repl.co", "glitch.me", "surge.sh", "deno.dev", "azurewebsites.net", "cloudfront.net", "appspot.com",
+    "web.app", "firebaseapp.com", "gitbook.io", "framer.website", "webflow.io", "carrd.co", "modal.run",
 }
 EDU_SUFFIXES = (".edu", ".ac.uk", ".ac.jp", ".edu.cn", ".ac.kr")
 

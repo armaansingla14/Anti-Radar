@@ -46,13 +46,17 @@ def sanitize_url(url: str) -> str:
     p = urlparse(url)
     if p.scheme not in ("http", "https"):
         raise UnsafeURLError(f"scheme not allowed: {p.scheme}")
+    try:
+        port = p.port
+    except ValueError as e:
+        raise UnsafeURLError("invalid port") from e
     if p.username or p.password:
         raise UnsafeURLError("credentials in URL are not allowed")
     host = (p.hostname or "").lower().rstrip(".")
     if not host or host in BLOCKED_HOSTNAMES or host.endswith(".local") or host.endswith(".internal"):
         raise UnsafeURLError(f"host not allowed: {host!r}")
-    if p.port not in (None, 80, 443, 8080, 8443):
-        raise UnsafeURLError(f"port not allowed: {p.port}")
+    if port not in (None, 80, 443, 8080, 8443):
+        raise UnsafeURLError(f"port not allowed: {port}")
     # Drop fragments; keep path + query.
     return urlunparse((p.scheme, p.netloc.lower(), p.path or "/", "", p.query, ""))
 
@@ -154,6 +158,7 @@ class HttpClient:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         max_redirects: int = 4,
+        max_bytes: int | None = None,
     ) -> httpx.Response:
         cpath = self._cassette_path(method, url, params, headers)
         if self.mode == "replay":
@@ -174,7 +179,9 @@ class HttpClient:
                 current = sanitize_url(current)
                 assert_public_host(current)
             host = urlparse(current).netloc
-            resp = self._send_with_retries(method, current, params=params, headers=headers, host=host)
+            resp = self._send_with_retries(
+                method, current, params=params, headers=headers, host=host, max_bytes=max_bytes or MAX_BODY_BYTES
+            )
             if resp.is_redirect and "location" in resp.headers:
                 current = urljoin(current, resp.headers["location"])
                 params = None
@@ -188,7 +195,7 @@ class HttpClient:
             cpath.write_text(json.dumps({"status": resp.status_code, "headers": keep, "body": resp.text}))
         return resp
 
-    def _send_with_retries(self, method, url, *, params, headers, host) -> httpx.Response:
+    def _send_with_retries(self, method, url, *, params, headers, host, max_bytes) -> httpx.Response:
         attempt = 0
         while True:
             self._throttle(host)
@@ -196,13 +203,18 @@ class HttpClient:
             try:
                 with self._client.stream(method, url, params=params, headers=headers) as r:
                     body = b""
-                    for chunk in r.iter_bytes():
+                    truncated = False
+                    for chunk in r.iter_bytes():  # already decompressed
                         body += chunk
-                        if len(body) > MAX_BODY_BYTES:
+                        if len(body) > max_bytes:
+                            truncated = True
                             break
-                    resp = httpx.Response(
-                        status_code=r.status_code, headers=r.headers, content=body, request=r.request
-                    )
+                    # The body is decoded; drop encoding/length headers so httpx doesn't decode it twice.
+                    hdrs = [(k, v) for k, v in r.headers.multi_items()
+                            if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
+                    if truncated:
+                        hdrs.append(("x-radar-truncated", "1"))
+                    resp = httpx.Response(status_code=r.status_code, headers=hdrs, content=body, request=r.request)
             except (httpx.TransportError, httpx.TimeoutException):
                 self.stats.errors += 1
                 attempt += 1
