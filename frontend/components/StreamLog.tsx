@@ -27,6 +27,8 @@ export function eventGlyph(ev: InvestigateEvent): string {
 
 function eventText(ev: InvestigateEvent): string {
   if (ev.message) return ev.message;
+  if (typeof ev.label === "string" && ev.label) return ev.label;
+  if (typeof ev.summary === "string" && ev.summary) return ev.summary;
   if (typeof ev.title === "string") return ev.title;
   if (typeof ev.detail === "string") return ev.detail;
   return ev.type;
@@ -58,7 +60,7 @@ export function StreamLog({ events, running, title = "Agent trace", error, maxHe
               <span aria-hidden className={glyph === "×" ? "text-accent" : glyph === "◆" ? "text-ink" : "text-ink-2"}>
                 {glyph}
               </span>
-              <span className="truncate uppercase tracking-[0.04em] text-ink-3">{ev.step ?? ev.type}</span>
+              <span className="truncate uppercase tracking-[0.04em] text-ink-3">{ev.step ?? (typeof ev.tool === "string" ? ev.tool : ev.type)}</span>
               <span className="min-w-0 break-words text-ink">
                 {eventText(ev)}
                 {isSafeUrl(ev.url) && (

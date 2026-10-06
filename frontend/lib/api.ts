@@ -120,7 +120,8 @@ const enc = encodeURIComponent;
 
 // ── Feeds ────────────────────────────────────────────────────────────────────
 
-export const getRadar = () => get<RadarFeed>("/radar");
+export const getRadar = (params?: { new_only?: boolean; theme?: string; include_demo?: boolean }) =>
+  get<RadarFeed>("/radar", params);
 export const getDaily = (params?: { since?: string }) => get<DailyRadar>("/daily", params);
 export const getBrief = () => get<MorningBrief>("/brief");
 export const getThesis = () => get<ThesisMap>("/thesis");

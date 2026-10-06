@@ -193,6 +193,8 @@ export interface EntityLink {
   name: string;
   id?: string;
   score?: number | null;
+  /** Emitted on thesis-map top_entities. */
+  is_demo?: boolean;
 }
 
 export interface PaperCard {

@@ -32,6 +32,8 @@ export interface IntelCardProps {
   onInvestigate?: (card: IntelCardData) => void;
   /** Replace the built-in POST /api/feedback. */
   onFeedback?: (card: IntelCardData, label: FeedbackLabel) => void | Promise<void>;
+  /** Show a "Dismiss" action; the caller removes the card and records feedback. */
+  onDismiss?: (card: IntelCardData) => void;
   /** Max evidence bullets under "Why it surfaced". */
   evidenceLimit?: number;
   className?: string;
@@ -49,6 +51,7 @@ export function IntelCard({
   onWatch,
   onInvestigate,
   onFeedback,
+  onDismiss,
   evidenceLimit = 4,
   className,
 }: IntelCardProps) {
@@ -175,6 +178,11 @@ export function IntelCard({
             </Link>
           ))}
         <FeedbackMenu onSelect={feedback} />
+        {onDismiss && (
+          <button type="button" className={action} data-action="dismiss" onClick={() => onDismiss(card)}>
+            Dismiss
+          </button>
+        )}
         {card.data_note && <span className="ml-auto font-mono text-[10px] text-ink-3">{card.data_note}</span>}
       </div>
 
