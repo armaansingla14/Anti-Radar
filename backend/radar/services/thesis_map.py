@@ -180,7 +180,7 @@ def thesis_map(session: Session, thesis: Thesis | None = None) -> ThesisMap:
                        if c in snaps and (snaps[c].attention or {}).get("attention") is not None]
             att_before = [float((snaps_before[c].attention or {}).get("attention")) for c in cids
                           if c in snaps_before and (snaps_before[c].attention or {}).get("attention") is not None]
-            attention = round(sum(att_now) / len(att_now), 1) if att_now else 0.0
+            attention = round(sum(att_now) / len(att_now), 1) if att_now else None
             a_trend = attention_trend(
                 attention if att_now else None, (sum(att_before) / len(att_before)) if att_before else None)
 
@@ -195,7 +195,7 @@ def thesis_map(session: Session, thesis: Thesis | None = None) -> ThesisMap:
             cells.append(ThesisCell(
                 key=sub.key, label=sub.label, theme=tkey, momentum=momentum,
                 momentum_trend=growth_trend(recent, prior), attention=attention, attention_trend=a_trend,
-                attention_gap=bool(cids) and momentum >= GAP_MOMENTUM_MIN and attention <= GAP_ATTENTION_MAX,
+                attention_gap=attention is not None and momentum >= GAP_MOMENTUM_MIN and attention <= GAP_ATTENTION_MAX,
                 companies=len(cids), emerging_companies=emerging, founders=len(pids), papers_30d=len(papers),
                 hiring_roles_30d=sum(jobs_by_company.get(c, 0) for c in cids), top_entities=top,
             ))

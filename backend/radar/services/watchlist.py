@@ -294,16 +294,54 @@ def _item_outs(session: Session, items: list[WatchlistItem]) -> list[WatchItemOu
     snaps = latest_snapshots(session, ids_by_type.get("company", []) + ids_by_type.get("person", []))
     d7 = score_deltas(session, snaps, 7)
     changes = _changes(session, items)
+    topic_stats = _topic_stats(session, ids_by_type.get("topic", []))
     out = []
     for i in items:
         name, slug, demo = names.get(i.entity_id, ("(removed entity)", None, False))
         snap = snaps.get(i.entity_id)
+        score, delta = (round(snap.score) if snap else None), d7.get(i.entity_id)
+        item_changes = changes.get(i.entity_id, [])
+        if i.entity_type == "topic" and i.entity_id in topic_stats:
+            score, delta, moved = topic_stats[i.entity_id]
+            if moved:
+                item_changes = [*item_changes, moved]
         out.append(WatchItemOut(
             id=str(i.id), entity_type=i.entity_type, entity_id=str(i.entity_id), topic_key=i.topic_key, name=name,
             slug=slug, note=i.note, created_at=i.created_at, last_seen_at=i.last_seen_at,
-            score=round(snap.score) if snap else None, delta_7d=d7.get(i.entity_id), is_demo=demo,
-            changes=changes.get(i.entity_id, []),
+            score=score, delta_7d=delta, is_demo=demo, changes=item_changes,
         ))
+    return out
+
+
+TOPIC_TOP_N = 5
+TOPIC_MOVE_MIN = 5.0
+
+
+def _topic_stats(session: Session, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[int | None, float | None, str | None]]:
+    """Topic 'score' = mean ANTI SCORE of its top linked companies; delta likewise; plus a movement line."""
+    if not topic_ids:
+        return {}
+    links: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
+    for tid, cid in session.execute(
+        select(EntityTopic.topic_id, EntityTopic.entity_id)
+        .where(EntityTopic.topic_id.in_(topic_ids), EntityTopic.entity_type == "company", EntityTopic.score >= 0.3)
+    ).tuples():
+        links[tid].append(cid)
+    snaps = latest_snapshots(session, [c for cs in links.values() for c in cs])
+    d7 = score_deltas(session, snaps, 7)
+    out: dict[uuid.UUID, tuple[int | None, float | None, str | None]] = {}
+    for tid in topic_ids:
+        top = sorted((c for c in links.get(tid, []) if c in snaps), key=lambda c: -snaps[c].score)[:TOPIC_TOP_N]
+        if not top:
+            out[tid] = (None, None, None)
+            continue
+        score = round(sum(snaps[c].score for c in top) / len(top))
+        deltas = [d for c in top if (d := d7.get(c)) is not None]
+        delta = round(sum(deltas) / len(deltas), 1) if deltas else None
+        moved = sum(1 for d in deltas if abs(d) >= TOPIC_MOVE_MIN)
+        line = (f"{_plural(moved, 'leading company', 'leading companies')} moved ≥{TOPIC_MOVE_MIN:.0f} points this week"
+                if moved else None)
+        out[tid] = (score, delta, line)
     return out
 
 

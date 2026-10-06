@@ -366,24 +366,26 @@ def _select_shifts(shifts: list[ThesisShift], moves: list[TopicMove]) -> list[Th
 # ── counts / freshness ───────────────────────────────────────────────────────
 
 
-def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: int) -> RadarCounts:
+def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: int, n_founders: int,
+            theme: str | None = None, new_only: bool = False) -> RadarCounts:
     today, now = clock.today(), clock.now()
     cur = latest_score_subq("company", today, min_day=today - timedelta(days=14))
     early = Company.stage.not_in(("growth", "public", "series_a"))
     q = (select(func.count()).select_from(Company).join(cur, cur.c.entity_id == Company.id)
          .where(Company.dismissed.is_(False), early, cur.c.score >= EMERGING_MIN_SCORE))
-    pcur = latest_score_subq("person", today, min_day=today - timedelta(days=14))
-    pq = (select(func.count()).select_from(Person).join(pcur, pcur.c.entity_id == Person.id)
-          .where(Person.dismissed.is_(False), pcur.c.score >= 50))
+    if theme:
+        q = q.where(Company.id.in_(theme_entity_ids(theme)))
+    if new_only:
+        q = q.where(Company.first_seen_at >= now - timedelta(days=NEW_DAYS))
     sq = select(func.count()).select_from(Signal).where(Signal.event_at >= now - timedelta(hours=24),
                                                         Signal.event_at <= now)
     if not include_demo:
-        q, pq, sq = (q.where(Company.is_demo.is_(False)), pq.where(Person.is_demo.is_(False)),
-                     sq.where(Signal.is_demo.is_(False)))
+        q, sq = q.where(Company.is_demo.is_(False)), sq.where(Signal.is_demo.is_(False))
     ne = new_entities(session, today, days=NEW_DAYS)
     n_new = sum(1 for rows in ne.values() for r in rows
                 if (include_demo or not r["is_demo"]) and (r.get("score") or 0) >= NEW_MIN_SCORE)
-    return RadarCounts(emerging_companies=session.scalar(q) or 0, founders=session.scalar(pq) or 0,
+    # "Founders worth watching" is exactly the list shown in the rail (same filters, same floor).
+    return RadarCounts(emerging_companies=session.scalar(q) or 0, founders=n_founders,
                        strange_signals=n_strange, thesis_shifts=n_shifts, new_entities_7d=n_new,
                        signals_24h=session.scalar(sq) or 0)
 
@@ -426,7 +428,8 @@ def radar_feed(session: Session, *, include_demo: bool | None = None, new_only: 
         shifts = [s for s in shifts if s.theme == theme.partition(".")[0]]
     return RadarFeed(
         date=clock.today(), generated_at=clock.now(),
-        counts=_counts(session, include_demo=include_demo, n_strange=len(strange_all), n_shifts=len(shifts)),
+        counts=_counts(session, include_demo=include_demo, n_strange=len(strange_all), n_shifts=len(shifts),
+                       n_founders=len(founders), theme=theme, new_only=new_only),
         cards=cards, founders=founders, strange_signals=strange_all[:STRANGE_LIMIT],
         thesis_shifts=shifts[:SHIFT_LIMIT], data_freshness=data_freshness(session),
         demo_mode=settings.demo_mode, snapshot_note=snapshot_note(),
@@ -471,7 +474,7 @@ def recent_papers(session: Session, *, include_demo: bool, days: int = 30, limit
     papers = list(session.scalars(q.order_by(ResearchPaper.published_at.desc()).limit(300)))
     scores = rank_papers(session, papers)
     top = sorted(papers, key=lambda p: (-scores.get(p.id, 0), -(p.published_at or lo).timestamp()))[:limit]
-    why = {p.id: narratives.paper_significance(p)["text"] for p in top} if with_why else None
+    why = {p.id: narratives.paper_significance(p) for p in top} if with_why else None
     return paper_cards(session, top, scores=scores, why=why)
 
 

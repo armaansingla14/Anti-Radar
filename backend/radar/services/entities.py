@@ -88,11 +88,15 @@ class InvalidParam(ValueError):
 # ── shared query helpers ─────────────────────────────────────────────────────
 
 
+THEME_ALIASES = {"frontier_infra": "frontier_infrastructure", "frontier": "frontier_infrastructure",
+                 "semis": "semiconductors", "semiconductor": "semiconductors", "infra": "frontier_infrastructure"}
+
+
 def validate_theme(theme: str | None) -> str | None:
     """Accept a thesis theme key ('robotics') or topic key ('robotics.humanoids')."""
     if not theme:
         return None
-    theme = theme.strip().lower()
+    theme = THEME_ALIASES.get(theme.strip().lower(), theme.strip().lower())
     th, _, sub = theme.partition(".")
     themes = get_thesis().themes
     if th not in themes or (sub and sub not in themes[th].subcategories):
@@ -270,7 +274,7 @@ def paper_links(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.
 
 
 def paper_cards(session: Session, papers: Sequence[ResearchPaper], *, scores: dict[uuid.UUID, int] | None = None,
-                why: dict[uuid.UUID, str] | None = None) -> list[PaperCard]:
+                why: dict[uuid.UUID, Any] | None = None) -> list[PaperCard]:
     links = paper_links(session, papers)
     out = []
     for p in papers:
@@ -279,9 +283,19 @@ def paper_cards(session: Session, papers: Sequence[ResearchPaper], *, scores: di
             authors=[a.get("name", "") for a in (p.authors or []) if isinstance(a, dict)],
             categories=list(p.categories or []), published_at=p.published_at, url=p.url,
             code_urls=list(p.code_urls or []), linked_entities=links.get(p.id, []),
-            why_it_matters=(why or {}).get(p.id), score=(scores or {}).get(p.id), is_demo=p.is_demo,
+            **_why_fields((why or {}).get(p.id)), score=(scores or {}).get(p.id), is_demo=p.is_demo,
         ))
     return out
+
+
+def _why_fields(w: Any) -> dict[str, Any]:
+    """Accepts a Narrative-shaped dict (preferred) or plain text (treated as template INFERENCE)."""
+    if not w:
+        return {}
+    if isinstance(w, str):
+        return {"why_it_matters": w, "why_it_matters_epistemic": "INFERENCE", "why_it_matters_generator": "template"}
+    return {"why_it_matters": w.get("text"), "why_it_matters_epistemic": w.get("epistemic"),
+            "why_it_matters_generator": w.get("generator")}
 
 
 def rank_papers(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.UUID, int]:
@@ -480,8 +494,8 @@ def _metric_series(session: Session, ids: Sequence[uuid.UUID], metric: str, labe
 def list_companies(
     session: Session, *, q: str | None = None, theme: str | None = None, stage: str | None = None,
     kind: str | None = None, sort: CompanySort = "score", include_demo: bool = True, limit: int = 50,
-    offset: int = 0,
-) -> list[CompanySummary]:
+    offset: int = 0, with_total: bool = False,
+) -> list[CompanySummary] | tuple[list[CompanySummary], int]:
     theme = validate_theme(theme)
     today = clock.today()
     cur = latest_score_subq("company", today)
@@ -497,6 +511,8 @@ def list_companies(
         stmt = stmt.where(Company.kind == kind)
     if not include_demo:
         stmt = stmt.where(Company.is_demo.is_(False))
+    total = session.scalar(select(func.count()).select_from(stmt.with_only_columns(Company.id).subquery())) \
+        if with_total else None
     if sort == "delta":
         past = latest_score_subq("company", today - timedelta(days=7), min_day=today - timedelta(days=10))
         stmt = stmt.outerjoin(past, past.c.entity_id == Company.id).order_by(
@@ -511,7 +527,8 @@ def list_companies(
     else:
         stmt = stmt.order_by(cur.c.score.desc().nulls_last())
     stmt = stmt.order_by(Company.name).offset(offset).limit(limit)
-    return P.company_summaries(session, list(session.scalars(stmt)))
+    items = P.company_summaries(session, list(session.scalars(stmt)))
+    return (items, int(total or 0)) if with_total else items
 
 
 def _company_repos(session: Session, c: Company) -> list[Repository]:
@@ -671,7 +688,8 @@ def entity_score(session: Session, model: type[Company | Person], id_or_slug: st
 def list_founders(
     session: Session, *, q: str | None = None, theme: str | None = None, no_company: bool = False,
     include_demo: bool = True, sort: FounderSort = "score", limit: int = 50, offset: int = 0,
-) -> list[PersonCard]:
+    with_total: bool = False,
+) -> list[PersonCard] | tuple[list[PersonCard], int]:
     theme = validate_theme(theme)
     today = clock.today()
     cur = latest_score_subq("person", today)
@@ -687,6 +705,8 @@ def list_founders(
         stmt = stmt.where(Person.current_company.is_(None))
     if not include_demo:
         stmt = stmt.where(Person.is_demo.is_(False))
+    total = session.scalar(select(func.count()).select_from(stmt.with_only_columns(Person.id).subquery())) \
+        if with_total else None
     if sort == "delta":
         past = latest_score_subq("person", today - timedelta(days=7), min_day=today - timedelta(days=10))
         stmt = stmt.outerjoin(past, past.c.entity_id == Person.id).order_by(
@@ -698,7 +718,8 @@ def list_founders(
     else:
         stmt = stmt.order_by(cur.c.score.desc().nulls_last())
     stmt = stmt.order_by(Person.name).offset(offset).limit(limit)
-    return P.person_cards(session, list(session.scalars(stmt)))
+    items = P.person_cards(session, list(session.scalars(stmt)))
+    return (items, int(total or 0)) if with_total else items
 
 
 def _person_facts(session: Session, p: Person, prov_rows: Sequence[FieldProvenance]) -> list[FactField]:

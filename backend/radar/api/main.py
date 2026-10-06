@@ -35,6 +35,7 @@ def create_app() -> FastAPI:
         allow_origins=[o.strip() for o in get_settings().cors_origins.split(",") if o.strip()],
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type"],
+        expose_headers=["X-Total-Count"],
     )
 
     @app.get("/api/health")

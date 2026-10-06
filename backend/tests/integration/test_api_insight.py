@@ -28,7 +28,7 @@ def test_thesis_map_covers_every_subcategory(seeded, client, thesis):
     for theme in tm["themes"]:
         assert [c["key"] for c in theme["cells"]] == [s.key for s in thesis.themes[theme["key"]].subcategories.values()]
         for c in theme["cells"]:
-            assert 0 <= c["momentum"] <= 100 and 0 <= c["attention"] <= 100
+            assert 0 <= c["momentum"] <= 100 and (c["attention"] is None or 0 <= c["attention"] <= 100)
             assert c["momentum_trend"] in {"up2", "up", "flat", "down"}
 
     tactile = _cell(tm, "robotics.tactile")

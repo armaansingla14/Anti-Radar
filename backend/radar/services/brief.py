@@ -332,6 +332,6 @@ def morning_brief(session: Session, *, include_demo: bool | None = None) -> Morn
     demo_present = any(c.is_demo for c in [*founders, *companies]) or any(p.is_demo for p in research) or bool(
         strange and strange.is_demo) or any(r.get("is_demo") for i in items for r in i.entity_refs)
     md = render_markdown(day, items, founders, companies, research, strange, narrative, demo_present)
-    return MorningBrief(date=day, what_changed=items, founders_to_know=founders, companies_to_watch=companies,
+    return MorningBrief(date=day, generated_at=clock.now(), what_changed=items, founders_to_know=founders, companies_to_watch=companies,
                         research=research, strange_signal=strange, narrative=narrative, markdown=md,
                         generator=narrative.generator)

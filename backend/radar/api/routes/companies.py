@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from radar.db import get_session
@@ -24,6 +24,7 @@ _SLUG = r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$"
 @router.get("/companies", response_model=list[CompanySummary])
 def list_companies(
     session: SessionDep,
+    response: Response,
     q: Annotated[str | None, Query(max_length=200, description="Name / description substring")] = None,
     theme: Annotated[str | None, Query(max_length=120)] = None,
     stage: Annotated[str | None, Query(max_length=40, pattern=r"^[a-z_]+$")] = None,
@@ -35,8 +36,10 @@ def list_companies(
 ) -> list[CompanySummary]:
     include_demo = get_settings().demo_mode if include_demo is None else include_demo
     try:
-        return entities.list_companies(session, q=q, theme=theme, stage=stage, kind=kind, sort=sort,
-                                       include_demo=include_demo, limit=limit, offset=offset)
+        items, total = entities.list_companies(session, q=q, theme=theme, stage=stage, kind=kind, sort=sort,
+                                       include_demo=include_demo, limit=limit, offset=offset, with_total=True)
+        response.headers["X-Total-Count"] = str(total)
+        return items
     except InvalidParam as e:
         raise HTTPException(422, detail=str(e)) from None
 
