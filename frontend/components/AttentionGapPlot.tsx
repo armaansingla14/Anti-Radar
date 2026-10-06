@@ -68,7 +68,7 @@ export function AttentionGapPlot({ gap, hideSources, className }: AttentionGapPl
       </div>
       <p className="text-[12.5px] leading-snug text-ink-2">
         {gap.gap > 0
-          ? `Technical activity ranks above ${fmtNum(gap.technical, 0)}% of the cohort while public attention ranks above ${fmtNum(gap.attention, 0)}%.`
+          ? `Technical activity sits at the ${ordinal(gap.technical)} percentile of the cohort; public attention at the ${ordinal(gap.attention)}.`
           : `Public attention is at or ahead of technical activity relative to the cohort.`}
       </p>
 
@@ -125,4 +125,11 @@ export function AttentionGapMini({ gap, className }: AttentionGapMiniProps) {
       </span>
     </div>
   );
+}
+
+function ordinal(v: number): string {
+  const n = Math.round(v);
+  const s = ["th", "st", "nd", "rd"];
+  const m = n % 100;
+  return `${n}${s[(m - 20) % 10] || s[m] || s[0]}`;
 }
