@@ -86,7 +86,8 @@ def _provider_status(key: str, label: str, cadence: float | None, runs: list[Ing
     last = finished[0] if finished else None
     last_ok = next((r for r in finished if r.status in SUCCESS), None)
     if snapshot:
-        window = finished[:1]
+        # Snapshot replay: summarize the whole capture for this provider.
+        window = [r for r in finished if (r.params or {}).get("snapshot")] or finished[:1]
     else:
         window = [r for r in finished if r.started_at and r.started_at >= ref - timedelta(hours=24)]
     lat = [r.latency_ms_p50 for r in window if r.latency_ms_p50 is not None]

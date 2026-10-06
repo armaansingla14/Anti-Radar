@@ -47,6 +47,10 @@ GAP_MOMENTUM_MIN = 60.0
 GAP_ATTENTION_MAX = 40.0
 
 
+MEASUREMENT_SIGNALS = ("star_velocity", "star_acceleration", "commit_acceleration", "hiring_active",
+                       "new_contributors")
+
+
 def _dt(d) -> datetime:
     return datetime.combine(d, time.max, tzinfo=UTC)
 
@@ -145,7 +149,10 @@ def thesis_map(session: Session, thesis: Thesis | None = None) -> ThesisMap:
         is_recent = Signal.event_at > recent_lo
         for eid, recent, n in session.execute(
             select(Signal.entity_id, is_recent, func.count())
-            .where(and_(Signal.entity_id.in_(all_ids), Signal.event_at > prior_lo, Signal.event_at <= now_dt))
+            .where(and_(Signal.entity_id.in_(all_ids), Signal.event_at > prior_lo, Signal.event_at <= now_dt,
+                        # Discrete events only: measurements are dated when observed, and arXiv volume
+                        # depends on fetch depth — neither can be compared window-over-window.
+                        Signal.signal_type.not_in(MEASUREMENT_SIGNALS), Signal.source_type != "arxiv"))
             .group_by(Signal.entity_id, is_recent)
         ):
             (sig_recent if recent else sig_prior)[eid] += int(n)
