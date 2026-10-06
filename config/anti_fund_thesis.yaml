@@ -176,6 +176,8 @@ hiring_roles:
   rf_defense: [rf engineer, electronic warfare, radar engineer, signal processing, guidance navigation, gnc]
   energy_plasma: [plasma, nuclear engineer, power electronics, thermal engineer, fusion]
   manufacturing: [manufacturing engineer, process engineer, production engineer, quality engineer, supply chain]
+  mechanical: [mechanical engineer, mechanical design, structures engineer, propulsion engineer, test engineer]
+  software: [software engineer, full stack, fullstack, frontend engineer, backend developer, member of technical staff, simulation engineer]
   infra: [infrastructure engineer, site reliability, distributed systems, platform engineer, backend engineer]
   gtm: [sales, account executive, marketing, business development, customer success, recruiter]
 
@@ -207,3 +209,9 @@ scoring:
     min_multiplier: 0.8
     max_multiplier: 1.2
     max_point_shift: 10
+
+# Fictional institutions used ONLY by the labeled demo dataset (backend/radar/demo/fictional.yaml).
+# Kept separate so they never mix with real-world affiliation lists.
+demo_affiliation_tiers:
+  tier_1: [Brightline Robotics Institute, Helix Frontier Lab, Coriolis Aerospace, Oberon Silicon]
+  tier_2: [Vantor Defense Systems, Solace Plasma Laboratory]
