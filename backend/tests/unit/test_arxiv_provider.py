@@ -92,6 +92,8 @@ def test_author_recurrence_is_deterministic(batch):
     assert s.metadata["paper_ids"] == ["2610.06327", "2610.06400"]
     assert s.title == "Álvaro Díez: 2 papers in 1 day"
     assert s.entity.type == "person" and s.confidence < 1
+    # cross-paper identity is a name match: inference, with the caveat carried to the reader
+    assert s.epistemic == "INFERENCE" and "matched by name" in s.metadata["caveat"]
     assert {r.key for r in s.related} == {"arxiv:2610.06327", "arxiv:2610.06400"}
     again = enrich(parse_feed(XML, window_days=21, now=NOW), window_days=21, now=NOW)
     assert [x.model_dump() for x in again.signals if x.signal_type == "author_recurrence"] == [

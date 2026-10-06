@@ -9,10 +9,14 @@ Emitted records (all FACT, straight from the feed):
 Signals:
     paper_published   entity=paper   (0.4, 0.6 when code is released)
     paper_with_code   entity=repo    (repo linked from a paper)
-    author_recurrence entity=person  (>= 2 papers by the same name in the window)
+    author_recurrence entity=person  (>= 2 papers by the same name in the window;
+                      INFERENCE — the cross-paper identity is a name match)
 
-Author identity is name-based (`arxiv_author:<normalized name>`), so common
-names can collide; recurrence signals therefore carry confidence < 1.
+Author refs are name-based (`arxiv_author:<normalized name>`), so common names
+collide. The ref is therefore *not* an identity key: ingestion resolves each
+(paper, author) pair separately and reuses an existing person only with
+corroborating evidence (see `Resolver.resolve_arxiv_author`), and recurrence
+signals are labelled INFERENCE with an identity caveat.
 """
 
 from __future__ import annotations
@@ -300,6 +304,52 @@ def enrich(batch: ProviderBatch, *, window_days: int = 21, now: datetime | None 
     return batch
 
 
+IDENTITY_CAVEAT = "Author identity matched by name across papers; not verified."
+
+
+def recurrence_signal(
+    person_ref: EntityRef, name: str, papers: list[PaperRecord], *, window_days: int,
+    metadata: dict[str, Any] | None = None,
+) -> NormalizedSignal | None:
+    """`author_recurrence` for one author over `papers` (already windowed); None below 2 papers.
+
+    Always INFERENCE: that the same person wrote these papers is inferred from the name.
+    """
+    papers = sorted(
+        {p.arxiv_id: p for p in papers if p.published_at}.values(), key=lambda p: (p.published_at, p.arxiv_id)
+    )
+    if len(papers) < 2:
+        return None
+    first, last = papers[0].published_at, papers[-1].published_at
+    assert first is not None and last is not None
+    span_days = max(1, math.ceil((last - first).total_seconds() / 86400))
+    n = len(papers)
+    return NormalizedSignal(
+        entity=person_ref,
+        signal_type="author_recurrence",
+        source_type=SOURCE,
+        source_url=papers[-1].url,
+        title=f"{name}: {n} papers in {span_days} day{'s' if span_days != 1 else ''}",
+        description="Recent arXiv papers: "
+        + "; ".join(f"arXiv:{p.arxiv_id} {p.title}" for p in papers)
+        + f". {IDENTITY_CAVEAT}",
+        raw_value=float(n),
+        normalized_value=min(0.85, 0.4 + 0.15 * (n - 2)),
+        event_at=last,
+        confidence=0.8,  # identity is name-based; homonyms can collide
+        epistemic="INFERENCE",
+        related=[p.ref for p in papers],
+        metadata={
+            "paper_ids": [p.arxiv_id for p in papers],
+            "span_days": span_days,
+            "window_days": window_days,
+            "identity": "name_match",
+            "caveat": IDENTITY_CAVEAT,
+            **(metadata or {}),
+        },
+    )
+
+
 def _author_recurrence(
     papers_by_author: dict[str, list[PaperRecord]],
     people: dict[str, PersonRecord],
@@ -310,41 +360,11 @@ def _author_recurrence(
     cutoff = now - timedelta(days=window_days)
     out: list[NormalizedSignal] = []
     for key in sorted(papers_by_author):
-        papers = sorted(
-            {
-                p.arxiv_id: p for p in papers_by_author[key] if p.published_at and p.published_at >= cutoff
-            }.values(),
-            key=lambda p: (p.published_at, p.arxiv_id),
-        )
-        if len(papers) < 2:
-            continue
-        first, last = papers[0].published_at, papers[-1].published_at
-        assert first is not None and last is not None
-        span_days = max(1, math.ceil((last - first).total_seconds() / 86400))
-        n = len(papers)
         person = people[key]
-        out.append(
-            NormalizedSignal(
-                entity=person.ref,
-                signal_type="author_recurrence",
-                source_type=SOURCE,
-                source_url=papers[-1].url,
-                title=f"{person.name}: {n} papers in {span_days} day{'s' if span_days != 1 else ''}",
-                description="Recent arXiv papers: "
-                + "; ".join(f"arXiv:{p.arxiv_id} {p.title}" for p in papers),
-                raw_value=float(n),
-                normalized_value=min(0.85, 0.4 + 0.15 * (n - 2)),
-                event_at=last,
-                confidence=0.8,  # identity is name-based; homonyms can collide
-                related=[p.ref for p in papers],
-                metadata={
-                    "paper_ids": [p.arxiv_id for p in papers],
-                    "span_days": span_days,
-                    "window_days": window_days,
-                    "identity": "name_match",
-                },
-            )
-        )
+        recent = [p for p in papers_by_author[key] if p.published_at and p.published_at >= cutoff]
+        sig = recurrence_signal(person.ref, person.name, recent, window_days=window_days)
+        if sig is not None:
+            out.append(sig)
     return out
 
 
