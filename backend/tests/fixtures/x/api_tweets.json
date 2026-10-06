@@ -1,0 +1,7 @@
+{"data": [
+  {"id": "2105674093163446272", "text": "Introducing Handy-1, our first open-source dexterous hand.", "created_at": "2026-10-01T15:00:00.000Z",
+   "public_metrics": {"retweet_count": 40, "reply_count": 12, "like_count": 410, "quote_count": 3}, "author_id": "1500000000000000001"},
+  {"id": "2105228658078646272", "text": "Great talk today at the robotics meetup.", "created_at": "2026-09-30T09:30:00.000Z",
+   "public_metrics": {"retweet_count": 0, "reply_count": 1, "like_count": 9, "quote_count": 0}, "author_id": "1500000000000000001"}
+ ],
+ "meta": {"result_count": 2, "newest_id": "2105674093163446272", "oldest_id": "2105228658078646272"}}

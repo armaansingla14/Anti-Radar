@@ -1,0 +1,7 @@
+[
+  {"handle": "demo_founder", "is_demo": true, "name": "Demo Founder (fictional)", "followers_count": 420,
+   "posts": [
+     {"id": "demo-1", "text": "Day 1 at something new. Building in stealth.", "created_at": "2026-09-20T10:00:00Z"},
+     {"id": "demo-2", "text": "Launching our tactile sensor dev kit today.", "created_at": "2026-10-02T10:00:00Z"}
+   ]}
+]

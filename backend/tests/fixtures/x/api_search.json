@@ -1,0 +1,8 @@
+{"data": [
+  {"id": "2104541631083446272", "text": "We're hiring controls engineers in Austin.", "created_at": "2026-09-28T12:00:00.000Z",
+   "author_id": "77", "public_metrics": {"like_count": 5}},
+  {"id": "2104541631083446273", "text": "Orphan post without author expansion", "created_at": "2026-09-28T12:00:00.000Z",
+   "author_id": "999"}
+ ],
+ "includes": {"users": [{"id": "77", "username": "acmerobotics", "name": "Acme Robotics"}]},
+ "meta": {"result_count": 2}}
