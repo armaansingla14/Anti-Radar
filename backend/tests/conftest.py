@@ -77,3 +77,26 @@ def thesis():
     from radar.thesis.loader import get_thesis
 
     return get_thesis()
+
+
+@pytest.fixture()
+def seeded(db_url):
+    """Clean test DB seeded with the labeled fictional dataset, classified and scored (no network)."""
+    from radar.demo.seed import reset_database, seed_demo
+
+    reset_database()
+    seed_demo(snapshot=False, fictional=True)
+    yield
+    reset_database()
+
+
+@pytest.fixture()
+def client(db_url):
+    from fastapi.testclient import TestClient
+
+    from radar.api import ratelimit
+    from radar.api.main import create_app
+
+    ratelimit.reset()
+    with TestClient(create_app()) as c:
+        yield c
