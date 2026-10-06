@@ -1,22 +1,32 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono, Newsreader } from "next/font/google";
+import localFont from "next/font/local";
 import { Footer } from "@/components/Footer";
 import { KeyboardProvider } from "@/components/KeyboardProvider";
 import { Masthead } from "@/components/Masthead";
 import { ToastProvider } from "@/components/Toast";
 import "./globals.css";
 
-const newsreader = Newsreader({
+// Self-hosted (OFL) variable fonts: builds never depend on fetching Google Fonts.
+const newsreader = localFont({
   variable: "--font-newsreader",
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-  axes: ["opsz"],
   display: "swap",
+  src: [
+    { path: "../node_modules/@fontsource-variable/newsreader/files/newsreader-latin-opsz-normal.woff2", style: "normal", weight: "200 800" },
+    { path: "../node_modules/@fontsource-variable/newsreader/files/newsreader-latin-opsz-italic.woff2", style: "italic", weight: "200 800" },
+  ],
 });
 
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"], display: "swap" });
+const inter = localFont({
+  variable: "--font-inter",
+  display: "swap",
+  src: [{ path: "../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2", style: "normal", weight: "100 900" }],
+});
 
-const jetbrains = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"], display: "swap" });
+const jetbrains = localFont({
+  variable: "--font-jetbrains",
+  display: "swap",
+  src: [{ path: "../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2", style: "normal", weight: "100 800" }],
+});
 
 export const metadata: Metadata = {
   title: { default: "Anti Radar", template: "%s · Anti Radar" },
