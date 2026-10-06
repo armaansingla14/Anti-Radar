@@ -185,7 +185,10 @@ def thesis_map(session: Session, thesis: Thesis | None = None) -> ThesisMap:
                 attention if att_now else None, (sum(att_before) / len(att_before)) if att_before else None)
 
             top: list[dict[str, Any]] = []
-            for eid in sorted((e for e in cids + pids if e in snaps), key=lambda e: -snaps[e].score)[:3]:
+            # Company and founder scores are different scales: companies first, then people.
+            ranked = sorted((e for e in cids if e in snaps), key=lambda e: -snaps[e].score)
+            ranked += sorted((e for e in pids if e in snaps), key=lambda e: -snaps[e].score)
+            for eid in ranked[:3]:
                 ent = companies.get(eid) or people.get(eid)
                 top.append({"type": "company" if eid in companies else "person", "id": str(eid), "slug": ent.slug,
                             "name": ent.name, "score": round(snaps[eid].score), "is_demo": ent.is_demo})

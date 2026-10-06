@@ -806,7 +806,10 @@ def execute(session: Session, f: SearchFilters, limit: int = DEFAULT_LIMIT) -> t
         hits.extend(_search_companies(session, f))
     if "person" in f.entity_types:
         hits.extend(_search_people(session, f))
-    hits.sort(key=lambda h: (-h.sort_key, -(h.score or 0), h.entity.name))
+    # ANTI SCORE and Founder Score are different scales, so types are ranked separately:
+    # companies first, then people (each by the query's sort key, then score).
+    type_rank = {"company": 0, "person": 1}
+    hits.sort(key=lambda h: (type_rank.get(h.entity_type, 2), -h.sort_key, -(h.score or 0), h.entity.name))
     results = [
         SearchResult(entity_type=h.entity_type, id=str(h.entity.id), slug=h.entity.slug, name=h.entity.name,
                      subtitle=_subtitle(h), score=round(h.score) if h.score is not None else None,
