@@ -70,6 +70,7 @@ class AntiScore(BaseModel):
     version: str
     computed_on: date
     feedback_adjustment: float = 0.0
+    adjustments: list[dict[str, Any]] = Field(default_factory=list)  # [{key, label, points, reason}]
     cohort_size: int = 0
     low_coverage: bool = False
 
