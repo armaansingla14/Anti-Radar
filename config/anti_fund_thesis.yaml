@@ -1,0 +1,209 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ANTI RADAR — Anti Fund thesis configuration
+#
+# Everything the scoring engine believes about "what Anti Fund cares about"
+# lives here. Edit weights, keywords and discovery queries without touching
+# code. Changes take effect on the next `radar score` run.
+# ─────────────────────────────────────────────────────────────────────────────
+
+fund: Anti Fund
+tagline: Conviction Before Consensus.
+version: 2026.10
+
+# Stage preference → multiplier applied to Thesis Fit.
+stages:
+  formation: 1.00
+  pre_seed: 1.00
+  seed: 0.90
+  series_a: 0.60
+  growth: 0.35
+  pre_ipo: 0.25
+  public: 0.10
+  unknown: 0.85
+
+# Themes. `weight` scales thesis fit (1.0 = core thesis).
+# Each subcategory carries deterministic keywords used before any LLM call.
+themes:
+  ai:
+    label: AI
+    weight: 1.0
+    subcategories:
+      foundation_models: { label: Foundation models, keywords: [foundation model, pretraining, large language model, llm, transformer, mixture of experts, moe, scaling law] }
+      inference: { label: Inference & serving, keywords: [inference, serving, kv cache, speculative decoding, quantization, llm serving, throughput, latency, vllm, tensorrt] }
+      agents: { label: Agents, keywords: [agent, agentic, tool use, computer use, autonomous agent, multi-agent] }
+      world_models: { label: World models, keywords: [world model, video prediction, generative simulation, latent dynamics] }
+      evals_safety: { label: Evals & alignment, keywords: [evaluation, benchmark, alignment, interpretability, red teaming, reward model] }
+      training_infra: { label: Training infrastructure, keywords: [distributed training, fsdp, data parallel, pipeline parallel, training framework, rlhf, post-training, reinforcement learning] }
+      ai_for_science: { label: AI for science, keywords: [protein, materials discovery, molecular, scientific machine learning, pde, weather model] }
+  robotics:
+    label: Robotics
+    weight: 1.0
+    subcategories:
+      robot_foundation_models: { label: Robot foundation models, keywords: [robot foundation model, vision-language-action, vla, generalist robot policy, robot learning, embodied ai, physical ai] }
+      manipulation: { label: Manipulation, keywords: [manipulation, grasping, dexterous, bimanual, pick and place, teleoperation] }
+      tactile: { label: Tactile sensing, keywords: [tactile, touch sensing, gelsight, force sensing, haptic, skin sensor] }
+      humanoids: { label: Humanoids, keywords: [humanoid, biped, legged robot, whole-body control, locomotion] }
+      perception: { label: Perception, keywords: [slam, 3d perception, point cloud, gaussian splatting, depth estimation, scene understanding, nerf] }
+      actuation: { label: Actuation & motors, keywords: [actuator, motor control, quasi-direct drive, harmonic drive, servo, bldc] }
+      industrial_robotics: { label: Industrial robotics, keywords: [industrial robot, robotic arm, cobot, warehouse robot, palletizing, ros2, ros 2] }
+      autonomous_vehicles: { label: Autonomous vehicles, keywords: [autonomous driving, self-driving, openpilot, motion planning, adas, end-to-end driving] }
+      drones: { label: Drones, keywords: [drone, uav, quadrotor, px4, ardupilot, multirotor, fpv] }
+      simulation: { label: Simulation & data, keywords: [robot simulation, sim-to-real, mujoco, isaac, physics simulator, robot dataset, synthetic data] }
+  defense:
+    label: Defense
+    weight: 1.0
+    subcategories:
+      autonomy: { label: Defense autonomy, keywords: [defense autonomy, autonomous systems, swarm, unmanned, collaborative autonomy, mission autonomy] }
+      counter_uas: { label: Counter-UAS, keywords: [counter-uas, counter uas, c-uas, drone detection, drone defense, interceptor] }
+      sensing_ew: { label: Sensing & EW, keywords: [radar signal, electronic warfare, rf sensing, sdr, software defined radio, sigint, passive sensing] }
+      defense_vision: { label: Defense computer vision, keywords: [target recognition, isr, aerial imagery, object tracking, thermal imaging, satellite imagery] }
+      munitions_propulsion: { label: Propulsion & hypersonics, keywords: [propulsion, rocket engine, hypersonic, solid rocket, turbojet, liquid rocket] }
+  energy:
+    label: Energy
+    weight: 1.0
+    subcategories:
+      fusion: { label: Fusion, keywords: [fusion, tokamak, stellarator, plasma confinement, inertial confinement, plasma physics] }
+      fission: { label: Advanced fission, keywords: [nuclear reactor, microreactor, small modular reactor, smr, nuclear fuel, haleu, fission] }
+      grid: { label: Grid & storage, keywords: [power grid, grid infrastructure, battery, energy storage, transmission, interconnection, virtual power plant] }
+      power_electronics: { label: Power electronics, keywords: [power electronics, inverter, gan, silicon carbide, sic, converter, solid-state transformer] }
+      datacenter_energy: { label: AI datacenter energy, keywords: [datacenter power, data center energy, liquid cooling, power usage effectiveness, ai datacenter] }
+      geothermal: { label: Geothermal & novel generation, keywords: [geothermal, superhot rock, enhanced geothermal] }
+  semiconductors:
+    label: Semiconductors
+    weight: 1.0
+    subcategories:
+      ai_accelerators: { label: AI accelerators, keywords: [ai accelerator, npu, tpu, systolic array, asic, custom silicon, inference chip] }
+      cuda_alternatives: { label: CUDA alternatives, keywords: [cuda alternative, rocm, triton, gpu kernel, kernel language, mojo, hip, opencl, sycl, tinygrad] }
+      compilers: { label: ML compilers, keywords: [compiler, mlir, xla, tvm, graph compiler, code generation, kernel fusion, llvm] }
+      eda_hardware: { label: EDA & open hardware, keywords: [eda, rtl, verilog, systemverilog, chisel, fpga, risc-v, riscv, asic design, place and route] }
+      photonics: { label: Photonics & interconnect, keywords: [photonics, silicon photonics, optical interconnect, co-packaged optics, chiplet] }
+  manufacturing:
+    label: Manufacturing
+    weight: 0.9
+    subcategories:
+      industrial_automation: { label: Industrial automation, keywords: [industrial automation, plc, factory automation, mes, scada, industrial control] }
+      advanced_manufacturing: { label: Advanced manufacturing, keywords: [additive manufacturing, 3d printing, cnc, machining, metal printing, advanced manufacturing] }
+      factory_ai: { label: Factory AI & inspection, keywords: [defect detection, visual inspection, predictive maintenance, quality inspection, digital twin] }
+      cad_physics: { label: CAD & engineering software, keywords: [cad, generative design, finite element, fea, cfd, simulation software, computational geometry] }
+  frontier_infrastructure:
+    label: Frontier Infrastructure
+    weight: 0.9
+    subcategories:
+      space: { label: Space infrastructure, keywords: [satellite, spacecraft, launch vehicle, orbital, in-space manufacturing, cubesat, space infrastructure] }
+      compute_infra: { label: Compute infrastructure, keywords: [gpu cluster, gpu cloud, scheduler, kubernetes gpu, datacenter, interconnect, rdma, infiniband] }
+      quantum: { label: Quantum, keywords: [quantum computing, qubit, quantum error correction, superconducting qubit, trapped ion] }
+      bio_infra: { label: Bio infrastructure, keywords: [lab automation, synthetic biology, cloud lab, protein design] }
+      systems: { label: Systems software, keywords: [operating system, database engine, storage engine, distributed systems, networking stack, ebpf, rust runtime] }
+  software:
+    label: Select Software
+    weight: 0.55
+    subcategories:
+      devtools: { label: Developer tools, keywords: [developer tool, code editor, coding agent, ide, code generation, static analysis] }
+      data_infra: { label: Data infrastructure, keywords: [vector database, data pipeline, lakehouse, stream processing, query engine] }
+
+# Discovery queries the GitHub/HN/arXiv providers run on each sweep.
+discovery_queries:
+  - robotics foundation models
+  - robot manipulation
+  - tactile sensing
+  - humanoid robotics
+  - autonomous drones
+  - defense autonomy
+  - counter-UAS
+  - computer vision defense
+  - novel propulsion
+  - fusion energy
+  - nuclear fuel
+  - grid infrastructure
+  - power electronics
+  - AI datacenter energy
+  - transformer inference
+  - AI accelerators
+  - custom silicon
+  - GPU alternatives
+  - CUDA alternatives
+  - inference optimization
+  - compiler infrastructure
+  - physical AI
+  - world models
+  - simulation
+  - industrial automation
+  - advanced manufacturing
+  - space infrastructure
+  - vision language action
+  - sim-to-real
+  - risc-v
+  - gpu kernels
+  - llm serving
+  - reinforcement learning robotics
+  - software defined radio
+  - satellite
+
+arxiv:
+  categories: [cs.RO, cs.AI, cs.LG, cs.CL, cs.CV, cs.DC, cs.AR, cs.OS, cs.NI, eess.SY, quant-ph, physics.plasm-ph]
+  max_results_per_category: 40
+
+# Where people previously worked → founder signal tier.
+# tier_1 = frontier labs / exceptional technical orgs. tier_2 = strong technical orgs.
+affiliation_tiers:
+  tier_1: [OpenAI, Anthropic, DeepMind, Google DeepMind, Meta FAIR, FAIR, NVIDIA, Tesla, SpaceX, Anduril, Palantir, Physical Intelligence, Figure, Cognition, Anysphere, Cursor, Boston Dynamics, Waymo, Skild, xAI, Google Brain, Toyota Research Institute, MIT, Stanford, Berkeley, UC Berkeley, CMU, Carnegie Mellon, ETH Zurich, Caltech]
+  tier_2: [Google, Microsoft, Apple, Amazon, Meta, AMD, Intel, Qualcomm, Cruise, Zoox, Aurora, Nuro, Hugging Face, Mistral, Cohere, Databricks, Stripe, Lockheed Martin, Northrop Grumman, Raytheon, Blue Origin, Rocket Lab, Commonwealth Fusion, Helion, TAE, Princeton, Harvard, Oxford, Cambridge, Georgia Tech, University of Washington, UIUC, Michigan, Toronto, Mila, Max Planck]
+
+# Language that suggests founding activity (used on bios, posts, READMEs).
+formation_phrases:
+  - working on something new
+  - starting something
+  - building something new
+  - stealth
+  - we're hiring
+  - founding engineer
+  - founding team
+  - just left
+  - excited to share what we've been building
+  - finally sharing
+  - launching
+  - co-founder
+  - cofounder
+  - day 1 at
+
+# Technical role taxonomy for the hiring signal engine.
+hiring_roles:
+  ml_research: [research scientist, research engineer, machine learning, ml engineer, applied scientist, ai researcher]
+  robotics_controls: [controls engineer, robotics engineer, motion planning, manipulation, perception engineer, mechatronics]
+  embedded_firmware: [embedded, firmware, fpga engineer, hardware engineer, electrical engineer]
+  silicon: [asic, rtl, verification engineer, physical design, silicon, chip architect, analog design]
+  gpu_compiler: [gpu kernel, cuda, compiler engineer, performance engineer, mlir, kernel engineer]
+  rf_defense: [rf engineer, electronic warfare, radar engineer, signal processing, guidance navigation, gnc]
+  energy_plasma: [plasma, nuclear engineer, power electronics, thermal engineer, fusion]
+  manufacturing: [manufacturing engineer, process engineer, production engineer, quality engineer, supply chain]
+  infra: [infrastructure engineer, site reliability, distributed systems, platform engineer, backend engineer]
+  gtm: [sales, account executive, marketing, business development, customer success, recruiter]
+
+# Scoring constants. SCORE_VERSION is bumped by code when formulas change.
+scoring:
+  weights:
+    technical_momentum: 25
+    founder_signal: 20
+    acceleration: 20
+    thesis_fit: 15
+    novelty: 10
+    attention_gap: 10
+  collision:
+    window_days: 42
+    decay_days: 21
+    independence_bonus: 0.5
+    tight_span_days: 14
+    tight_span_multiplier: 1.2
+    saturation: 2.0
+  novelty:
+    half_life_days: 45
+  attention_gap:
+    flag_tech_min: 0.75
+    flag_attention_max: 0.40
+    low_coverage_penalty: 0.7
+  cohort_min: 12
+  feedback:
+    step: 0.05
+    min_multiplier: 0.8
+    max_multiplier: 1.2
+    max_point_shift: 10
