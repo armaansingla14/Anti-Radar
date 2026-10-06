@@ -1,0 +1,42 @@
+/* Morning brief print stylesheet — one clean research page, no app chrome. */
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm 16mm 18mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  body:has(.brief-print) header:not(.brief-print header),
+  body:has(.brief-print) footer:not(.brief-print footer),
+  body:has(.brief-print) nav:not(.brief-print nav),
+  body:has(.brief-print) [aria-live] {
+    display: none !important;
+  }
+  body:has(.brief-print) main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  .brief-print {
+    max-width: none !important;
+    padding: 0 !important;
+    font-size: 11pt;
+  }
+  .brief-print a,
+  .brief-print .link {
+    color: inherit;
+    text-decoration: none;
+  }
+  .brief-print section,
+  .brief-print li,
+  .brief-print article {
+    break-inside: avoid;
+  }
+  .brief-print h2 {
+    break-after: avoid;
+  }
+  .brief-print details > *:not(summary) {
+    display: block;
+  }
+}
