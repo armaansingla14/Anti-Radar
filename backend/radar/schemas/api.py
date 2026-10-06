@@ -182,7 +182,9 @@ class PaperCard(BaseModel):
     url: str | None = None
     code_urls: list[str] = Field(default_factory=list)
     linked_entities: list[dict[str, Any]] = Field(default_factory=list)  # [{type, slug, name}]
-    why_it_matters: str | None = None  # MODEL_OPINION if present
+    why_it_matters: str | None = None
+    why_it_matters_epistemic: Epistemic | None = None
+    why_it_matters_generator: Literal["llm", "template", "cached"] | None = None
     score: int | None = None
     is_demo: bool = False
 
@@ -390,6 +392,7 @@ class MorningBrief(BaseModel):
     narrative: Narrative | None = None
     markdown: str
     generator: Literal["llm", "template", "cached"]
+    generated_at: datetime | None = None
 
 
 class ThesisCell(BaseModel):
@@ -398,7 +401,7 @@ class ThesisCell(BaseModel):
     theme: str
     momentum: float  # 0..100
     momentum_trend: Literal["up2", "up", "flat", "down"]
-    attention: float  # 0..100
+    attention: float | None  # 0..100; None when no linked company has an attention measurement
     attention_trend: Literal["up2", "up", "flat", "down"]
     attention_gap: bool
     companies: int
