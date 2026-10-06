@@ -1,0 +1,264 @@
+"""High-level operations shared by the CLI, the worker and the API.
+
+Every ingestion goes through `pipeline.runner.run_provider`, so each run is
+recorded in `ingestion_runs` (records, rejects, errors, latency, rate limits)
+and failures never disappear silently.
+
+When a `SnapshotWriter` is active (``radar demo capture``) each provider batch is
+also written to the demo snapshot so the same real data can be replayed offline.
+"""
+
+from __future__ import annotations
+
+import gzip
+import json
+import logging
+from collections.abc import Callable
+from contextlib import contextmanager
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+from radar import clock
+from radar.db import session_scope
+from radar.pipeline.runner import run_provider
+from radar.providers.base import ProviderBatch
+from radar.thesis.loader import get_thesis
+
+log = logging.getLogger("radar.ops")
+
+
+# ── Snapshot capture ─────────────────────────────────────────────────────────
+
+
+class SnapshotWriter:
+    def __init__(self, directory: Path) -> None:
+        self.dir = directory
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.n = len(list(self.dir.glob("*.json.gz")))
+
+    def write(self, provider: str, params: dict[str, Any], batch: ProviderBatch, run: Any) -> None:
+        self.n += 1
+        path = self.dir / f"{self.n:04d}_{provider}.json.gz"
+        run_meta = {
+            "status": run.status,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "request_count": run.request_count,
+            "latency_ms_p50": run.latency_ms_p50,
+            "rate_limit_remaining": run.rate_limit_remaining,
+            "errors": run.errors or [],
+        }
+        payload = {"provider": provider, "params": params, "run": run_meta, "batch": batch.model_dump(mode="json")}
+        with gzip.open(path, "wt", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+
+
+_writer: SnapshotWriter | None = None
+
+
+@contextmanager
+def capturing(directory: Path):
+    global _writer
+    _writer = SnapshotWriter(directory)
+    try:
+        yield _writer
+    finally:
+        _writer = None
+
+
+def _run(provider: str, fn: Callable[[], ProviderBatch], params: dict[str, Any], stats=None):
+    holder: dict[str, ProviderBatch] = {}
+
+    def wrapped() -> ProviderBatch:
+        holder["batch"] = fn()
+        return holder["batch"]
+
+    run, stats_out = run_provider(session_scope, provider, wrapped, params=params, http_stats=stats)
+    if _writer is not None and "batch" in holder:
+        _writer.write(provider, params, holder["batch"], run)
+    return run, stats_out
+
+
+# ── Ingestion ────────────────────────────────────────────────────────────────
+
+
+def ingest_github(
+    *,
+    queries: list[str] | None = None,
+    repo: str | None = None,
+    org: str | None = None,
+    per_query: int = 4,
+    max_repos: int = 60,
+    created_within_days: int = 150,
+):
+    from radar.providers.github import GitHubProvider
+
+    gh = GitHubProvider()
+    if repo:
+        params = {"repo": repo}
+        return _run("github", lambda: gh.fetch_repo(repo, deep=True), params, gh.client.stats)
+    if org:
+        params = {"org": org}
+        return _run("github", lambda: gh.fetch_org(org), params, gh.client.stats)
+    qs = queries or get_thesis().discovery_queries
+    params = {"queries": qs, "per_query": per_query, "max_repos": max_repos}
+    return _run(
+        "github",
+        lambda: gh.discover(qs, per_query=per_query, max_repos=max_repos, created_within_days=created_within_days),
+        params,
+        gh.client.stats,
+    )
+
+
+def ingest_arxiv(*, categories: list[str] | None = None, max_results: int | None = None, days: int = 21,
+                 query: str | None = None):
+    from radar.providers.arxiv import ArxivProvider
+
+    ax = ArxivProvider()
+    if query:
+        return _run("arxiv", lambda: ax.search(query, max_results=max_results or 25, days=days),
+                    {"query": query}, ax.client.stats)
+    params = {"categories": categories, "max_results": max_results, "days": days}
+    return _run("arxiv", lambda: ax.fetch_recent(categories, max_results=max_results, days=days), params,
+                ax.client.stats)
+
+
+def ingest_hn(*, days: int = 14, topics: bool = True, topic_days: int = 45):
+    from radar.providers.hackernews import HackerNewsProvider
+
+    hn = HackerNewsProvider()
+
+    def fn() -> ProviderBatch:
+        batch = hn.fetch_launches(days=days)
+        if topics:
+            batch.extend(hn.search_topics(get_thesis().discovery_queries, days=topic_days))
+        return batch
+
+    return _run("hackernews", fn, {"days": days, "topics": topics}, hn.client.stats)
+
+
+def ingest_url(url: str, company_name: str | None = None, max_pages: int = 6):
+    from radar.providers.website import WebsiteProvider
+
+    web = WebsiteProvider()
+    return _run("website", lambda: web.crawl(url, company_name=company_name, max_pages=max_pages),
+                {"url": url}, web.client.stats)
+
+
+def ingest_x_manual(url: str, pasted_text: str | None = None, entity_ref=None):
+    from radar.providers.x.manual import ManualXSignalProvider
+
+    x = ManualXSignalProvider()
+    info: dict[str, Any] = {}
+
+    def fn() -> ProviderBatch:
+        batch, i = x.ingest(url, pasted_text, entity_ref=entity_ref)
+        info.update(i or {})
+        return batch
+
+    run, stats = _run("x", fn, {"url": url, "manual": True}, x.client.stats)
+    return run, stats, info
+
+
+def crawl_company_sites(limit: int = 25, *, only_missing: bool = True):
+    """Crawl websites of the highest-scoring companies with a known domain."""
+    from sqlalchemy import select
+
+    from radar.models import Company, ScoreSnapshot, WebPage
+
+    with session_scope() as s:
+        q = (
+            select(Company.website, Company.name, Company.domain)
+            .join(ScoreSnapshot, ScoreSnapshot.entity_id == Company.id, isouter=True)
+            .where(Company.domain.is_not(None), Company.is_demo.is_(False))
+            .order_by(ScoreSnapshot.score.desc().nulls_last())
+        )
+        crawled = {u for (u,) in s.execute(select(WebPage.url))} if only_missing else set()
+        targets = []
+        for website, name, domain in s.execute(q):
+            url = website or f"https://{domain}"
+            if any(domain in c for c in crawled):
+                continue
+            if url not in {t[0] for t in targets}:
+                targets.append((url, name))
+            if len(targets) >= limit:
+                break
+    results = []
+    for url, name in targets:
+        try:
+            results.append(ingest_url(url, company_name=name))
+        except Exception as e:  # noqa: BLE001 — recorded by run_provider; keep sweeping
+            log.warning("crawl failed for %s: %s", url, e)
+    return results
+
+
+# ── Derivation ───────────────────────────────────────────────────────────────
+
+
+def recompute(day: date | None = None, *, use_llm_topics: bool = False) -> dict[str, Any]:
+    """classify → stage estimates → scores. Deterministic; safe to run any time."""
+    from radar.pipeline.stage import apply_stage_estimates
+    from radar.scoring.run import score_all
+    from radar.thesis.classifier import classify_entities, ensure_topics
+
+    thesis = get_thesis()
+    with session_scope() as s:
+        ensure_topics(s, thesis)
+        classified = classify_entities(s, thesis)
+    if use_llm_topics:
+        refine_topics_with_llm()
+    with session_scope() as s:
+        staged = apply_stage_estimates(s)
+    with session_scope() as s:
+        scored = score_all(s, day or clock.today(), thesis)
+    return {"classified": classified, "staged": staged, "scored": scored}
+
+
+def refine_topics_with_llm(limit: int = 60) -> int:
+    """Ask the fast model to adjudicate ambiguous thesis classifications (0.3–0.7). Cached."""
+    from sqlalchemy import select
+
+    from radar.llm.search_parse import llm_refine_topics
+    from radar.models import Company, EntityTopic, Topic
+
+    n = 0
+    with session_scope() as s:
+        rows = s.execute(
+            select(EntityTopic, Topic, Company)
+            .join(Topic, Topic.id == EntityTopic.topic_id)
+            .join(Company, Company.id == EntityTopic.entity_id)
+            .where(EntityTopic.method == "keyword", EntityTopic.score.between(0.3, 0.7))
+            .limit(limit)
+        ).all()
+        for et, topic, company in rows:
+            text = f"{company.name}. {company.description or ''}"
+            refined = llm_refine_topics(text, [topic.key])
+            if not refined:
+                continue
+            for key, score in refined:
+                if key == topic.key:
+                    s.add(EntityTopic(entity_type=et.entity_type, entity_id=et.entity_id, topic_id=topic.id,
+                                      score=float(score), method="llm", evidence=["llm-adjudicated"]))
+                    n += 1
+    return n
+
+
+def sweep(*, github: bool = True, arxiv: bool = True, hn: bool = True, websites: bool = True) -> dict[str, Any]:
+    """One full live sweep across sources, then recompute."""
+    out: dict[str, Any] = {}
+    if hn:
+        out["hackernews"] = _status(ingest_hn())
+    if arxiv:
+        out["arxiv"] = _status(ingest_arxiv())
+    if github:
+        out["github"] = _status(ingest_github())
+    if websites:
+        out["website"] = len(crawl_company_sites(limit=15))
+    out["recompute"] = recompute()
+    return out
+
+
+def _status(result) -> dict[str, Any]:
+    run, stats = result[0], result[1]
+    return {"status": run.status, "signals": run.signals_created, "errors": len(run.errors or [])}
