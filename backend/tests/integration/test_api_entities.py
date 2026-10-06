@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 
 from radar import clock
 from radar.db import session_scope
-from radar.models import Company, ResearchReport
+from radar.models import Company, Person, ResearchReport, Signal
+from radar.services import presenters as P
 
 DEMO = {"include_demo": "true"}
 
 
 def _names(rows: list[dict]) -> list[str]:
     return [r["name"] for r in rows]
+
+
+def _as_live_history() -> None:
+    """Simulate daily live scoring runs (deltas are never computed live-vs-reconstructed)."""
+    with session_scope() as s:
+        s.execute(text("UPDATE score_snapshots SET attention = attention - 'reconstructed'"))
 
 
 # ── company detail ───────────────────────────────────────────────────────────
@@ -30,10 +38,12 @@ def test_company_detail_halcyon(seeded, client):
     facts = {f["label"]: f for f in d["facts"]}
     assert {"Founded", "Website", "Location", "Stage estimate", "GitHub org", "X handle", "Team size known",
             "Open roles"} <= set(facts)
-    assert {f["status"] for f in d["facts"]} >= {"VERIFIED", "INFERRED"}
-    assert facts["Website"]["status"] == "VERIFIED" and facts["Website"]["source_url"]
+    # Fictional entities are never VERIFIED (demo provenance is capped at INFERRED).
+    assert "VERIFIED" not in {f["status"] for f in d["facts"]} and "INFERRED" in {f["status"] for f in d["facts"]}
+    assert facts["Website"]["status"] == "INFERRED" and facts["Website"]["source_url"]
+    assert all(".example" in (f["source_url"] or ".example") for f in d["facts"])
     assert facts["Stage estimate"]["status"] == "INFERRED" and facts["Stage estimate"]["note"]
-    assert facts["Open roles"]["status"] == "VERIFIED" and facts["Open roles"]["value"] == 3
+    assert facts["Open roles"]["status"] == "INFERRED" and facts["Open roles"]["value"] == 3
 
     # timeline newest first, bounded
     days = [t["day"] for t in d["timeline"]]
@@ -67,6 +77,7 @@ def test_company_detail_halcyon(seeded, client):
 
 
 def test_company_detail_by_id_score_and_404(seeded, client):
+    _as_live_history()
     with session_scope() as s:
         cid = str(s.scalar(select(Company.id).where(Company.slug == "tessellate-compute")))
     assert client.get(f"/api/companies/{cid}").json()["summary"]["slug"] == "tessellate-compute"
@@ -93,6 +104,7 @@ def test_project_company_has_unknown_facts(seeded, client):
 
 
 def test_companies_list_filters_and_sorts(seeded, client):
+    _as_live_history()
     rows = client.get("/api/companies", params=DEMO).json()
     assert isinstance(rows, list) and rows[0]["name"] == "Halcyon Dynamics" and len(rows) == 7
     scores = [r["score"] for r in rows]
@@ -137,8 +149,8 @@ def test_founder_detail_sana_qureshi(seeded, client):
     facts = {f["label"]: f for f in d["facts"]}
     assert facts["Current company"]["status"] == "UNKNOWN" and facts["Current company"]["value"] is None
     assert "Coriolis Aerospace" in facts["Prior affiliations"]["value"]
-    assert facts["GitHub"]["status"] == "VERIFIED" and facts["GitHub"]["source_url"]
-    assert {f["status"] for f in d["facts"]} == {"VERIFIED", "INFERRED", "UNKNOWN"}
+    assert facts["GitHub"]["status"] == "INFERRED" and "github.example" in facts["GitHub"]["source_url"]
+    assert {f["status"] for f in d["facts"]} == {"INFERRED", "UNKNOWN"}
     assert _names(d["companies"]) == ["demo-sq-propulsion"]
     assert [r["full_name"] for r in d["repositories"]] == ["demo-sq-propulsion/rde-sim"]
     assert set(_names(d["collaborators"])) == {"Ilse Varga", "Marcus Bell"}
@@ -247,3 +259,54 @@ def test_entity_endpoints_are_fast(seeded, client):
         assert client.get(path).status_code == 200
         assert time.perf_counter() - t < 1.0, path
     assert clock.today().isoformat() == "2026-10-06"
+
+
+# ── regressions ──────────────────────────────────────────────────────────────
+
+
+def test_no_company_spotlight_needs_a_positive_formation_signal(seeded, client):
+    """A missing company field is an UNKNOWN: a bio naming an organization, or no formation signal,
+    keeps someone out of the pre-company / formation-target list."""
+    base = set(_names(client.get("/api/founders", params={**DEMO, "no_company": "true"}).json()))
+    assert base == {"Sana Qureshi", "Marcus Bell", "Ilse Varga"}
+    with session_scope() as s:
+        s.execute(update(Person).where(Person.slug == "marcus-bell").values(bio="Founder & CTO at Stealth Startup"))
+        ilse = s.scalar(select(Person).where(Person.slug == "ilse-varga"))
+        ilse.attrs = {**(ilse.attrs or {}), "headline": "PhD Candidate @ HKUST"}
+        # no company on record but no formation signal: not a formation target
+        elias = s.scalar(select(Person).where(Person.slug == "elias-brandt"))
+        elias.current_company = None
+        s.execute(update(Signal).where(Signal.entity_id == elias.id).values(signal_type="x_post"))
+    rows = client.get("/api/founders", params={**DEMO, "no_company": "true"}).json()
+    assert _names(rows) == ["Sana Qureshi"]
+    with session_scope() as s:  # formation signals older than the lookback do not count
+        sana = s.scalar(select(Person.id).where(Person.slug == "sana-qureshi"))
+        s.execute(update(Signal).where(Signal.entity_id == sana)
+                  .values(event_at=clock.now() - timedelta(days=200)))
+    assert client.get("/api/founders", params={**DEMO, "no_company": "true"}).json() == []
+
+
+def _snap(components: dict) -> SimpleNamespace:
+    return SimpleNamespace(components=components, score=50.0)
+
+
+def test_person_evidence_formation_first_and_zero_components_cite_nothing():
+    ev = lambda t: {"title": t, "signal_id": t}  # noqa: E731
+    snap = _snap({
+        "technical_output": {"value": 0.0, "max": 25, "evidence": [ev("contributors on someone else's repo")]},
+        "research": {"value": 8.0, "max": 20, "evidence": [ev("paper")]},
+        "formation": {"value": 12.0, "max": 20, "evidence": [ev("left Coriolis")]},
+        "attention_gap": {"value": 0, "max": 10, "evidence": [ev("unmeasured")]},
+    })
+    assert P.person_why_now(None, snap) == ["left Coriolis", "paper"]
+    assert [e["title"] for e in P._person_evidence(snap)] == ["left Coriolis", "paper"]
+    assert P.component_evidence({"value": 0, "evidence": [ev("x")]}) == []
+    assert P.component_evidence(None) == []
+
+
+def test_why_surfaced_skips_evidence_of_zero_value_components():
+    snap = SimpleNamespace(
+        components={"technical_momentum": {"value": 0.0, "evidence": [{"title": "Repository created", "weight": 1}]},
+                    "thesis_fit": {"value": 5.0, "evidence": [{"title": "Thesis match", "weight": 0.5}]}},
+        collision={}, attention={})
+    assert [e.title for e in P.why_surfaced(snap, {})] == ["Thesis match"]

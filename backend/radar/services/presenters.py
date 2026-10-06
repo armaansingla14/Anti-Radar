@@ -43,6 +43,8 @@ from radar.scoring.run import anti_score_from_snapshot
 from radar.thesis.loader import get_thesis
 
 NEW_DAYS = 7
+# Founder-score component keys (scoring/founder.py FOUNDER_MAX), formation signals first.
+PERSON_EVIDENCE_ORDER = ("formation", "technical_output", "research", "pedigree")
 
 # Human phrasing for signal types in "Why it surfaced" (fallback: signal title).
 SOURCE_GLYPH = {"github": "GH", "arxiv": "AX", "hackernews": "HN", "website": "WEB", "jobs": "JOB", "x": "X",
@@ -83,10 +85,41 @@ def latest_scores(session: Session, ids: Iterable[uuid.UUID], day: date | None =
     return {e: float(sc) for e, sc in rows}
 
 
+def is_reconstructed(snap: ScoreSnapshot) -> bool:
+    return bool((snap.attention or {}).get("reconstructed"))
+
+
+def comparable_baseline(current: ScoreSnapshot, past: ScoreSnapshot) -> float | None:
+    """The score of ``current`` to diff against ``past``, or None if the two are not comparable.
+
+    Live and reconstructed snapshots come from different pipelines (live runs see data stamped at
+    observation time that reconstruction of a past day never can), so a live score is never diffed
+    against reconstructed history: the delta would measure the pipeline change, not the entity.
+    When a live snapshot also carries the reconstructed score for the same day
+    (``attention.reconstructed_score``), that like-for-like value is used; otherwise there is no
+    delta. Snapshots from different score versions are never compared either."""
+    if current.version and past.version and current.version != past.version:
+        return None
+    if is_reconstructed(past) and not is_reconstructed(current):
+        rec = (current.attention or {}).get("reconstructed_score")
+        return float(rec) if isinstance(rec, int | float) else None
+    return current.score
+
+
+def snapshot_delta(current: ScoreSnapshot | None, past: ScoreSnapshot | None) -> float | None:
+    """current − past for two snapshots of one entity on different days, or None if not comparable."""
+    if current is None or past is None or past.day >= current.day:
+        return None
+    base = comparable_baseline(current, past)
+    return round(base - past.score, 1) if base is not None else None
+
+
 def score_deltas(
     session: Session, current: dict[uuid.UUID, ScoreSnapshot], days: int, tolerance: int = 3
 ) -> dict[uuid.UUID, float | None]:
-    """score(today) - score(nearest snapshot at/before today-days, within tolerance)."""
+    """score(today) - score(nearest snapshot at/before today-days, within tolerance).
+
+    None when there is no such snapshot or it is not comparable (see ``comparable_baseline``)."""
     if not current:
         return {}
     out: dict[uuid.UUID, float | None] = {}
@@ -98,9 +131,8 @@ def score_deltas(
         past = latest_snapshots(session, ids, target)
         for eid in ids:
             p = past.get(eid)
-            out[eid] = (
-                round(current[eid].score - p.score, 1) if p and (target - p.day).days <= tolerance else None
-            )
+            base = comparable_baseline(current[eid], p) if p and (target - p.day).days <= tolerance else None
+            out[eid] = round(base - p.score, 1) if base is not None else None
     return out
 
 
@@ -172,6 +204,14 @@ def kind_label(c: Company, tags: Sequence[TopicTag]) -> str:
     return base.replace("  ", " ").strip()
 
 
+def person_kind_label(p: Person, link: CompanyPerson | None) -> str:
+    """'FOUNDER' only when a CompanyPerson founder relation backs it; otherwise a neutral label —
+    a high founder score or a missing company field is not evidence that someone founded anything."""
+    if link is not None and link.is_founder:
+        return "FOUNDER"
+    return "PERSON TO WATCH"
+
+
 def data_note(is_demo: bool) -> str:
     if is_demo:
         return "DEMO DATA — fictional example"
@@ -219,6 +259,14 @@ def _evidence_rank(e: dict[str, Any]) -> tuple:
     return (e.get("weight") or 0, e.get("event_at") or "")
 
 
+def component_evidence(comp: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """A score component's evidence, or nothing when the component contributed nothing (value 0 /
+    unmeasured) — evidence is only cited for inputs that actually moved the score."""
+    if not comp or not (comp.get("value") or 0) > 0:
+        return []
+    return list(comp.get("evidence") or [])
+
+
 def why_surfaced(snap: ScoreSnapshot | None, metrics: dict[str, Any] | None, limit: int = 6) -> list[EvidenceItem]:
     """Deterministic 'Why it surfaced': measured deltas first, then the strongest evidence signals."""
     items: list[EvidenceItem] = []
@@ -247,7 +295,7 @@ def why_surfaced(snap: ScoreSnapshot | None, metrics: dict[str, Any] | None, lim
         seen_titles = {i.title for i in items}
         pool: list[dict[str, Any]] = []
         for comp in (snap.components or {}).values():
-            pool.extend(comp.get("evidence") or [])
+            pool.extend(component_evidence(comp))
         pool.extend(col.get("evidence") or [])
         pool.sort(key=_evidence_rank, reverse=True)
         seen_ids: set[str] = set()
@@ -407,11 +455,11 @@ def person_why_now(p: Person, snap: ScoreSnapshot | None, limit: int = 4) -> lis
     if snap is None:
         return []
     comps = snap.components or {}
-    order = ["formation_signal", "technical_output", "research", "pedigree", "thesis_fit", "attention_gap"]
+    order = [*PERSON_EVIDENCE_ORDER, "thesis_fit", "attention_gap"]
     bullets: list[str] = []
     seen: set[str] = set()
     for key in order + [k for k in comps if k not in order]:
-        for e in (comps.get(key) or {}).get("evidence") or []:
+        for e in component_evidence(comps.get(key)):
             t = e.get("title")
             if t and t not in seen:
                 seen.add(t)
@@ -478,6 +526,7 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
     d7, d30 = score_deltas(session, snaps, 7), score_deltas(session, snaps, 30)
     tags = topic_tags(session, ids)
     sparks = person_sparklines(session, ids)
+    links = founder_links(session, ids)
     watched = watched_ids(session)
     cutoff = clock.now() - timedelta(days=NEW_DAYS)
     cards = []
@@ -495,7 +544,7 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
             lines.append("Technical output well ahead of public following.")
         cards.append(IntelCard(
             rank=start_rank + i, entity_type="person", id=str(p.id), slug=p.slug, name=p.name,
-            kind_label="FOUNDER TO KNOW" if p.current_company is None else "FOUNDER",
+            kind_label=person_kind_label(p, links.get(p.id)),
             one_liner=headline(p), score=round(snap.score) if snap else 0, delta_7d=d7.get(p.id),
             delta_30d=d30.get(p.id), thesis_tags=tags.get(p.id, []), why_surfaced=why, why_anti=lines,
             attention_gap=ascore.attention_gap if ascore else None, collision=ascore.collision if ascore else None,
@@ -510,10 +559,10 @@ def _person_evidence(snap: ScoreSnapshot | None, limit: int = 5) -> list[dict[st
     if snap is None:
         return []
     comps = snap.components or {}
-    order = ["formation_signal", "technical_output", "research", "pedigree"]
+    order = list(PERSON_EVIDENCE_ORDER)
     out, seen = [], set()
     for key in order + [k for k in comps if k not in order]:
-        for e in (comps.get(key) or {}).get("evidence") or []:
+        for e in component_evidence(comps.get(key)):
             if e.get("title") in seen:
                 continue
             seen.add(e.get("title"))

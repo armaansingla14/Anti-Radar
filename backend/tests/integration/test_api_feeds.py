@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 
 from radar import clock
 from radar.db import session_scope
-from radar.models import Company, Signal, SignalEntity, User, Watchlist, WatchlistItem
-from radar.services.feed import change_boost
+from radar.models import (
+    Company,
+    CompanyPerson,
+    Person,
+    Signal,
+    SignalEntity,
+    User,
+    Watchlist,
+    WatchlistItem,
+)
+from radar.services import presenters as P
+from radar.services.feed import TopicMove, change_boost, thesis_shifts
 
 DEMO = {"include_demo": "true"}
 
@@ -19,10 +30,18 @@ def _ts(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
+def _as_live_history() -> None:
+    """Simulate daily live scoring runs: drop the reconstructed flag so past snapshots are comparable
+    with today's live one (score deltas never diff live against reconstructed history)."""
+    with session_scope() as s:
+        s.execute(text("UPDATE score_snapshots SET attention = attention - 'reconstructed'"))
+
+
 # ── /api/radar ───────────────────────────────────────────────────────────────
 
 
 def test_radar_ranks_halcyon_first_with_evidence_and_demo_labels(seeded, client):
+    _as_live_history()
     r = client.get("/api/radar", params=DEMO)
     assert r.status_code == 200
     feed = r.json()
@@ -223,3 +242,123 @@ def test_feed_endpoints_are_fast(seeded, client):
         t = time.perf_counter()
         assert client.get(path, params=DEMO).status_code == 200
         assert time.perf_counter() - t < 1.0, path  # generous bound for CI; ~100-250ms locally
+
+
+# ── regressions ──────────────────────────────────────────────────────────────
+
+
+def test_score_deltas_never_diff_live_against_reconstructed(seeded):
+    """Seeded history is reconstructed; today's snapshot is live. Their difference is a pipeline
+    artefact, so no delta is reported unless a like-for-like reconstructed baseline exists."""
+    with session_scope() as s:
+        hid = s.scalar(select(Company.id).where(Company.slug == "halcyon-dynamics"))
+        cur = P.latest_snapshots(s, [hid])[hid]
+        assert not P.is_reconstructed(cur)
+        past = P.latest_snapshots(s, [hid], cur.day - timedelta(days=7))[hid]
+        assert P.is_reconstructed(past)
+        # live runs record their like-for-like reconstructed score (same computation, same data cut-off)
+        assert cur.attention.get("reconstructed_score") == cur.score
+        assert P.score_deltas(s, {hid: cur}, 7)[hid] == round(cur.score - past.score, 1)
+        # without that value, live vs reconstructed is not compared
+        bare = SimpleNamespace(day=cur.day, score=cur.score, version=cur.version, attention={}, entity_id=hid)
+        assert P.snapshot_delta(bare, past) is None
+        # a reconstructed score for the same day is the comparable baseline
+        cur.attention = {**cur.attention, "reconstructed_score": past.score + 4.0}
+        assert P.score_deltas(s, {hid: cur}, 7)[hid] == 4.0
+        # reconstructed vs reconstructed is comparable
+        rec_today = SimpleNamespace(day=cur.day, score=past.score + 2.5, version=cur.version,
+                                    attention={"reconstructed": True}, entity_id=hid)
+        assert P.snapshot_delta(rec_today, past) == 2.5
+        # different score versions are never compared
+        live_other = SimpleNamespace(day=cur.day, score=99.0, version="other", attention={}, entity_id=hid)
+        live_past = SimpleNamespace(day=past.day, score=10.0, version=cur.version, attention={})
+        assert P.snapshot_delta(live_other, live_past) is None
+
+
+def test_radar_reports_like_for_like_deltas(seeded, client):
+    cards = client.get("/api/radar", params=DEMO).json()["cards"]
+    assert cards and any(c["delta_7d"] is not None for c in cards)
+
+
+def test_person_kind_label_requires_founder_relation(seeded):
+    """'FOUNDER' is a claim about a real-world relation: only a CompanyPerson.is_founder link backs it."""
+    with session_scope() as s:
+        people = list(s.scalars(select(Person).where(Person.slug.in_(("elias-brandt", "sana-qureshi")))))
+        assert len(people) == 2
+        s.execute(update(CompanyPerson).where(CompanyPerson.person_id.in_([p.id for p in people]))
+                  .values(is_founder=False))
+        s.flush()
+        cards = P.founder_intel_cards(s, people)
+        assert {c.kind_label for c in cards} == {"PERSON TO WATCH"}
+        elias = next(p for p in people if p.slug == "elias-brandt")
+        link = s.scalar(select(CompanyPerson).where(CompanyPerson.person_id == elias.id))
+        if link is None:
+            link = CompanyPerson(company_id=s.scalar(select(Company.id).limit(1)), person_id=elias.id,
+                                 role="Founder", is_founder=True, confidence=1.0)
+            s.add(link)
+        link.is_founder = True
+        s.flush()
+        labels = {c.slug: c.kind_label for c in P.founder_intel_cards(s, people)}
+        assert labels == {"elias-brandt": "FOUNDER", "sana-qureshi": "PERSON TO WATCH"}
+
+
+def test_brief_never_calls_non_founders_founders(seeded, client):
+    with session_scope() as s:
+        s.execute(update(CompanyPerson).values(is_founder=False))
+    b = client.get("/api/brief", params=DEMO).json()
+    assert b["founders_to_know"] and all(c["kind_label"] != "FOUNDER" for c in b["founders_to_know"])
+    md = client.get("/api/brief/markdown", params=DEMO).text
+    assert "— Founder," not in md and "## People to watch" in md
+    assert "technical founder" not in " ".join(i["text"] for i in b["what_changed"])
+
+    from radar.services.brief import _founders_surfaced
+    from radar.services.feed import candidate_people
+
+    with session_scope() as s:
+        people = candidate_people(s, include_demo=True, floor=0)
+        for p in people:
+            p.first_seen_at = clock.now() - timedelta(days=1)
+        s.flush()
+        item = _founders_surfaced(s, people)
+        assert item is not None
+        assert "newly surfaced technical people" in item["text"] or "newly surfaced technical person" in item["text"]
+
+
+def _move(n_demo: int) -> TopicMove:
+    a, b = uuid.uuid4(), uuid.uuid4()
+    return TopicMove(key=f"robotics.t{n_demo}", label="Manipulation", theme="robotics", company_ids=[a, b],
+                     deltas={a: 4.0, b: 6.0}, signals_7d=2, signals_prev_7d=0, signal_ids_7d=[str(n_demo)],
+                     new_papers=0, momentum=6.0, n_demo=n_demo)
+
+
+def test_thesis_shifts_label_demo_contributions(seeded, client):
+    with session_scope() as s:
+        real, demo = thesis_shifts(s, include_demo=True, moves=[_move(0), _move(2)])
+    assert "DEMO" not in real.label and "DEMO" not in real.detail
+    assert demo.label == "Manipulation · DEMO" and demo.detail.startswith("DEMO — includes 2 fictional entities")
+    shifts = client.get("/api/radar", params=DEMO).json()["thesis_shifts"]
+    assert all("DEMO" in sh["label"] and "DEMO" in sh["detail"] for sh in shifts)  # fictional-only dataset
+    assert client.get("/api/radar", params={"include_demo": "false"}).json()["thesis_shifts"] == []
+
+
+def test_daily_since_last_visit_survives_loading_the_radar(seeded, client):
+    """The home page loads /api/radar first; that must not consume the Daily "since last visit" window."""
+    last = clock.now() - timedelta(days=3)
+    with session_scope() as s:
+        s.add(User(name="Anti Fund", last_visit_at=last))
+    assert client.get("/api/radar", params=DEMO).status_code == 200
+    assert client.get("/api/radar", params=DEMO).status_code == 200  # same visit: window kept
+    d = client.get("/api/daily", params=DEMO).json()
+    assert abs((_ts(d["since"]) - last).total_seconds()) < 1
+    with session_scope() as s:
+        u = s.scalar(select(User))
+        assert abs((u.prev_visit_at - last).total_seconds()) < 1
+        # a new visit (> VISIT_GAP later) moves the anchor to the previous visit
+        u.last_visit_at = clock.now() - timedelta(hours=30)
+    assert client.get("/api/radar", params=DEMO).status_code == 200
+    d = client.get("/api/daily", params=DEMO).json()
+    assert abs((_ts(d["since"]) - (clock.now() - timedelta(hours=30))).total_seconds()) < 60
+    # an explicit "mark all as seen" closes the window
+    assert client.post("/api/watchlist/seen").status_code == 200
+    d = client.get("/api/daily", params=DEMO).json()
+    assert abs((clock.now() - timedelta(hours=24) - _ts(d["since"])).total_seconds()) < 120

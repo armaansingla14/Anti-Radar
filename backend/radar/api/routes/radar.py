@@ -28,5 +28,5 @@ def get_radar(
         out = feed.radar_feed(session, include_demo=include_demo, new_only=new_only, theme=theme)
     except InvalidParam as e:
         raise HTTPException(422, detail=str(e)) from None
-    feed.touch_last_visit(session)  # after the feed: the previous visit stays readable for /daily
+    feed.touch_last_visit(session)  # keeps the previous visit in User.prev_visit_at for /daily
     return out

@@ -709,13 +709,13 @@ def _search_people(session: Session, f: SearchFilters) -> list[_Hit]:
             stages = {companies[c].stage for c in links.get(p.id, []) if c in companies}
             if not stages & set(f.stage) and not (p.current_company is None and "formation" in f.stage):
                 continue
-            reasons.append("Stage: " + (", ".join(sorted(stages & set(f.stage))) or "pre-company"))
+            reasons.append("Stage: " + (", ".join(sorted(stages & set(f.stage))) or "no company on record"))
         if f.first_seen_within_days:
             reasons.append(f"First seen {_days_ago(p.first_seen_at)} days ago")
         if f.keywords:
             reasons.append("Keyword match: " + ", ".join(f.keywords[:3]))
         if p.current_company is None and p.prior_affiliations and not f.prior_affiliations:
-            reasons.append(f"No current company — previously {p.prior_affiliations[-1]}")
+            reasons.append(f"No company on record — previously {p.prior_affiliations[-1]}")
         hits.append(_Hit("person", p, reasons, snap.score if snap else None,
                          _sort_value(f, snap, p.first_seen_at, d7.get(p.id))))
     return hits
@@ -771,7 +771,7 @@ def _search_papers(session: Session, f: SearchFilters) -> list[_Hit]:
             if has_code:
                 reasons.append("Code released")
             if no_company:
-                reasons.append("Author not yet at a company")
+                reasons.append("No company on record")
             elif etype == "person" and getattr(ent, "current_company", None):
                 reasons.append(f"Currently at {ent.current_company}")
             if f.max_attention is not None:

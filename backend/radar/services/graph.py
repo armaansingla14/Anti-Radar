@@ -173,7 +173,8 @@ def _expand(session: Session, g: _G, frontier: set[str]) -> set[str]:
                 link(str(pid), str(r.id), "code_for")
     if repos:
         repo_rows = list(session.scalars(select(Repository).where(Repository.id.in_(repos))))
-        conds = [ResearchPaper.code_urls.any(f"https://github.com/{r.full_name}") for r in repo_rows]
+        conds = [ResearchPaper.code_urls.any(f"https://{host}/{r.full_name}")
+                 for r in repo_rows for host in ("github.com", "github.example")]
         if conds:
             for paper in session.scalars(select(ResearchPaper).where(or_(*conds))):
                 _add_entity(g, paper)

@@ -89,6 +89,7 @@ POOL = 80  # candidates considered before re-ranking
 NEW_DAYS = 7
 DEFAULT_USER_NAME = "Anti Fund"
 MAX_SINCE_DAYS = 90
+VISIT_GAP = timedelta(minutes=30)  # requests closer together than this belong to the same visit
 
 
 # ── user / visit state ───────────────────────────────────────────────────────
@@ -105,16 +106,33 @@ def default_user(session: Session) -> User:
 
 
 def touch_last_visit(session: Session) -> datetime | None:
-    """Record a visit; returns the *previous* last_visit_at (read before updating)."""
+    """Record a visit; returns the *previous* last_visit_at (read before updating).
+
+    A request more than VISIT_GAP after the last one starts a new visit: the old last_visit_at is
+    kept in prev_visit_at so /daily's "since last visit" window survives the home page (which
+    calls this) being loaded first."""
     u = default_user(session)
     prev = u.last_visit_at
-    u.last_visit_at = clock.now()
+    now = clock.now()
+    if prev is None or now - prev >= VISIT_GAP:
+        u.prev_visit_at = prev
+    u.last_visit_at = now
     session.flush()
     return prev
 
 
+def previous_visit(u: User | None, now: datetime) -> datetime | None:
+    """When the user's previous visit ended. Inside an ongoing visit (last request < VISIT_GAP ago)
+    that is prev_visit_at; otherwise last_visit_at itself is the previous visit."""
+    if u is None or u.last_visit_at is None:
+        return None
+    if now - u.last_visit_at < VISIT_GAP:
+        return u.prev_visit_at
+    return u.last_visit_at
+
+
 def resolve_since(session: Session, since: datetime | None) -> datetime:
-    """Explicit ?since wins; otherwise the earlier of (now − 24h, last visit) — a visit a few minutes
+    """Explicit ?since wins; otherwise the earlier of (now − 24h, previous visit) — a visit a few minutes
     ago never shrinks the window below a day. Clamped to MAX_SINCE_DAYS."""
     now = clock.now()
     if since is not None:
@@ -125,8 +143,9 @@ def resolve_since(session: Session, since: datetime | None) -> datetime:
     else:
         since = now - timedelta(hours=24)
         u = session.scalar(select(User).order_by(User.created_at, User.id).limit(1))
-        if u is not None and u.last_visit_at is not None and u.last_visit_at < since:
-            since = u.last_visit_at
+        prev = previous_visit(u, now)
+        if prev is not None and prev < since:
+            since = prev
     return max(since, now - timedelta(days=MAX_SINCE_DAYS))
 
 
@@ -255,6 +274,7 @@ class TopicMove:
     signal_ids_7d: list[str]
     new_papers: int
     momentum: float
+    n_demo: int = 0  # fictional entities (companies, people, papers) that fed this topic's numbers
 
 
 def topic_moves(session: Session, *, include_demo: bool) -> list[TopicMove]:
@@ -267,12 +287,11 @@ def topic_moves(session: Session, *, include_demo: bool) -> list[TopicMove]:
     if not rows:
         return []
     demo_ids: set[uuid.UUID] = set()
-    if not include_demo:
-        for model in (Company, Person, ResearchPaper):
-            demo_ids |= set(session.scalars(select(model.id).where(model.is_demo.is_(True))))
+    for model in (Company, Person, ResearchPaper):
+        demo_ids |= set(session.scalars(select(model.id).where(model.is_demo.is_(True))))
     by_topic: dict[str, dict[str, Any]] = {}
     for key, label, theme, eid, et in rows:
-        if eid in demo_ids:
+        if eid in demo_ids and not include_demo:
             continue
         t = by_topic.setdefault(key, {"label": label, "theme": theme, "company": [], "paper": [], "all": []})
         t["all"].append(eid)
@@ -311,7 +330,8 @@ def topic_moves(session: Session, *, include_demo: bool) -> list[TopicMove]:
         ev_prev = [x for x in sids_prev if x not in paper_signal_ids]
         momentum = round(mean + 0.5 * (len(ev_now) - len(ev_prev)), 1)
         out.append(TopicMove(key, t["label"], t["theme"], cids, deltas, len(sids_now), len(sids_prev),
-                             list(sids_now), sum(1 for p in dict.fromkeys(t["paper"]) if p in new_papers), momentum))
+                             list(sids_now), sum(1 for p in dict.fromkeys(t["paper"]) if p in new_papers), momentum,
+                             sum(1 for e in dict.fromkeys(t["all"]) if e in demo_ids)))
     return out
 
 
@@ -338,7 +358,13 @@ def thesis_shifts(session: Session, *, include_demo: bool, moves: list[TopicMove
                          f"{'accelerated' if heating else 'cooled'} this week (mean {mean:+.1f} score points)")
         if m.new_papers:
             parts.append(f"{_plural(m.new_papers, 'new paper')} in the last 7 days")
-        out.append(ThesisShift(topic_key=m.key, label=m.label, theme=m.theme,
+        label = m.label
+        if m.n_demo:
+            # Fictional entities fed this aggregate: label it rather than present it as a fact about
+            # the real thesis area.
+            label = f"{m.label} · DEMO"
+            parts.insert(0, f"DEMO — includes {_plural(m.n_demo, 'fictional entity', 'fictional entities')}")
+        out.append(ThesisShift(topic_key=m.key, label=label, theme=m.theme,
                                direction="heating" if heating else "cooling", detail="; ".join(parts),
                                momentum=m.momentum))
     return _select_shifts(out, moves)
@@ -453,8 +479,7 @@ def _changed(session: Session, entities: Sequence[Any], since: datetime, *, use_
         delta = P.score_deltas(session, snaps, 7)
     else:
         past = P.latest_snapshots(session, ids, since.date())
-        delta = {i: round(snaps[i].score - past[i].score, 1) if i in snaps and i in past and
-                 past[i].day < snaps[i].day else None for i in ids}
+        delta = {i: P.snapshot_delta(snaps.get(i), past.get(i)) for i in ids}
     act = signal_activity(session, ids, since)
     out = []
     for e in entities:
@@ -526,7 +551,7 @@ def watchlist_changes(session: Session, *, include_demo: bool, limit: int = 3) -
         changes: list[str] = []
         snap = snaps.get(e.id)
         past = P.latest_snapshots(session, [e.id], seen.date()).get(e.id)
-        delta = round(snap.score - past.score, 1) if snap and past and past.day < snap.day else None
+        delta = P.snapshot_delta(snap, past)
         if delta:
             changes.append(f"ANTI SCORE {'+' if delta > 0 else ''}{delta:g} since last review")
         new_jobs = [j for j in jobs.get(e.id, []) if (j.posted_at or j.first_seen_at) >= seen

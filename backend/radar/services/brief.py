@@ -104,7 +104,12 @@ def _founders_surfaced(session: Session, people: Sequence[Person]) -> dict[str, 
         return None
     n = len(strong)
     names = ", ".join(f"{p.name} ({round(snaps[p.id].score)})" for p in strong[:4])
-    subject = "newly surfaced technical founder" if n == 1 else "newly surfaced technical founders"
+    # "Founder" only when every named person has a founder relation on record; a founder *score* is
+    # a ranking, not evidence that someone founded a company.
+    links = P.founder_links(session, [p.id for p in strong])
+    founders = all(links.get(p.id) is not None and links[p.id].is_founder for p in strong)
+    noun = ("technical founder", "technical founders") if founders else ("technical person", "technical people")
+    subject = f"newly surfaced {noun[0] if n == 1 else noun[1]}"
     verb = "has a founder score" if n == 1 else "have founder scores"
     return {
         "text": f"{_num(n)} {subject} {verb} of {FOUNDER_SURFACE_FLOOR} or more: {names}.",
@@ -232,7 +237,8 @@ def _link(ref: dict[str, Any]) -> str:
     if path and ref.get("slug"):
         return f"[{ref['name']}]({path}{ref['slug']}){demo}"
     if ref.get("type") == "repository" and ref.get("slug"):
-        return f"[{ref['slug']}](https://github.com/{ref['slug']}){demo}"
+        host = "github.example" if ref.get("is_demo") else "github.com"
+        return f"[{ref['slug']}](https://{host}/{ref['slug']}){demo}"
     return f"{ref.get('name')}{demo}"
 
 
@@ -285,7 +291,7 @@ def render_markdown(day: date, items: Sequence[BriefItem], founders: Sequence[In
     else:
         out.append("_No significant changes detected today._")
     out.append("")
-    out += ["## Founders to know", ""]
+    out += ["## People to watch", ""]
     for c in founders:
         out += _card_md(c, "/founders/")
     if not founders:

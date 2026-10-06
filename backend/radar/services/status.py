@@ -179,9 +179,11 @@ def _database(session: Session) -> dict[str, Any]:
     row = session.execute(select(*[select(func.count()).select_from(m).scalar_subquery().label(k)
                                    for k, m in tables.items()])).one()
     counts = dict(zip(tables, (int(v) for v in row), strict=True))
-    # Days on which RADAR itself observed metrics (backfilled history from GitHub is excluded).
+    # Days on which RADAR itself observed metrics: backfilled history from GitHub and the fictional
+    # demo series are both excluded.
     snap_days = session.scalar(select(func.count(distinct(MetricSnapshot.day)))
-                               .where(MetricSnapshot.source != "backfill")) or 0
+                               .where(MetricSnapshot.source.not_in(("backfill", "demo")),
+                                      MetricSnapshot.is_demo.is_(False))) or 0
     history_from = session.scalar(select(func.min(MetricSnapshot.day)))
     first_sig, last_sig = session.execute(select(func.min(Signal.event_at), func.max(Signal.event_at))).one()
     demo = session.scalar(select(func.count()).select_from(Company).where(Company.is_demo.is_(True))) or 0

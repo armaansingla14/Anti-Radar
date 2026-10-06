@@ -1,6 +1,8 @@
 """In-process token-bucket rate limiting for expensive endpoints (investigate, memo, ingest).
 
 Single-user internal tool → per-client-IP buckets in memory are sufficient.
+:class:`TokenBucket` is the same limiter for code paths without a request (e.g. the
+LLM branch of search parsing), keyed process-wide.
 """
 
 from __future__ import annotations
@@ -31,6 +33,35 @@ def rate_limit(name: str, per_minute: int):
             _buckets[key] = (tokens - 1.0, now)
 
     return dependency
+
+
+class TokenBucket:
+    """Process-wide token bucket: ``try_acquire()`` is True if a call is allowed now."""
+
+    def __init__(self, name: str, per_minute: int | None = None, *, per_minute_fn=None) -> None:
+        self.name = name
+        self._per_minute = per_minute
+        self._per_minute_fn = per_minute_fn  # read the limit lazily (settings may change in tests)
+
+    @property
+    def per_minute(self) -> int:
+        return int(self._per_minute_fn() if self._per_minute_fn else (self._per_minute or 0))
+
+    def try_acquire(self) -> bool:
+        per_minute = self.per_minute
+        if per_minute <= 0:
+            return False
+        capacity, refill = float(per_minute), per_minute / 60.0
+        key = (self.name, "*")
+        now = time.monotonic()
+        with _lock:
+            tokens, last = _buckets.get(key, (capacity, now))
+            tokens = min(capacity, tokens + (now - last) * refill)
+            if tokens < 1.0:
+                _buckets[key] = (tokens, now)
+                return False
+            _buckets[key] = (tokens - 1.0, now)
+            return True
 
 
 def reset() -> None:

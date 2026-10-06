@@ -22,7 +22,7 @@ from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import Select, and_, false, func, or_, select, union
+from sqlalchemy import Select, and_, case, false, func, not_, null, or_, select, union
 from sqlalchemy.orm import Session
 
 from radar import clock
@@ -67,6 +67,7 @@ from radar.schemas.api import (
     Verification,
 )
 from radar.scoring.extract import weekly_sum, window_delta
+from radar.scoring.features import FORMATION_SIGNAL_TYPES
 from radar.services import presenters as P
 from radar.thesis.loader import get_thesis
 
@@ -121,10 +122,22 @@ def latest_score_subq(entity_type: str, day: date, *, min_day: date | None = Non
     )
     return (
         select(ScoreSnapshot.entity_id.label("entity_id"), ScoreSnapshot.score.label("score"),
-               ScoreSnapshot.attention.label("attention"), ScoreSnapshot.day.label("day"))
+               ScoreSnapshot.attention.label("attention"), ScoreSnapshot.day.label("day"),
+               ScoreSnapshot.version.label("version"))
         .join(last, and_(ScoreSnapshot.entity_id == last.c.entity_id, ScoreSnapshot.day == last.c.d))
         .subquery()
     )
+
+
+def score_delta_sql(cur, past):
+    """SQL twin of presenters.comparable_baseline: cur.score − past.score for two latest_score_subq
+    rows, NULL when a live snapshot would be diffed against reconstructed history (unless the live
+    row carries attention.reconstructed_score) or when the score versions differ."""
+    cur_rec = func.coalesce(cur.c.attention["reconstructed"].as_boolean(), false())
+    past_rec = func.coalesce(past.c.attention["reconstructed"].as_boolean(), false())
+    base = case((and_(past_rec, not_(cur_rec)), cur.c.attention["reconstructed_score"].as_float()),
+                else_=cur.c.score)
+    return case((cur.c.version != past.c.version, null()), else_=base - past.c.score)
 
 
 def related_signal_rows(session: Session, ids: Iterable[uuid.UUID], since: datetime | None = None,
@@ -215,7 +228,7 @@ def repo_cards(session: Session, repos: Sequence[Repository]) -> list[RepoCard]:
             id=str(r.id), full_name=r.full_name, description=r.description, language=r.language,
             stars=r.stars or 0, forks=r.forks or 0, stars_30d=s30, commits_4w=c4,
             contributors=r.contributors_count, gh_created_at=r.gh_created_at,
-            url=f"https://github.com/{r.full_name}", is_demo=r.is_demo,
+            url=gh_url(r.full_name, r.is_demo), is_demo=r.is_demo,
         ))
     return out
 
@@ -271,6 +284,21 @@ def paper_links(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.
         add(pid, {"type": "person", "id": str(person.id), "slug": person.slug, "name": person.name,
                   "is_demo": person.is_demo})
     return out
+
+
+
+def gh_url(path: str, is_demo: bool) -> str:
+    """GitHub URL for a handle or owner/name — fictional entities only ever get the reserved .example host."""
+    return f"https://{'github.example' if is_demo else 'github.com'}/{path}"
+
+
+def x_url(handle: str, is_demo: bool) -> str:
+    return f"https://{'x.example' if is_demo else 'x.com'}/{handle.lstrip('@')}"
+
+
+def demo_status(status: Verification, is_demo: bool) -> Verification:
+    """Fictional data is never VERIFIED."""
+    return "INFERRED" if is_demo and status == "VERIFIED" else status
 
 
 def paper_cards(session: Session, papers: Sequence[ResearchPaper], *, scores: dict[uuid.UUID, int] | None = None,
@@ -516,7 +544,7 @@ def list_companies(
     if sort == "delta":
         past = latest_score_subq("company", today - timedelta(days=7), min_day=today - timedelta(days=10))
         stmt = stmt.outerjoin(past, past.c.entity_id == Company.id).order_by(
-            (cur.c.score - past.c.score).desc().nulls_last(), cur.c.score.desc().nulls_last())
+            score_delta_sql(cur, past).desc().nulls_last(), cur.c.score.desc().nulls_last())
     elif sort == "attention_gap":
         stmt = stmt.order_by(cur.c.attention["gap"].as_float().desc().nulls_last(), cur.c.score.desc().nulls_last())
     elif sort == "recent":
@@ -547,7 +575,7 @@ def _company_people(session: Session, c: Company) -> list[tuple[CompanyPerson, P
 def _company_papers(session: Session, c: Company, repos: Sequence[Repository], person_ids: Sequence[uuid.UUID]
                     ) -> list[ResearchPaper]:
     conds = [ResearchPaper.company_id == c.id]
-    urls = [f"https://github.com/{r.full_name}" for r in repos]
+    urls = [gh_url(r.full_name, r.is_demo) for r in repos]
     if urls:
         conds.append(ResearchPaper.code_urls.overlap(urls))
     if person_ids:
@@ -576,12 +604,12 @@ def _company_facts(session: Session, c: Company, prov_rows: Sequence[FieldProven
                                note=c.stage_basis or "Not enough public evidence to estimate stage"))
     gh = _fact("GitHub org", c.github_org, prov, "github_org", missing_note="No GitHub organization linked")
     if gh.status != "UNKNOWN" and not gh.source_url:
-        gh.source_url = f"https://github.com/{c.github_org}"
+        gh.source_url = gh_url(c.github_org, c.is_demo)
     facts.append(gh)
     x = _fact("X handle", f"@{c.x_handle.lstrip('@')}" if c.x_handle else None, prov, "x_handle",
               missing_note="No X account linked")
-    if x.status != "UNKNOWN" and not x.source_url and c.x_handle and not c.is_demo:
-        x.source_url = f"https://x.com/{c.x_handle.lstrip('@')}"
+    if x.status != "UNKNOWN" and not x.source_url and c.x_handle:
+        x.source_url = x_url(c.x_handle, c.is_demo)
     facts.append(x)
     facts.append(FactField(label="Team size known", value=team if team else None,
                            status="INFERRED" if team else "UNKNOWN",
@@ -589,7 +617,8 @@ def _company_facts(session: Session, c: Company, prov_rows: Sequence[FieldProven
                                  else "No team members identified yet")))
     if jobs:
         url = next((j.url for j in jobs if j.url), None)
-        facts.append(FactField(label="Open roles", value=hiring.get("open_roles", 0), status="VERIFIED",
+        facts.append(FactField(label="Open roles", value=hiring.get("open_roles", 0),
+                               status=demo_status("VERIFIED", c.is_demo),
                                source_url=url, source_type="jobs",
                                note=f"{hiring.get('technical_roles', 0)} technical; observed on the company job board"))
     else:
@@ -685,6 +714,28 @@ def entity_score(session: Session, model: type[Company | Person], id_or_slug: st
 # ── founders ─────────────────────────────────────────────────────────────────
 
 
+# A bio/headline that names an organization ("@vllm-project", "PhD Candidate @ HKUST", "CTO at X",
+# "Founder of Y") contradicts "no company": the empty current_company field is only missing data.
+ORG_MENTION_RE = r"@\s*[A-Za-z0-9]|\m(at|of)\s+[A-Z0-9]"
+FORMATION_TARGET_DAYS = 120  # same lookback as the scorer's signal window
+
+
+def formation_target_conditions() -> list:
+    """Pre-company / formation-target filter. A missing company field is an UNKNOWN ("no company on
+    record"), not a claim, so a person only qualifies with a *positive* signal: a recent
+    formation-type signal about them (affiliation/bio change, formation language), no company on
+    record, and no organization named in their own bio or headline."""
+    lo = clock.now() - timedelta(days=FORMATION_TARGET_DAYS)
+    headline = Person.attrs["headline"].as_string()
+    return [
+        Person.current_company.is_(None),
+        or_(Person.bio.is_(None), not_(Person.bio.op("~")(ORG_MENTION_RE))),
+        or_(headline.is_(None), not_(headline.op("~")(ORG_MENTION_RE))),
+        select(Signal.id).where(Signal.entity_id == Person.id, Signal.signal_type.in_(FORMATION_SIGNAL_TYPES),
+                                Signal.event_at >= lo, Signal.event_at <= clock.now()).exists(),
+    ]
+
+
 def list_founders(
     session: Session, *, q: str | None = None, theme: str | None = None, no_company: bool = False,
     include_demo: bool = True, sort: FounderSort = "score", limit: int = 50, offset: int = 0,
@@ -702,7 +753,7 @@ def list_founders(
         th = theme.partition(".")[0]
         stmt = stmt.where(or_(Person.id.in_(theme_entity_ids(theme)), Person.domains.any(th)))
     if no_company:
-        stmt = stmt.where(Person.current_company.is_(None))
+        stmt = stmt.where(*formation_target_conditions())
     if not include_demo:
         stmt = stmt.where(Person.is_demo.is_(False))
     total = session.scalar(select(func.count()).select_from(stmt.with_only_columns(Person.id).subquery())) \
@@ -710,7 +761,7 @@ def list_founders(
     if sort == "delta":
         past = latest_score_subq("person", today - timedelta(days=7), min_day=today - timedelta(days=10))
         stmt = stmt.outerjoin(past, past.c.entity_id == Person.id).order_by(
-            (cur.c.score - past.c.score).desc().nulls_last(), cur.c.score.desc().nulls_last())
+            score_delta_sql(cur, past).desc().nulls_last(), cur.c.score.desc().nulls_last())
     elif sort == "recent":
         stmt = stmt.order_by(Person.first_seen_at.desc())
     elif sort == "followers":
@@ -736,12 +787,12 @@ def _person_facts(session: Session, p: Person, prov_rows: Sequence[FieldProvenan
     ]
     gh = _fact("GitHub", p.github_handle, prov, "github_handle", missing_note="No GitHub account linked")
     if gh.status != "UNKNOWN" and not gh.source_url:
-        gh.source_url = f"https://github.com/{p.github_handle}"
+        gh.source_url = gh_url(p.github_handle, p.is_demo)
     facts.append(gh)
     x = _fact("X", f"@{p.x_handle.lstrip('@')}" if p.x_handle else None, prov, "x_handle",
               missing_note="No X account linked")
-    if x.status != "UNKNOWN" and not x.source_url and p.x_handle and not p.is_demo:
-        x.source_url = f"https://x.com/{p.x_handle.lstrip('@')}"
+    if x.status != "UNKNOWN" and not x.source_url and p.x_handle:
+        x.source_url = x_url(p.x_handle, p.is_demo)
     facts.append(x)
     facts.append(_fact("Personal site", p.personal_site, prov, "personal_site", missing_note="No personal site"))
     facts.append(_fact("Location", p.location, prov, "location", missing_note="Location not disclosed"))
@@ -751,8 +802,9 @@ def _person_facts(session: Session, p: Person, prov_rows: Sequence[FieldProvenan
                MetricSnapshot.day <= clock.today())
         .order_by(MetricSnapshot.day.desc()).limit(1)).first()
     if m is not None:
-        facts.append(FactField(label="Followers", value=int(m.value), status="VERIFIED", source_type=m.source,
-                               source_url=f"https://github.com/{p.github_handle}" if p.github_handle else None,
+        facts.append(FactField(label="Followers", value=int(m.value), status=demo_status("VERIFIED", p.is_demo),
+                               source_type=m.source,
+                               source_url=gh_url(p.github_handle, p.is_demo) if p.github_handle else None,
                                note=f"Measured {m.day.isoformat()}"))
     else:
         facts.append(_fact("Followers", p.followers, prov, "followers", missing_note="Follower count unknown"))
@@ -800,7 +852,7 @@ def person_detail(session: Session, id_or_slug: str) -> PersonDetail | None:
         .where(PaperAuthor.person_id == p.id).order_by(ResearchPaper.published_at.desc().nulls_last()).limit(20)))
     prov_rows = _provenance(session, p.id)
     tl = _timeline_signals(session, [p.id])
-    extra = [(f"https://github.com/{p.github_handle}", "GitHub profile", "github")] if p.github_handle else []
+    extra = [(gh_url(p.github_handle, p.is_demo), "GitHub profile", "github")] if p.github_handle else []
     return PersonDetail(
         card=card, bio=p.bio, facts=_person_facts(session, p, prov_rows), founder_score=P.anti_score(session, snap),
         score_history=[ScorePoint(day=r["day"], score=r["score"]) for r in P.score_history(session, p.id)],

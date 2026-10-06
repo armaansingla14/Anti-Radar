@@ -33,7 +33,7 @@ from radar.models import (
     WatchlistItem,
 )
 from radar.schemas.api import WatchItemOut, WatchlistOut, WatchRequest
-from radar.services.presenters import latest_snapshots, resolve_entity, score_deltas
+from radar.services.presenters import latest_snapshots, resolve_entity, score_deltas, snapshot_delta
 
 DEFAULT_USER = "Default analyst"
 DEFAULT_WATCHLIST = "My watchlist"
@@ -263,10 +263,9 @@ def _changes(session: Session, items: list[WatchlistItem]) -> dict[uuid.UUID, li
             elif n > b and b == 0:
                 lines.append(f"GitHub stars +{int(n):,} since {i.last_seen_at:%b %-d}")
         cur, prev = current.get(eid), past.get(eid)
-        if cur is not None and prev is not None and cur.day > prev.day:
-            d = cur.score - prev.score
-            if abs(d) >= SCORE_CHANGE_MIN:
-                lines.append(f"Score {'↑' if d > 0 else '↓'} {abs(d):.0f}")
+        d = snapshot_delta(cur, prev)
+        if d is not None and abs(d) >= SCORE_CHANGE_MIN:
+            lines.append(f"Score {'↑' if d > 0 else '↓'} {abs(d):.0f}")
         out[eid] = lines
     return out
 
@@ -294,7 +293,7 @@ def _item_outs(session: Session, items: list[WatchlistItem]) -> list[WatchItemOu
     snaps = latest_snapshots(session, ids_by_type.get("company", []) + ids_by_type.get("person", []))
     d7 = score_deltas(session, snaps, 7)
     changes = _changes(session, items)
-    topic_stats = _topic_stats(session, ids_by_type.get("topic", []))
+    topic_stats = _topic_stats(session, [i for i in items if i.entity_type == "topic"])
     out = []
     for i in items:
         name, slug, demo = names.get(i.entity_id, ("(removed entity)", None, False))
@@ -317,10 +316,14 @@ TOPIC_TOP_N = 5
 TOPIC_MOVE_MIN = 5.0
 
 
-def _topic_stats(session: Session, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[int | None, float | None, str | None]]:
-    """Topic 'score' = mean ANTI SCORE of its top linked companies; delta likewise; plus a movement line."""
-    if not topic_ids:
+def _topic_stats(session: Session, topic_items: list[WatchlistItem]
+                 ) -> dict[uuid.UUID, tuple[int | None, float | None, str | None]]:
+    """Topic 'score' = mean ANTI SCORE of its top linked companies; delta (7d) likewise; plus a movement
+    line counting leading companies whose score moved ≥ TOPIC_MOVE_MIN *since the item was last seen*
+    (so it is a change since last visit, cleared by mark-seen like every other change line)."""
+    if not topic_items:
         return {}
+    topic_ids = [i.entity_id for i in topic_items]
     links: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
     for tid, cid in session.execute(
         select(EntityTopic.topic_id, EntityTopic.entity_id)
@@ -330,7 +333,8 @@ def _topic_stats(session: Session, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID
     snaps = latest_snapshots(session, [c for cs in links.values() for c in cs])
     d7 = score_deltas(session, snaps, 7)
     out: dict[uuid.UUID, tuple[int | None, float | None, str | None]] = {}
-    for tid in topic_ids:
+    for item in topic_items:
+        tid = item.entity_id
         top = sorted((c for c in links.get(tid, []) if c in snaps), key=lambda c: -snaps[c].score)[:TOPIC_TOP_N]
         if not top:
             out[tid] = (None, None, None)
@@ -338,9 +342,10 @@ def _topic_stats(session: Session, topic_ids: list[uuid.UUID]) -> dict[uuid.UUID
         score = round(sum(snaps[c].score for c in top) / len(top))
         deltas = [d for c in top if (d := d7.get(c)) is not None]
         delta = round(sum(deltas) / len(deltas), 1) if deltas else None
-        moved = sum(1 for d in deltas if abs(d) >= TOPIC_MOVE_MIN)
-        line = (f"{_plural(moved, 'leading company', 'leading companies')} moved ≥{TOPIC_MOVE_MIN:.0f} points this week"
-                if moved else None)
+        past = latest_snapshots(session, top, item.last_seen_at.date())
+        moved = sum(1 for c in top if abs(snapshot_delta(snaps[c], past.get(c)) or 0) >= TOPIC_MOVE_MIN)
+        line = (f"{_plural(moved, 'leading company', 'leading companies')} moved ≥{TOPIC_MOVE_MIN:.0f} points "
+                f"since {item.last_seen_at:%b %-d}" if moved else None)
         out[tid] = (score, delta, line)
     return out
 
@@ -397,7 +402,9 @@ def mark_seen(session: Session, at: datetime | None = None) -> int:
     for i in items:
         i.last_seen_at = at
     u = default_user(session)
+    # An explicit "mark all as seen" also closes the Daily "since last visit" window.
     u.last_visit_at = at
+    u.prev_visit_at = at
     session.flush()
     return len(items)
 

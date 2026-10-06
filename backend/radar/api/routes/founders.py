@@ -27,7 +27,8 @@ def list_founders(
     response: Response,
     q: Annotated[str | None, Query(max_length=200, description="Name / bio / handle / company substring")] = None,
     theme: Annotated[str | None, Query(max_length=120)] = None,
-    no_company: Annotated[bool, Query(description="Only people with no current company listed")] = False,
+    no_company: Annotated[bool, Query(description="Formation targets: no company on record, no organization named in bio/headline, "
+                                            "and a formation signal in the last 120 days")] = False,
     sort: Literal["score", "delta", "recent", "followers"] = "score",
     include_demo: Annotated[bool | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,

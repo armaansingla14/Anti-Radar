@@ -8,19 +8,27 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from radar import clock
 from radar.db import session_scope
 from radar.models import (
     Company,
+    EntityTopic,
     Person,
     PreferenceWeight,
     ResearchReport,
+    Topic,
     UserAction,
     UserFeedback,
     WatchlistItem,
 )
+
+
+def _as_live_history() -> None:
+    """Simulate daily live scoring runs (deltas are never computed live-vs-reconstructed)."""
+    with session_scope() as s:
+        s.execute(text("UPDATE score_snapshots SET attention = attention - 'reconstructed'"))
 
 
 def _id(model, slug: str) -> str:
@@ -67,6 +75,7 @@ def test_watchlist_validation(seeded, client):
 
 
 def test_watchlist_changes_since_last_visit(seeded, client):
+    _as_live_history()
     client.post("/api/watchlist", json={"entity_type": "company", "entity_id": "halcyon-dynamics"})
     client.post("/api/watchlist", json={"entity_type": "person", "entity_id": "sana-qureshi"})
     with session_scope() as s:  # pretend the analyst last looked 20 days ago
@@ -79,6 +88,25 @@ def test_watchlist_changes_since_last_visit(seeded, client):
     assert any(c.startswith("Score ↑") for c in hal["changes"])
     assert any("Coriolis Aerospace" in c for c in sana["changes"])
     assert wl["changes_since_last_visit"] == len(hal["changes"]) + len(sana["changes"])
+    assert client.post("/api/watchlist/seen").json()["ok"] is True
+    after = client.get("/api/watchlist").json()
+    assert after["changes_since_last_visit"] == 0
+    assert all(i["changes"] == [] for i in after["items"])
+
+
+def test_watchlist_topic_movement_is_cleared_by_mark_seen(seeded, client):
+    """Topic 'moved' lines are changes since last visit like every other line: mark-seen clears them."""
+    _as_live_history()
+    with session_scope() as s:
+        keys = list(dict.fromkeys(s.scalars(select(Topic.key).join(EntityTopic, EntityTopic.topic_id == Topic.id)
+                                            .where(EntityTopic.entity_type == "company"))))
+    for k in keys:
+        assert client.post("/api/watchlist", json={"entity_type": "topic", "topic_key": k}).status_code == 200
+    with session_scope() as s:
+        s.execute(update(WatchlistItem).values(last_seen_at=clock.now() - timedelta(days=20)))
+    wl = client.get("/api/watchlist").json()
+    moved = [c for i in wl["items"] for c in i["changes"] if "moved" in c]
+    assert moved and all("since" in c and "this week" not in c for c in moved)
     assert client.post("/api/watchlist/seen").json()["ok"] is True
     after = client.get("/api/watchlist").json()
     assert after["changes_since_last_visit"] == 0

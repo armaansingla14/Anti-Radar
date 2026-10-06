@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from radar.db import session_scope
@@ -137,7 +138,13 @@ def test_status_lists_providers_llm_and_db(seeded, client, monkeypatch):
     assert st["llm"]["provider"] == "none" and st["llm"]["enabled"] is False
     assert set(st["llm"]["models"]) == {"fast", "standard", "deep"}
     db = st["database"]
-    assert db["companies"] == 7 and db["signals"] > 0 and db["snapshot_days"] > 0
+    assert db["companies"] == 7 and db["signals"] > 0
+    # the fictional demo metric series is not RADAR observation history
+    assert db["snapshot_days"] == 0 and db["observed_days"] == 0
+    with session_scope() as s:
+        s.add(MetricSnapshot(entity_type="repository", entity_id=uuid.uuid4(), metric="stars",
+                             day=datetime.now(UTC).date(), value=10, source="observed"))
+    assert client.get("/api/status").json()["database"]["observed_days"] == 1
     assert st["score_version"] and st["last_scored_at"]
     assert "sk-" not in r.text  # never leak secrets
 
