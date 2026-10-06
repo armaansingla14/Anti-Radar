@@ -209,6 +209,8 @@ export interface PaperCard {
   code_urls: string[];
   linked_entities: EntityLink[];
   why_it_matters: string | null;
+  why_it_matters_epistemic?: Epistemic | null;
+  why_it_matters_generator?: "llm" | "template" | "cached" | null;
   score: number | null;
   is_demo: boolean;
 }
@@ -418,6 +420,7 @@ export interface MorningBrief {
   narrative: Narrative | null;
   markdown: string;
   generator: Generator;
+  generated_at?: ISODateTime | null;
 }
 
 export interface ThesisCell {
@@ -426,7 +429,7 @@ export interface ThesisCell {
   theme: string;
   momentum: number;
   momentum_trend: Trend;
-  attention: number;
+  attention: number | null;
   attention_trend: Trend;
   attention_gap: boolean;
   companies: number;
