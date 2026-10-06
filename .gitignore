@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+frontend/out/
+e2e/test-results/
+e2e/playwright-report/
+backend/.cassettes-tmp/
+*.egg-info/

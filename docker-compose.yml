@@ -1,0 +1,64 @@
+name: anti-radar
+
+x-backend: &backend
+  build: ./backend
+  env_file: [.env]
+  environment:
+    DATABASE_URL: postgresql+psycopg://radar:radar@db:5432/radar
+    THESIS_PATH: /app/config/anti_fund_thesis.yaml
+  volumes:
+    - ./config:/app/config:ro
+  depends_on:
+    db: { condition: service_healthy }
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar
+      POSTGRES_DB: radar
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *backend
+    command: sh -c "alembic upgrade head && radar seed-demo --if-empty && uvicorn radar.api.main:app --host 0.0.0.0 --port 8000"
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    <<: *backend
+    command: radar worker
+    depends_on:
+      api: { condition: service_healthy }
+
+  web:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://api:8000
+    ports: ["3000:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+
+  db-test:
+    image: pgvector/pgvector:pg16
+    profiles: [test]
+    environment:
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar
+      POSTGRES_DB: radar_test
+    ports: ["5433:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+
+volumes:
+  pgdata:
