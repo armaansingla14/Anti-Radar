@@ -75,6 +75,30 @@ def _funding_round(signals: Sequence[Signal]) -> tuple[str | None, Signal | None
     return None, funding[0] if funding else None
 
 
+ESTABLISHED_ORG_FOLLOWERS = 2000
+ESTABLISHED_ORG_REPOS = 100
+ESTABLISHED_REPO_STARS = 20000
+ESTABLISHED_REPO_MONTHS = 24
+
+
+def _established(company: Company, repos: Sequence[Repository], created: date | None) -> str | None:
+    """Evidence that this is an established organization, well past formation (INFERENCE)."""
+    if company.is_demo:
+        return None
+    a = company.attrs or {}
+    followers, public_repos = a.get("followers") or 0, a.get("public_repos") or 0
+    if followers >= ESTABLISHED_ORG_FOLLOWERS or public_repos >= ESTABLISHED_ORG_REPOS:
+        return (f"Established organization: {followers:,} GitHub followers, {public_repos} public repositories "
+                "— well past formation stage.")
+    for r in repos:
+        if (r.stars or 0) >= ESTABLISHED_REPO_STARS and r.gh_created_at is not None:
+            months = _months_between(r.gh_created_at.date(), clock.today())
+            if months >= ESTABLISHED_REPO_MONTHS:
+                return (f"Mature flagship project: {r.full_name} has {r.stars:,} stars and is {months:.0f} months "
+                        "old — widely known, past formation stage.")
+    return None
+
+
 def estimate_stage(
     company: Company,
     signals: Sequence[Signal],
@@ -90,6 +114,9 @@ def estimate_stage(
 
     created, created_basis = _company_created(company, repos)
     n_people = len(people)
+    established = _established(company, repos, created)
+    if established:
+        return "growth", established
     if created is None:
         if company.kind == "stealth" and 0 < n_people <= FORMATION_MAX_PEOPLE:
             return "formation", f"Stealth company with {n_people} known people and no funding signal."
