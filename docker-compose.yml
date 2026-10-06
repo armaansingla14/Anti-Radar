@@ -6,6 +6,11 @@ x-backend: &backend
   environment:
     DATABASE_URL: postgresql+psycopg://radar:radar@db:5432/radar
     THESIS_PATH: /app/config/anti_fund_thesis.yaml
+    # Shell env wins over .env so keys exported in your shell are picked up.
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
   volumes:
     - ./config:/app/config:ro
   depends_on:
