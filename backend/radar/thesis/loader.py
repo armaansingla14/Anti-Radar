@@ -73,6 +73,7 @@ class Thesis(BaseModel):
     discovery_queries: list[str]
     arxiv: ArxivCfg
     affiliation_tiers: dict[str, list[str]]
+    demo_affiliation_tiers: dict[str, list[str]] = Field(default_factory=dict)
     formation_phrases: list[str]
     hiring_roles: dict[str, list[str]]
     scoring: ScoringCfg
@@ -91,12 +92,14 @@ class Thesis(BaseModel):
         if not org:
             return 0.0
         o = org.lower()
-        for name in self.affiliation_tiers.get("tier_1", []):
-            if _phrase_in(name.lower(), o):
-                return 1.0
-        for name in self.affiliation_tiers.get("tier_2", []):
-            if _phrase_in(name.lower(), o):
-                return 0.6
+        for tiers in (self.affiliation_tiers, self.demo_affiliation_tiers):
+            for name in tiers.get("tier_1", []):
+                if _phrase_in(name.lower(), o):
+                    return 1.0
+        for tiers in (self.affiliation_tiers, self.demo_affiliation_tiers):
+            for name in tiers.get("tier_2", []):
+                if _phrase_in(name.lower(), o):
+                    return 0.6
         return 0.0
 
     def matched_affiliation(self, org: str | None) -> str | None:
@@ -104,9 +107,10 @@ class Thesis(BaseModel):
             return None
         o = org.lower()
         for tier in ("tier_1", "tier_2"):
-            for name in self.affiliation_tiers.get(tier, []):
-                if _phrase_in(name.lower(), o):
-                    return name
+            for tiers in (self.affiliation_tiers, self.demo_affiliation_tiers):
+                for name in tiers.get(tier, []):
+                    if _phrase_in(name.lower(), o):
+                        return name
         return None
 
 
