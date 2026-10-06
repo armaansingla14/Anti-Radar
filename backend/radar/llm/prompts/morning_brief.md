@@ -1,0 +1,1 @@
+Write a 2-3 sentence summary for the top of today's morning brief, based only on the numbered items provided. Lead with the single most non-consensus item. Cite the item numbers you rely on in `item_numbers`. No hype, no claims beyond the items.

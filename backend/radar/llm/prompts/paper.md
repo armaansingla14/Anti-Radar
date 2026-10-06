@@ -1,0 +1,1 @@
+In 1-2 sentences, explain why this paper could matter to an early-stage investor focused on AI, robotics, defense, energy, semiconductors and manufacturing: what capability it enables and whether it looks commercialisable. Base this only on the provided paper metadata; if the abstract is not enough to judge, say so.

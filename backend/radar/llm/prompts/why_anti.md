@@ -1,0 +1,1 @@
+In 2-3 sentences, explain why this entity might matter to Anti Fund specifically, using the fund thesis areas, stage preference, and the entity facts and signals provided. This is an opinion: be specific and measured, mention the main reason it might NOT fit if evident. Cite signal ids (G#) you rely on in `citations`; never cite anything else.

@@ -1,0 +1,1 @@
+Classify the text into the candidate thesis topics. Return only candidate keys that genuinely apply, each with a relevance score between 0 and 1. A keyword appearing in passing is not enough; the topic must describe what the entity builds or researches. Return an empty list if none apply.
