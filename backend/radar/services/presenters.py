@@ -58,16 +58,29 @@ def latest_snapshots(session: Session, ids: Iterable[uuid.UUID], day: date | Non
     if not ids:
         return {}
     day = day or clock.today()
-    sub = (
-        select(ScoreSnapshot.entity_id, func.max(ScoreSnapshot.day).label("d"))
-        .where(ScoreSnapshot.entity_id.in_(ids), ScoreSnapshot.day <= day)
-        .group_by(ScoreSnapshot.entity_id)
-        .subquery()
-    )
+    # DISTINCT ON walks the (entity_id, day) unique index: one row per entity, newest first.
     rows = session.scalars(
-        select(ScoreSnapshot).join(sub, and_(ScoreSnapshot.entity_id == sub.c.entity_id, ScoreSnapshot.day == sub.c.d))
+        select(ScoreSnapshot)
+        .where(ScoreSnapshot.entity_id.in_(ids), ScoreSnapshot.day <= day)
+        .order_by(ScoreSnapshot.entity_id, ScoreSnapshot.day.desc())
+        .distinct(ScoreSnapshot.entity_id)
     )
     return {r.entity_id: r for r in rows}
+
+
+def latest_scores(session: Session, ids: Iterable[uuid.UUID], day: date | None = None) -> dict[uuid.UUID, float]:
+    """Score only (no component/evidence JSON) — for ranking large id sets cheaply."""
+    ids = list(set(ids))
+    if not ids:
+        return {}
+    day = day or clock.today()
+    rows = session.execute(
+        select(ScoreSnapshot.entity_id, ScoreSnapshot.score)
+        .where(ScoreSnapshot.entity_id.in_(ids), ScoreSnapshot.day <= day)
+        .order_by(ScoreSnapshot.entity_id, ScoreSnapshot.day.desc())
+        .distinct(ScoreSnapshot.entity_id)
+    )
+    return {e: float(sc) for e, sc in rows}
 
 
 def score_deltas(

@@ -311,7 +311,7 @@ def rank_papers(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.
     pids = [p.id for p in papers]
     links = paper_links(session, papers)
     linked_ids = {_uuid(e["id"]) for refs in links.values() for e in refs if e["type"] in ("company", "person")}
-    snaps = P.latest_snapshots(session, [i for i in linked_ids if i])
+    snaps = P.latest_scores(session, [i for i in linked_ids if i])
     fit = dict(session.execute(
         select(EntityTopic.entity_id, func.max(EntityTopic.score)).where(EntityTopic.entity_id.in_(pids))
         .group_by(EntityTopic.entity_id)).tuples().all())
@@ -325,7 +325,7 @@ def rank_papers(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.
         .group_by(PaperAuthor.person_id)).tuples().all()) if all_authors else {}
     out = {}
     for p in papers:
-        linked = [snaps[i].score for e in links.get(p.id, []) if (i := _uuid(e["id"])) in snaps]
+        linked = [snaps[i] for e in links.get(p.id, []) if (i := _uuid(e["id"])) in snaps]
         recurrence = max((paper_counts.get(a, 1) - 1 for a in authors.get(p.id, ())), default=0)
         score = (40 * (max(linked, default=0) / 100) + (20 if p.code_urls else 0)
                  + 30 * min(float(fit.get(p.id) or 0), 1.0) + 10 * min(recurrence, 3) / 3)

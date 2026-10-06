@@ -63,6 +63,7 @@ from radar.schemas.api import (
     WatchChange,
 )
 from radar.services import presenters as P
+from radar.services.memo import memoized
 from radar.services.entities import (
     latest_score_subq,
     paper_cards,
@@ -231,7 +232,9 @@ def top_founder_cards(session: Session, *, include_demo: bool, theme: str | None
 
 def strange_signals(session: Session, *, include_demo: bool, limit: int | None = STRANGE_LIMIT
                     ) -> list[StrangeSignal]:
-    rows = [StrangeSignal.model_validate(s) for s in detect_strange_signals(session, clock.today())]
+    day = clock.today()
+    rows = memoized(session, ("strange", day), lambda: [
+        StrangeSignal.model_validate(s) for s in detect_strange_signals(session, day)])
     if not include_demo:
         rows = [s for s in rows if not s.is_demo]
     return rows[:limit] if limit else rows
@@ -317,7 +320,9 @@ def _plural(n: int, word: str, plural: str | None = None) -> str:
 
 
 def thesis_shifts(session: Session, *, include_demo: bool, moves: list[TopicMove] | None = None) -> list[ThesisShift]:
-    moves = moves if moves is not None else topic_moves(session, include_demo=include_demo)
+    if moves is None:
+        moves = memoized(session, ("topic_moves", include_demo),
+                         lambda: topic_moves(session, include_demo=include_demo))
     out = []
     for m in moves:
         if m.momentum == 0:
@@ -556,8 +561,12 @@ def watchlist_changes(session: Session, *, include_demo: bool, limit: int = 3) -
 def new_entity_summaries(session: Session, *, include_demo: bool, limit: int = 10
                          ) -> list[CompanySummary | PersonCard]:
     ne = new_entities(session, clock.today(), days=NEW_DAYS)
-    cids = [uuid.UUID(r["id"]) for r in ne["companies"] if include_demo or not r["is_demo"]]
-    pids = [uuid.UUID(r["id"]) for r in ne["people"] if include_demo or not r["is_demo"]]
+    # Detector rows are ranked by score; only build summaries for what will be shown.
+    rows = [r for kind in ("companies", "people") for r in ne[kind] if include_demo or not r["is_demo"]]
+    rows.sort(key=lambda r: -(r.get("score") or -1))
+    keep = {r["id"] for r in rows[:limit]}
+    cids = [uuid.UUID(r["id"]) for r in ne["companies"] if r["id"] in keep]
+    pids = [uuid.UUID(r["id"]) for r in ne["people"] if r["id"] in keep]
     companies = {c.id: c for c in session.scalars(select(Company).where(Company.id.in_(cids)))}
     people = {p.id: p for p in session.scalars(select(Person).where(Person.id.in_(pids)))}
     out: list[CompanySummary | PersonCard] = []
