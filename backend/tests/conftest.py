@@ -85,7 +85,7 @@ def seeded(db_url):
     from radar.demo.seed import reset_database, seed_demo
 
     reset_database()
-    seed_demo(snapshot=False, fictional=True)
+    seed_demo(snapshot=False, fictional=True, llm_outputs=False)
     yield
     reset_database()
 
@@ -98,5 +98,8 @@ def client(db_url):
     from radar.api.main import create_app
 
     ratelimit.reset()
+    from radar.services import memo
+
+    memo.clear()
     with TestClient(create_app()) as c:
         yield c
