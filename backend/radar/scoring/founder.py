@@ -66,7 +66,8 @@ def technical_output(p: PersonFeatures, cohort: Cohort, today: date) -> tuple[Co
     pcts = {k: v for k in TECH_OUTPUT_WEIGHTS if (v := cohort.pct(k, row[k])) is not None}
     mx = FOUNDER_MAX["technical_output"]
     raw = {
-        "owned_repo_stars": p.owned_repo_stars,
+        "key_repo_stars_weighted": p.owned_repo_stars,
+        "key_repos": p.key_repos,
         "recent_repo_stars_30d": p.recent_repo_stars_30d,
         "commits_30d_proxy": p.commits_30d,
         "percentiles": {k: round(v, 4) for k, v in pcts.items()},
@@ -78,7 +79,7 @@ def technical_output(p: PersonFeatures, cohort: Cohort, today: date) -> tuple[Co
             "Technical Output",
             0.0,
             mx,
-            "No owned repositories or commit activity measured.",
+            "No owned or core-contributor repositories measured.",
             raw,
             evidence,
         ), None
@@ -86,8 +87,13 @@ def technical_output(p: PersonFeatures, cohort: Cohort, today: date) -> tuple[Co
         TECH_OUTPUT_WEIGHTS[k] for k in pcts
     )
     raw["blend"] = round(blend, 4)
-    stars = f"{int(p.owned_repo_stars):,}" if p.owned_repo_stars is not None else "unknown"
-    expl = f"Technical output at the {ordinal(blend * 100)} percentile (owned-repo stars {stars})."
+    if p.key_repos:
+        stars = f"{int(p.owned_repo_stars or 0):,}"
+        repos = ", ".join(p.key_repos[:2]) + (f" +{len(p.key_repos) - 2}" if len(p.key_repos) > 2 else "")
+        expl = (f"Technical output at the {ordinal(blend * 100)} percentile — core contributor to {repos} "
+                f"({stars} share-weighted stars).")
+    else:
+        expl = f"Technical output at the {ordinal(blend * 100)} percentile (no key repositories identified)."
     return Component("technical_output", "Technical Output", mx * blend, mx, expl, raw, evidence), blend
 
 

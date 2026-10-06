@@ -44,6 +44,7 @@ LAUNCH_PAPER_MAX_AGE_DAYS = 90
 EXODUS_WINDOW_DAYS = 30
 QUIET_MIN_STARS_30D = 50.0  # top-decile velocity must also clear this absolute floor
 QUIET_TOP_FRACTION = 0.10
+QUIET_MIN_THESIS = 0.4  # theme weight × theme score
 QUIET_MAX_RESULTS = 5
 HIRING_WINDOW_DAYS = 30
 SIGNAL_LOOKBACK_DAYS = 180
@@ -481,7 +482,14 @@ def quiet_velocity(ctx: _Ctx) -> list[dict]:
         threshold = max(
             threshold, real[min(len(real) - 1, math.ceil((1 - QUIET_TOP_FRACTION) * len(real)) - 1)]
         )
-    hits = [f for f in feats if f.stars_30d >= threshold and f.hn_mentions_90d == 0 and f.x_followers is None]
+    # hn_mentions_90d is None unless HN attention was actually measured (signals or an explicit probe),
+    # so "zero discussion" is only claimed when it was checked. Off-thesis repos are not intelligence.
+    hits = [
+        f for f in feats
+        if f.stars_30d >= threshold and f.hn_mentions_90d == 0 and f.x_followers is None
+        and max((ctx.thesis.themes[t].weight * v for t, v in f.theme_scores.items() if t in ctx.thesis.themes),
+                default=0.0) >= QUIET_MIN_THESIS
+    ]
     hits.sort(key=lambda f: -f.stars_30d)
     out = []
     companies = (
@@ -497,10 +505,11 @@ def quiet_velocity(ctx: _Ctx) -> list[dict]:
     for f in hits[:QUIET_MAX_RESULTS]:
         c = companies[f.entity_id]
         stars = int(f.stars_30d)
-        headline = f"{c.name} gained {stars:,} GitHub stars in 30 days with zero Hacker News discussion"
+        headline = f"{c.name} gained {stars:,} GitHub stars in 30 days without a single Hacker News thread"
         detail = (
             f"Star velocity is in the top {round(QUIET_TOP_FRACTION * 100)}% of tracked entities "
-            f"(threshold {int(threshold):,}/30d); no Hacker News mentions in 90 days and no X data."
+            f"(threshold {int(threshold):,}/30d). Hacker News was searched for its repository and domain: "
+            "no stories in the last 90 days. X data unavailable."
         )
         rank = sum(1 for v in real if v <= f.stars_30d) / len(real) if real else 1.0
         sigs = [x for x in f.signals if x.source_type == "github"]

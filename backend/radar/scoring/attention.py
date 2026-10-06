@@ -10,6 +10,8 @@ from radar.scoring.cohort import Cohort, ordinal
 from radar.scoring.features import Component, EntityFeatures
 from radar.thesis.loader import AttentionCfg
 
+ATTN_MAX_WEIGHT = 0.6  # weight of the strongest attention source vs the mean of all available
+
 
 @dataclass
 class AttentionResult:
@@ -60,7 +62,9 @@ def coverage_of(n_available: int) -> str:
 def gap_result(technical: float, sources: list[dict[str, Any]], cfg: AttentionCfg) -> AttentionResult:
     """Combine a technical percentile (0..100) with per-source attention percentiles."""
     avail = [s["percentile"] for s in sources if s["available"]]
-    attention = sum(avail) / len(avail) if avail else None
+    # Attention leans on the strongest channel: if any source shows the entity is widely known,
+    # it is known (a 90k-star repo with no HN post in our corpus is not "under the radar").
+    attention = (ATTN_MAX_WEIGHT * max(avail) + (1 - ATTN_MAX_WEIGHT) * sum(avail) / len(avail)) if avail else None
     coverage = coverage_of(len(avail))
     gap = technical - (attention if attention is not None else 0.0)
     flagged = (

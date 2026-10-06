@@ -40,6 +40,7 @@ from radar.scoring.features import FORMATION_SIGNAL_TYPES, EntityFeatures, Perso
 from radar.scoring.novelty import tokenize
 from radar.thesis.loader import Thesis, get_thesis
 
+KEY_CONTRIBUTOR_SHARE = 0.15  # contributions / top contributor's, to count a repo as 'key'
 SIGNAL_WINDOW_DAYS = 120
 YOUNG_ORG_DAYS = 180
 SERIES_LOOKBACK_DAYS = 70
@@ -293,7 +294,9 @@ def build_company_features(
         people_by[cp.company_id].append(cp)
     all_repo_ids = [r.id for rs in repos_by.values() for r in rs]
     series = load_series(session, all_repo_ids, REPO_METRICS, day)
-    company_series = load_series(session, cids, ("followers",), day, lookback_days=30)
+    company_series = load_series(
+        session, cids, ("followers", "hn_probe_mentions", "hn_probe_points"), day, lookback_days=30
+    )
     hist_cut = day - timedelta(days=7)
     with_history = {eid for (eid, _), pts in series.items() if pts and pts[0][0] <= hist_cut}
     topics = _topics(session, cids + all_repo_ids)
@@ -341,11 +344,18 @@ def build_company_features(
         ids = [c.id, *ser.keys(), *(cp.person_id for cp in links)]
         signals = index.for_entities(ids)
         hn = [s for s in signals if s.source_type == "hackernews" and s.event_at >= lo90]
+        # HN attention is "available" for an entity only if it was measured: HN signals in our corpus,
+        # or an explicit attention probe (ops.probe_attention). No data is not the same as zero.
         hn_points = None
         hn_mentions = None
-        if index.hn_available or hn:
+        probe_m = company_series.get((c.id, "hn_probe_mentions"), [])
+        probe_p = company_series.get((c.id, "hn_probe_points"), [])
+        if hn or probe_m:
             hn_points = float(sum(s.raw_value or 0.0 for s in hn))  # HN signals carry points as raw_value
             hn_mentions = len(hn)
+            if probe_m:
+                hn_mentions = max(hn_mentions, int(value_at(probe_m, day, 30) or 0))
+                hn_points = max(hn_points, float(value_at(probe_p, day, 30) or 0.0)) if probe_p else hn_points
         releases = sum(1 for s in signals if "release" in s.signal_type and s.event_at >= lo90)
         release_metric = agg("releases", 0, 90)
 
@@ -443,8 +453,6 @@ def build_person_features(
     if handles:
         for r in session.scalars(select(Repository).where(func.lower(Repository.owner).in_(list(handles)))):
             owned[handles[r.owner.lower()]].append(r)
-    owned_ids = [r.id for rs in owned.values() for r in rs]
-    series = load_series(session, owned_ids, ("stars",), day)
     person_series = load_series(session, pids, ("followers", "commits_week"), day)
 
     contribs: dict[uuid.UUID, list[tuple[RepoContributor, Repository]]] = defaultdict(list)
@@ -454,6 +462,34 @@ def build_person_features(
         .where(RepoContributor.person_id.in_(pids))
     ).all():
         contribs[rc.person_id].append((rc, r))
+
+    # Key repositories: owned (share 1.0) + repos where the person is a core contributor,
+    # weighted by contributions relative to the repo's top recorded contributor.
+    top_contrib: dict[uuid.UUID, int] = {}
+    repo_ids_all = {r.id for rows in contribs.values() for _, r in rows}
+    if repo_ids_all:
+        for rid, mx in session.execute(
+            select(RepoContributor.repository_id, func.max(RepoContributor.contributions))
+            .where(RepoContributor.repository_id.in_(list(repo_ids_all)))
+            .group_by(RepoContributor.repository_id)
+        ):
+            top_contrib[rid] = int(mx or 0)
+    key_repos: dict[uuid.UUID, list[tuple[Repository, float]]] = defaultdict(list)
+    for pid in pids:
+        seen: set[uuid.UUID] = set()
+        for r in owned.get(pid, []):
+            key_repos[pid].append((r, 1.0))
+            seen.add(r.id)
+        for rc, r in contribs.get(pid, []):
+            if r.id in seen:
+                continue
+            top = top_contrib.get(r.id) or 0
+            share = (rc.contributions or 0) / top if top else 0.0
+            if share >= KEY_CONTRIBUTOR_SHARE:
+                key_repos[pid].append((r, min(1.0, share)))
+                seen.add(r.id)
+    key_ids = list({r.id for rows in key_repos.values() for r, _ in rows})
+    series = load_series(session, key_ids, ("stars", "commits_week"), day)
 
     # Organization creation dates, for "joined a young org".
     org_ids = {r.company_id for rows in contribs.values() for _, r in rows if r.company_id}
@@ -475,14 +511,14 @@ def build_person_features(
         )
     ).all():
         papers[pid].append(paper)
-    topics = _topics(session, pids + owned_ids + [p.id for ps in papers.values() for p in ps])
+    topics = _topics(session, pids + key_ids + [p.id for ps in papers.values() for p in ps])
 
     young_cut = day - timedelta(days=YOUNG_ORG_DAYS)
-    lo30 = day_start(day - timedelta(days=30))
     out: list[PersonFeatures] = []
     for p in people:
         repos = owned.get(p.id, [])
-        signals = index.for_entities([p.id, *(r.id for r in repos)])
+        keyed = key_repos.get(p.id, [])
+        signals = index.for_entities([p.id, *(r.id for r, _ in keyed)])
         transition = [s.id for s in signals if s.signal_type in FORMATION_SIGNAL_TYPES]
         affiliations = list(
             dict.fromkeys(
@@ -504,15 +540,13 @@ def build_person_features(
                 if o in org_info and org_info[o][0] is not None and org_info[o][0] >= young_cut
             }
         )
-        rows = contribs.get(p.id, [])
         commits = weekly_sum(person_series.get((p.id, "commits_week"), []), day, range(4), None)
-        if commits is None and rows:
-            commits = float(
-                sum(
-                    rc.contributions or 0
-                    for rc, _ in rows
-                    if rc.last_commit_at is not None and rc.last_commit_at >= lo30
-                )
+        if commits is None and keyed:
+            # Proxy: each key repo's last-4-week commits, weighted by the person's contribution share.
+            commits = sum_known(
+                (c * w if (c := weekly_sum(series.get((r.id, "commits_week"), []), day, range(4),
+                                           _repo_created(r))) is not None else None)
+                for r, w in keyed
             )
         fol_pts = person_series.get((p.id, "followers"), [])
         followers = value_at(fol_pts, day, 30) if fol_pts else None
@@ -528,10 +562,13 @@ def build_person_features(
                 name=p.name,
                 first_seen_at=p.first_seen_at,
                 followers=followers,
-                owned_repo_stars=float(sum(r.stars or 0 for r in repos)) if repos else None,
+                owned_repo_stars=float(sum((r.stars or 0) * w for r, w in keyed)) if keyed else None,
                 recent_repo_stars_30d=sum_known(
-                    window_delta(series.get((r.id, "stars"), []), day, 0, 30, _repo_created(r)) for r in repos
+                    (d * w if (d := window_delta(series.get((r.id, "stars"), []), day, 0, 30, _repo_created(r)))
+                     is not None else None)
+                    for r, w in keyed
                 ),
+                key_repos=[r.full_name for r, _ in keyed][:5],
                 commits_30d=commits,
                 papers_24mo=len(pp),
                 papers_with_code=sum(1 for x in pp if x.code_urls),

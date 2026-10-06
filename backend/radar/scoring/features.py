@@ -85,7 +85,8 @@ class PersonFeatures:
     name: str
     first_seen_at: datetime | None = None
     followers: float | None = None
-    owned_repo_stars: float | None = None
+    owned_repo_stars: float | None = None  # stars of key repos (owned or core-contributor), share-weighted
+    key_repos: list[str] = field(default_factory=list)
     recent_repo_stars_30d: float | None = None
     commits_30d: float | None = None  # proxy, see extract.build_person_features
     papers_24mo: int = 0

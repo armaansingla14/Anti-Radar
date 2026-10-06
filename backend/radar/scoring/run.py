@@ -153,6 +153,7 @@ def anti_score_from_snapshot(
         version=snap.version,
         computed_on=snap.day,
         feedback_adjustment=float(att.get("feedback_adjustment", 0.0)),
+        adjustments=list(att.get("adjustments") or []),
         cohort_size=int(att.get("cohort_size", 0)),
         low_coverage=bool(att.get("low_coverage", False)),
     )

@@ -41,6 +41,7 @@ class ScoreResult:
     is_demo: bool = False
     applied_prefs: dict[str, float] = field(default_factory=dict)
     version: str = SCORE_VERSION
+    adjustments: list[dict[str, Any]] = field(default_factory=list)  # [{key, label, points, reason}]
 
     @property
     def low_coverage(self) -> bool:
@@ -62,6 +63,7 @@ class ScoreResult:
             "applied_prefs": self.applied_prefs,
             "cohort_size": self.cohort_size,
             "low_coverage": self.low_coverage,
+            "adjustments": self.adjustments,
         }
 
 
@@ -76,6 +78,23 @@ def _finalize(
     adj = feedback_adjustment(base, keys, prefs, thesis.scoring.feedback)
     total = int(min(max(round(base + adj.shift), 0), 100))
     return total, adj.shift, adj.applied
+
+
+THESIS_GATE_RATIO = 0.35  # thesis fit below 35% of its max dampens the whole score
+THESIS_GATE_FLOOR = 0.6
+
+
+def thesis_gate(fit: Component) -> dict[str, Any] | None:
+    """Off-thesis entities shouldn't outrank on-thesis ones on raw velocity alone.
+
+    Multiplier rises linearly from THESIS_GATE_FLOOR (no fit) to 1.0 at THESIS_GATE_RATIO of max fit."""
+    ratio = fit.value / fit.max if fit.max else 0.0
+    if ratio >= THESIS_GATE_RATIO:
+        return None
+    mult = THESIS_GATE_FLOOR + (1 - THESIS_GATE_FLOOR) * ratio / THESIS_GATE_RATIO
+    return {"key": "thesis_gate", "label": "Off-thesis dampener", "multiplier": round(mult, 3),
+            "reason": f"Thesis fit {fit.value:.1f}/{fit.max:g} is below {THESIS_GATE_RATIO:.0%} of max; "
+                      f"score multiplied by {mult:.2f}."}
 
 
 def score_companies(
@@ -114,12 +133,21 @@ def score_companies(
             attention_component(att, sc.attention_gap, w["attention_gap"]),
         ]
         base = sum(c.value for c in comps)
+        adjustments = []
+        gate = thesis_gate(comps[3])
+        if gate:
+            adjustments.append({**gate, "points": round(base * (gate["multiplier"] - 1), 1)})
+            base *= gate["multiplier"]
         keys = adjustment_keys(
             dominant_signal_types([s.signal_type for s in f.signals]), f.stage, att.attention
         )
         total, shift, applied = _finalize(base, keys, prefs, thesis)
+        if shift:
+            adjustments.append({"key": "feedback", "label": "Learned preferences", "points": round(shift, 1),
+                                "reason": "Bounded multipliers from Useful / Not interesting feedback."})
         out[f.entity_id] = ScoreResult(
-            f.entity_id, "company", total, base, shift, comps, att, col, cohort.size, f.is_demo, applied
+            f.entity_id, "company", total, base, shift, comps, att, col, cohort.size, f.is_demo, applied,
+            adjustments=adjustments,
         )
     return out
 
