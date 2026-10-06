@@ -56,7 +56,7 @@ function SearchInput({ q }: { q: string }) {
           name="q"
           type="search"
           defaultValue={q}
-          autoFocus
+          autoFocus={!q}
           required
           maxLength={500}
           autoComplete="off"
@@ -195,6 +195,10 @@ function ResultRow({ r, n }: { r: SearchResult; n: number }) {
     <li
       data-card
       data-href={href}
+      data-entity-type={r.entity_type}
+      data-entity-id={r.id}
+      data-demo={String(r.is_demo)}
+      aria-label={r.name}
       tabIndex={0}
       className="grid grid-cols-[40px_1fr_auto] gap-x-5 border-b border-rule py-5 transition-colors hover:bg-panel/40"
     >
