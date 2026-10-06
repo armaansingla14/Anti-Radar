@@ -28,7 +28,7 @@ from radar import clock
 from radar.agent.brief_schema import BRIEF_CLAIM_SECTIONS, AntiBrief, Claim, ClaimEpistemic
 from radar.agent.render import brief_to_markdown
 from radar.agent.tools import AnalystTools, Gathered, SourceRegistry, resolve_entity
-from radar.llm.guard import SYSTEM_GUARD, escape_content, validate_citations
+from radar.llm.guard import SYSTEM_GUARD, escape_content, inline_untrusted, validate_citations
 from radar.llm.narratives import template_questions, why_anti_template, why_now_template
 from radar.llm.prompts import load_prompt
 from radar.llm.provider import BaseProvider, LLMError, get_llm
@@ -205,7 +205,10 @@ def template_brief(session: Session, g: Gathered, tools: AnalystTools) -> AntiBr
 
 
 def _subject_line(g: Gathered) -> str:
-    return f"Subject: {g.entity_type} \"{g.entity.name}\" (id {g.entity.id}). Today: {clock.today().isoformat()}."
+    """Identify the subject by id and its profile source; the (externally sourced) name is escaped and capped."""
+    return (f"Subject: the {g.entity_type} with id {g.entity.id}, described in source {g.profile_sid} "
+            f"(display name, untrusted data: \"{inline_untrusted(g.entity.name)}\"). "
+            f"Today: {clock.today().isoformat()}.")
 
 
 def _llm_brief(

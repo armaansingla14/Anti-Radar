@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import func, select
 
 from radar.db import session_scope
 from radar.llm import cache as llm_cache
@@ -109,6 +110,7 @@ class LLMProvider(Protocol):
         cache: bool = True,
         prompt_version: str = "v1",
         max_tokens: int = 4096,
+        live_gate: Callable[[], bool] | None = None,
     ) -> LLMResult[T]: ...
 
     def tool_loop(
@@ -160,8 +162,39 @@ def log_call(
         log.warning("failed to log LLM call: %s", e)
 
 
+def spent_today_usd() -> float:
+    """Live LLM spend since the start of the current UTC day, from the llm_calls log."""
+    with session_scope() as s:
+        start = func.date_trunc("day", func.timezone("UTC", func.now()))
+        total = s.scalar(
+            select(func.coalesce(func.sum(LLMCall.cost_usd), 0.0)).where(
+                func.timezone("UTC", LLMCall.created_at) >= start, LLMCall.cache_hit.is_(False)
+            )
+        )
+    return float(total or 0.0)
+
+
+def check_daily_budget() -> None:
+    """Raise LLMUnavailable once today's live spend reaches ``llm_daily_usd_cap``.
+
+    Fails closed: if spend cannot be read, no live call is made.
+    """
+    cap = get_settings().llm_daily_usd_cap
+    if cap <= 0:
+        return
+    try:
+        spent = spent_today_usd()
+    except Exception as e:  # noqa: BLE001
+        raise LLMUnavailable(f"cannot verify daily LLM spend ({type(e).__name__}); refusing live call") from e
+    if spent >= cap:
+        raise LLMUnavailable(f"daily LLM budget exhausted (${spent:.2f} of ${cap:.2f})")
+
+
 class BaseProvider:
-    """Shared caching/logging; subclasses implement ``_call_structured`` and ``tool_loop``."""
+    """Shared caching/logging; subclasses implement ``_call_structured`` and ``tool_loop``.
+
+    Every live call (structured or each tool-loop turn) first passes :func:`check_daily_budget`.
+    """
 
     name: str = "base"
     available: bool = False
@@ -189,7 +222,9 @@ class BaseProvider:
         cache: bool = True,
         prompt_version: str = "v1",
         max_tokens: int = 4096,
+        live_gate: Callable[[], bool] | None = None,
     ) -> LLMResult[T]:
+        """``live_gate``: optional limiter consulted only on a cache miss, before a live (paid) call."""
         inputs = {"system": system, "user": user, "schema": schema.model_json_schema()}
         if cache:
             for m in self.cache_models(tier):
@@ -205,6 +240,9 @@ class BaseProvider:
 
         if not self.available:
             raise LLMUnavailable("no live LLM provider configured and no cached output")
+        if live_gate is not None and not live_gate():
+            raise LLMUnavailable(f"rate limit for live {purpose} calls reached")
+        check_daily_budget()
 
         model = self.model_for(tier)
         t0 = time.perf_counter()

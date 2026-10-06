@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -84,6 +85,19 @@ def escape_content(content: str) -> str:
 def _attr(value: str | None) -> str:
     v = (value or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
     return re.sub(r"[\r\n\t]+", " ", v)[:500]
+
+
+def inline_untrusted(value: str | None, max_chars: int = 80) -> str:
+    """Externally sourced short text (e.g. an entity name) safe to quote inline in a prompt.
+
+    Control/format characters and newlines become spaces, length is capped, and markup characters
+    are entity-escaped so the value can neither open/close our blocks nor break out of its quotes.
+    """
+    v = "".join(" " if unicodedata.category(ch)[0] in ("C", "Z") else ch for ch in (value or ""))
+    v = " ".join(v.split())
+    if len(v) > max_chars:
+        v = v[: max_chars - 1].rstrip() + "…"
+    return v.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def wrap_source(

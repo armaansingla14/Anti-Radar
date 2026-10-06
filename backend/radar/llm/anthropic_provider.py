@@ -31,6 +31,7 @@ from radar.llm.provider import (
     ToolLoopResult,
     Usage,
     anthropic_model_for,
+    check_daily_budget,
     log_call,
 )
 
@@ -141,6 +142,7 @@ class AnthropicProvider(BaseProvider):
         oc = self._output_config(tier)
         while turns < max_turns:
             turns += 1
+            check_daily_budget()  # the global daily cap is enforced before every paid turn
             kwargs: dict[str, Any] = {
                 "model": model,
                 "max_tokens": _LOOP_MAX_TOKENS,

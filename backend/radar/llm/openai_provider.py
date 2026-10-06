@@ -22,6 +22,7 @@ from radar.llm.provider import (
     ToolExecutor,
     ToolLoopResult,
     Usage,
+    check_daily_budget,
     log_call,
     openai_model_for,
 )
@@ -110,6 +111,7 @@ class OpenAIProvider(BaseProvider):
         next_input: Any = user
         while turns < max_turns:
             turns += 1
+            check_daily_budget()  # the global daily cap is enforced before every paid turn
             t0 = time.perf_counter()
             try:
                 kwargs: dict[str, Any] = {

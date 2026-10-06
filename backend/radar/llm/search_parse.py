@@ -13,15 +13,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from radar.api.ratelimit import TokenBucket
 from radar.llm.guard import SYSTEM_GUARD, wrap_source
 from radar.llm.prompts import load_prompt
 from radar.llm.provider import BaseProvider, LLMError, get_llm
 from radar.schemas.api import SearchFilters
+from radar.settings import get_settings
 from radar.thesis.loader import get_thesis
 
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "v1"
+
+# /api/search is unauthenticated and every distinct query is a cache miss, so live (paid) parse
+# calls are rate-limited process-wide; cache hits are not counted. Over the limit -> deterministic parse.
+SEARCH_LLM_BUCKET = TokenBucket("search_llm", per_minute_fn=lambda: get_settings().llm_search_per_minute)
 
 
 class _ParsedQuery(BaseModel):
@@ -70,7 +76,7 @@ def llm_parse_query(query: str, *, provider: BaseProvider | None = None) -> Sear
     try:
         res = (provider or get_llm()).structured(
             "search.parse", "fast", SYSTEM_GUARD + "\n\n" + load_prompt("search_parse"), user, _ParsedQuery,
-            cache=True, prompt_version=PROMPT_VERSION, max_tokens=1024,
+            cache=True, prompt_version=PROMPT_VERSION, max_tokens=1024, live_gate=SEARCH_LLM_BUCKET.try_acquire,
         )
     except LLMError as e:
         log.info("llm_parse_query unavailable: %s", e)

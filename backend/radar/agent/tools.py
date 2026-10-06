@@ -5,9 +5,14 @@ with per-run ids S1, S2, … issued by a :class:`SourceRegistry`. The registry i
 ground truth for citation validation: a claim may only cite ids registered here.
 Registered sources are also persisted as ``Source`` rows.
 
-Internal tools read the database. Live tools (GitHub, HN Algolia, arXiv, arbitrary
-public URL) use :class:`HttpClient` directly and are only offered when
-``live_fetch`` is enabled.
+Internal tools read the database. Live tools (GitHub, HN Algolia, arXiv, public URL)
+use :class:`HttpClient` directly and are only offered when ``live_fetch`` is enabled.
+
+Live fetches are steerable by untrusted text the model has read, so they are contained:
+``fetch_url`` only reaches hosts already known for this investigation (the entity's own
+website / repo homepages and hosts of already-registered, non-fetched sources), long query
+strings are dropped, every live client has a total wall-clock budget, and all live tools are
+disabled once any registered source is flagged for prompt injection.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import feedparser
 from selectolax.lexbor import LexborHTMLParser
@@ -44,12 +50,15 @@ from radar.models import (
     Signal,
     Source,
 )
+from radar.providers.domains import company_domain, registrable_domain
 from radar.providers.http import HttpClient, RobotsCache, UnsafeURLError, sanitize_url
 from radar.settings import get_settings
 
 log = logging.getLogger(__name__)
 
 MAX_FETCH_CHARS = 6000
+MAX_FETCH_QUERY_CHARS = 128  # longer query strings are dropped (they are the obvious exfiltration channel)
+LIVE_FETCH_BUDGET_S = 120.0  # total wall-clock budget per live client per investigation
 BLOCK_CHARS = 4000
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,100}/[A-Za-z0-9_.\-]{1,100}$")
 
@@ -363,10 +372,13 @@ LIVE_TOOLS: tuple[ToolDef, ...] = (
     ),
     ToolDef(
         "fetch_url",
-        "Fetch the readable text of a public web page (respects robots.txt; max 6000 characters).",
+        "Fetch the readable text of a public web page (respects robots.txt; max 6000 characters). Only "
+        "hosts already known for this investigation are allowed: the subject's website, repository "
+        "homepages, and hosts of sources already collected.",
         _schema({"url": {"type": "string"}}),
     ),
 )
+LIVE_TOOL_NAMES = frozenset(t.name for t in LIVE_TOOLS)
 
 
 class AnalystTools:
@@ -378,6 +390,8 @@ class AnalystTools:
         self.live_fetch = live_fetch
         self._clients: dict[str, HttpClient] = {}
         self.last_ids: list[str] = []
+        self._known_sites: set[str] = set()  # entity website / personal site / repo homepages
+        self._fetched_sids: set[str] = set()  # sources produced by fetch_url (never extend the allowlist)
 
     # ── dispatch ──
     def specs(self) -> list[ToolDef]:
@@ -405,6 +419,10 @@ class AnalystTools:
         handler = handlers.get(name)
         if handler is None:
             return f"Unknown or disabled tool: {name}", True
+        if name in LIVE_TOOL_NAMES and (flags := self.registry.flags()):
+            ids = ", ".join(f["id"] for f in flags)
+            return (f"Live fetch tools are disabled for this investigation: prompt-injection patterns were "
+                    f"detected in {ids}. Continue with internal tools and the sources already collected."), True
         try:
             sources = handler(args or {})
         except (ToolInputError, UnsafeURLError) as e:
@@ -457,6 +475,7 @@ class AnalystTools:
             ]
             url = f"radar://company/{entity.slug}"
             etype = "company"
+            self._remember_site(entity.website)
         else:
             lines = [
                 f"Person: {entity.name}", f"Bio: {entity.bio or 'Unknown'}",
@@ -471,6 +490,7 @@ class AnalystTools:
             ]
             url = f"radar://person/{entity.slug}"
             etype = "person"
+            self._remember_site(entity.personal_site)
         if entity.is_demo:
             lines.append(f"NOTE: synthetic demo record ({entity.demo_label or 'demo'}).")
         prof = self.registry.register(
@@ -506,6 +526,8 @@ class AnalystTools:
             repos = list(self.session.scalars(
                 select(Repository).where(or_(*conds)).order_by(Repository.stars.desc()).limit(8)
             ))
+        for r in repos:
+            self._remember_site(r.homepage)
         return prof, prov_srcs, [(r, self._repo_source(r)) for r in repos]
 
     def _profile_sources(self, entity: Company | Person) -> list[RegisteredSource]:
@@ -662,8 +684,10 @@ class AnalystTools:
                 token = get_settings().resolved_github_token()
                 if token:
                     headers["Authorization"] = f"Bearer {token}"
-            self._clients[name] = HttpClient(min_interval=interval, headers=headers, timeout=timeout,
-                                             max_retries=retries, guard_ssrf=ssrf)
+            client = HttpClient(min_interval=interval, headers=headers, timeout=timeout,
+                                max_retries=retries, guard_ssrf=ssrf)
+            client.set_deadline(LIVE_FETCH_BUDGET_S)
+            self._clients[name] = client
         return self._clients[name]
 
     def fetch_github_repo(self, full_name: str) -> list[RegisteredSource]:
@@ -676,6 +700,7 @@ class AnalystTools:
             raise ToolInputError(f"GitHub repository {full_name} not found")
         r.raise_for_status()
         d = r.json()
+        self._remember_site(d.get("homepage"))
         readme = ""
         rr = gh.get(f"https://api.github.com/repos/{full_name}/readme",
                     headers={"Accept": "application/vnd.github.raw"})
@@ -742,8 +767,47 @@ class AnalystTools:
             ))
         return out
 
+    # ── fetch_url containment ──
+    def _remember_site(self, url: str | None) -> None:
+        if url and url.strip():
+            self._known_sites.add(url.strip())
+
+    def _allowed_site_urls(self) -> list[str]:
+        known = list(self._known_sites)
+        known += [s.url for s in self.registry.all()
+                  if s.id not in self._fetched_sids and not s.url.startswith("radar://")]
+        return known
+
+    def fetch_allowed(self, url: str) -> bool:
+        """True if ``url``'s host is already known for this investigation.
+
+        A non-platform company domain allows its registrable domain (and subdomains); platform or
+        user-content hosts (github.io, vercel.app, ...) and IP literals only allow that exact host.
+        """
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+        if not host:
+            return False
+        target_domain = registrable_domain(host)
+        for known in self._allowed_site_urls():
+            s = known if "://" in known else "https://" + known
+            khost = (urlparse(s).hostname or "").lower().rstrip(".")
+            if not khost:
+                continue
+            if host == khost:
+                return True
+            kdomain = company_domain(khost)
+            if kdomain and target_domain == kdomain:
+                return True
+        return False
+
     def fetch_url(self, url: str) -> list[RegisteredSource]:
         url = sanitize_url(url)
+        p = urlparse(url)
+        if len(p.query) > MAX_FETCH_QUERY_CHARS:
+            url = urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+        if not self.fetch_allowed(url):
+            raise ToolInputError(
+                f"fetch_url only reaches hosts already known for this investigation; {p.hostname} is not one")
         client = self._client("web")
         if not RobotsCache(client).allowed(url):
             raise ToolInputError(f"robots.txt disallows fetching {url}")
@@ -762,7 +826,9 @@ class AnalystTools:
             title, text = url, " ".join(r.text.split())
         else:
             raise ToolInputError(f"unsupported content type {ctype or 'unknown'}")
-        return [self.registry.register(
+        src = self.registry.register(
             url=str(r.request.url) if r.request else url, title=title[:300], source_type="website",
             content=text[:MAX_FETCH_CHARS], key=f"url:{url}", http_status=r.status_code,
-        )]
+        )
+        self._fetched_sids.add(src.id)
+        return [src]

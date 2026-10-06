@@ -187,3 +187,81 @@ def test_search_parse_filters_to_thesis_values(db):
                             provider=FakeLive({_TopicOut: topics}))
     assert got == [("robotics.tactile", 1.0)]
     assert llm_refine_topics("other text", ["robotics.tactile"], provider=NullProvider()) is None
+
+
+# ── global daily spend cap + search LLM rate limit ──
+@pytest.fixture()
+def cap(monkeypatch):
+    def set_cap(usd: float, per_minute: int = 20) -> None:
+        monkeypatch.setattr(get_settings(), "llm_daily_usd_cap", usd)
+        monkeypatch.setattr(get_settings(), "llm_search_per_minute", per_minute)
+
+    from radar.api import ratelimit
+
+    ratelimit.reset()
+    yield set_cap
+    ratelimit.reset()
+
+
+def test_daily_cap_blocks_live_calls_but_not_cache_hits(db, cap):
+    from radar.llm.provider import spent_today_usd
+
+    cap(0.002)
+    live = FakeLive({Echo: Echo(answer="1")})
+    live.structured("t.cap", "fast", "sys", "a", Echo)  # $0.0015
+    live.structured("t.cap", "fast", "sys", "b", Echo)  # $0.0030 total: now at/over the cap
+    assert spent_today_usd() == pytest.approx(0.003)
+    with pytest.raises(LLMUnavailable, match="daily LLM budget"):
+        live.structured("t.cap", "fast", "sys", "c", Echo)
+    assert live.calls == 2
+    assert live.structured("t.cap", "fast", "sys", "a", Echo).cached  # cached output still served
+
+
+def test_daily_cap_ignores_yesterdays_spend(db, cap):
+    from datetime import timedelta
+
+    cap(1.0)
+    db.add(LLMCall(provider="anthropic", model="m", purpose="old", cost_usd=50.0,
+                   created_at=datetime.now(UTC) - timedelta(days=1, hours=1)))
+    db.commit()
+    live = FakeLive({Echo: Echo(answer="1")})
+    assert not live.structured("t.cap", "fast", "sys", "fresh", Echo).cached
+
+
+def test_daily_cap_enforced_per_tool_loop_turn(db, cap):
+    from types import SimpleNamespace
+
+    from radar.llm.anthropic_provider import AnthropicProvider
+
+    cap(1.0)
+    db.add(LLMCall(provider="anthropic", model="m", purpose="spent", cost_usd=1.5))
+    db.commit()
+
+    class Never:
+        def create(self, **kw):
+            raise AssertionError("no paid call may be made over the daily cap")
+
+    prov = AnthropicProvider(client=SimpleNamespace(messages=Never()))
+    with pytest.raises(LLMUnavailable, match="daily LLM budget"):
+        prov.tool_loop(purpose="t", tier="deep", system="s", user="u", tools=[], execute=lambda n, a: ("", False))
+
+
+def _parsed_query():
+    from radar.llm.search_parse import _ParsedQuery
+
+    return _ParsedQuery(entity_types=["company"], themes=[], topics=[], keywords=["x"], prior_affiliations=[],
+                        hiring_role_classes=[], stage=[], min_score=0, first_seen_within_days=0,
+                        event_within_days=0, accelerating=False, sort="score")
+
+
+def test_search_llm_parse_is_rate_limited_but_cache_hits_are_free(db, cap):
+    from radar.llm.search_parse import _ParsedQuery
+
+    cap(10.0, per_minute=2)
+    live = FakeLive({_ParsedQuery: _parsed_query()})
+    assert llm_parse_query("robotics one", provider=live) is not None
+    assert llm_parse_query("robotics two", provider=live) is not None
+    assert llm_parse_query("robotics three", provider=live) is None  # over the limit -> deterministic fallback
+    assert live.calls == 2
+    assert llm_parse_query("robotics one", provider=live) is not None  # cache hit needs no token
+    assert live.calls == 2
