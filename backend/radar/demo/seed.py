@@ -55,7 +55,7 @@ def load_snapshot(directory: Path = SNAPSHOT_DIR) -> dict[str, Any]:
     as_of = date.fromisoformat(manifest["as_of"])
     clock.set_as_of(as_of)
     files = sorted(directory.glob("*.json.gz"))
-    started = clock.now()
+    started = clock.wall_now()
     totals = {"files": 0, "signals": 0, "entities": 0}
     for path in files:
         with gzip.open(path, "rt", encoding="utf-8") as f:
@@ -90,7 +90,7 @@ def load_snapshot(directory: Path = SNAPSHOT_DIR) -> dict[str, Any]:
                 provider="snapshot",
                 status="ok",
                 started_at=started,
-                finished_at=clock.now(),
+                finished_at=clock.wall_now(),
                 records_fetched=totals["files"],
                 signals_created=totals["signals"],
                 params={"as_of": as_of.isoformat(), "captured_at": manifest.get("captured_at"),
