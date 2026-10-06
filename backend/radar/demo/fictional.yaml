@@ -1,0 +1,270 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# FICTIONAL DEMO DATASET
+#
+# Every company, person, organization, lab, URL and event in this file is
+# INVENTED to demonstrate RADAR's behaviour (signal collision, founder
+# departures, strange signals, attention gaps). Nothing here describes a real
+# company or person. All rows are stored with is_demo=true and rendered with a
+# DEMO DATA badge. URLs use the reserved `.example` TLD so they can never point
+# at a real site.
+#
+# Dates are relative (`days_ago`) so the demo always reads as "recent".
+# Fictional institutions used: Brightline Robotics Institute, Helix Frontier
+# Lab, Coriolis Aerospace, Vantor Defense Systems, Oberon Silicon, Solace
+# Plasma Laboratory. None of these are real organizations.
+# ─────────────────────────────────────────────────────────────────────────────
+
+label: "Fictional example — not a real company"
+
+companies:
+  - key: halcyon
+    name: Halcyon Dynamics
+    kind: stealth
+    description: Stealth team building a tactile-first manipulation foundation model for dexterous industrial robots.
+    website: https://halcyon-dynamics.example
+    github_org: demo-halcyon
+    x_handle: halcyondyn_demo
+    location: San Francisco, CA
+    founded_days_ago: 41
+    stage: formation
+    topics: [robotics.tactile, robotics.manipulation, robotics.robot_foundation_models, manufacturing.industrial_automation]
+    repos:
+      - name: tactile-vla
+        description: Vision-language-action policies with high-resolution tactile tokens. Code for "TactileVLA" (2026).
+        language: Python
+        topics: [robotics, tactile-sensing, manipulation, vla, robot-learning]
+        created_days_ago: 38
+        stars: {start: 31, end: 468, days: 35, shape: accelerating}
+        forks: {start: 2, end: 61, days: 35, shape: accelerating}
+        commits_week: [3, 5, 9, 14, 22, 31]
+        contributors: [mira-okafor, dev-raman, ana-lindqvist, kenji-sato, rafael-ortiz]
+      - name: gelsim
+        description: Fast GPU tactile sensor simulator for sim-to-real dexterous manipulation.
+        language: C++
+        topics: [simulation, tactile, sim-to-real, cuda]
+        created_days_ago: 24
+        stars: {start: 0, end: 137, days: 24, shape: linear}
+        forks: {start: 0, end: 12, days: 24, shape: linear}
+        commits_week: [0, 0, 0, 6, 11, 17]
+        contributors: [kenji-sato, ana-lindqvist]
+    founders: [mira-okafor, dev-raman]
+    members: [ana-lindqvist, kenji-sato, rafael-ortiz]
+    jobs:
+      - {title: Founding Controls Engineer, department: Engineering, days_ago: 1}
+      - {title: Robotics Engineer — Dexterous Manipulation, department: Engineering, days_ago: 6}
+      - {title: Embedded Firmware Engineer (Tactile Sensors), department: Hardware, days_ago: 6}
+    attention: {hn_points_90d: 0, x_followers: 212, press_mentions: 0}
+    signals:
+      - {type: org_created, family: github, days_ago: 41, title: "GitHub organization demo-halcyon created", strength: 0.6}
+      - {type: affiliation_changed, family: x, days_ago: 44, person: mira-okafor, title: "Mira Okafor's bio no longer lists Brightline Robotics Institute", detail: "Bio changed from 'Manipulation research lead @ Brightline Robotics Institute' to 'building something new in robot touch.'", strength: 0.8}
+      - {type: paper_published, family: arxiv, days_ago: 19, title: "TactileVLA: Vision-Language-Action Policies with Dense Tactile Tokens", detail: "Okafor, Raman, Lindqvist, Sato et al. — code released at demo-halcyon/tactile-vla", strength: 0.7}
+      - {type: new_contributors, family: github, days_ago: 17, title: "3 new contributors joined demo-halcyon/tactile-vla in 3 weeks", detail: "ana-lindqvist, kenji-sato, rafael-ortiz — all previously at Brightline Robotics Institute", strength: 0.75}
+      - {type: commit_acceleration, family: github, days_ago: 3, title: "Commit activity up 310% over the previous 4 weeks", detail: "74 commits in the last 4 weeks vs 18 in the prior 4", strength: 0.8}
+      - {type: star_velocity, family: github, days_ago: 0, title: "+437 stars in 35 days on tactile-vla", detail: "From 31 to 468 stars; 7-day rate is 3.4× the prior 4-week average", strength: 0.85}
+      - {type: x_formation_post, family: x, days_ago: 9, person: mira-okafor, title: "Founder post: \"finally sharing what we've been building — robots that feel\"", detail: "Matched formation phrase: 'finally sharing'", strength: 0.7}
+      - {type: job_posted, family: jobs, days_ago: 1, title: "First controls engineering role posted: Founding Controls Engineer", detail: "Role class: robotics_controls", strength: 0.7}
+      - {type: hiring_active, family: jobs, days_ago: 1, title: "3 open technical roles (robotics_controls, embedded_firmware)", strength: 0.6}
+    x_posts:
+      - {person: mira-okafor, days_ago: 9, text: "Finally sharing what we've been building: robots that feel. TactileVLA + code is out. We're hiring founding engineers who love hard contact-rich problems."}
+
+  - key: kestrel
+    name: Kestrel Autonomy
+    kind: company
+    description: Low-cost autonomous interceptors and passive RF sensing for counter-UAS defense of critical infrastructure.
+    website: https://kestrel-autonomy.example
+    github_org: demo-kestrel
+    x_handle: kestrel_demo
+    location: Austin, TX
+    founded_days_ago: 160
+    stage: pre_seed
+    topics: [defense.counter_uas, defense.autonomy, defense.sensing_ew, robotics.drones]
+    repos:
+      - name: rf-sentinel
+        description: Passive RF drone detection with software-defined radios and learned classifiers.
+        language: Python
+        topics: [sdr, drone-detection, counter-uas, signal-processing]
+        created_days_ago: 120
+        stars: {start: 96, end: 341, days: 60, shape: linear}
+        forks: {start: 9, end: 38, days: 60, shape: linear}
+        commits_week: [9, 11, 8, 12, 14, 19]
+        contributors: [tomas-iwu, noor-haddad]
+    founders: [tomas-iwu, noor-haddad]
+    jobs:
+      - {title: RF Engineer, department: Engineering, days_ago: 4}
+      - {title: Embedded Systems Engineer, department: Engineering, days_ago: 4}
+      - {title: Guidance, Navigation & Control Engineer, department: Engineering, days_ago: 11}
+      - {title: Signal Processing Engineer, department: Engineering, days_ago: 13}
+    attention: {hn_points_90d: 48, x_followers: 1840, press_mentions: 1}
+    signals:
+      - {type: job_posted, family: jobs, days_ago: 4, title: "New role class: RF Engineer + Embedded Systems Engineer", detail: "Company had never posted RF or embedded roles before this month", strength: 0.65}
+      - {type: x_launch_post, family: x, days_ago: 12, person: tomas-iwu, title: "Founder post: \"launching our first field-tested interceptor\"", strength: 0.6}
+      - {type: star_velocity, family: github, days_ago: 0, title: "+118 stars in 30 days on rf-sentinel", strength: 0.5}
+      - {type: hn_show, family: hackernews, days_ago: 26, title: "Show HN: Passive RF drone detection with $200 of SDR hardware", detail: "48 points, 22 comments", strength: 0.45}
+    x_posts:
+      - {person: tomas-iwu, days_ago: 12, text: "Launching our first field-tested interceptor next month. If you want to work on GNC for small autonomous aircraft, we're hiring."}
+
+  - key: tessellate
+    name: Tessellate Compute
+    kind: company
+    description: A tile-based ML compiler that targets non-NVIDIA accelerators without hand-written kernels.
+    website: https://tessellate-compute.example
+    github_org: demo-tessellate
+    x_handle: tessellate_demo
+    location: Seattle, WA
+    founded_days_ago: 210
+    stage: seed
+    topics: [semiconductors.compilers, semiconductors.cuda_alternatives, ai.inference]
+    repos:
+      - name: tessel
+        description: Tile-level IR and autotuner that compiles PyTorch graphs to AMD, Intel and RISC-V accelerators.
+        language: C++
+        topics: [compiler, mlir, gpu-kernels, inference, cuda-alternative]
+        created_days_ago: 190
+        stars: {start: 1210, end: 2954, days: 45, shape: step}
+        forks: {start: 88, end: 201, days: 45, shape: step}
+        commits_week: [21, 25, 19, 33, 41, 46]
+        contributors: [priya-natarajan, jonas-weber]
+    founders: [priya-natarajan, jonas-weber]
+    jobs:
+      - {title: Compiler Engineer (MLIR), department: Engineering, days_ago: 8}
+      - {title: GPU Kernel Performance Engineer, department: Engineering, days_ago: 15}
+    attention: {hn_points_90d: 611, x_followers: 9300, press_mentions: 3}
+    signals:
+      - {type: star_acceleration, family: github, days_ago: 2, title: "Star velocity 4.1× the prior 4-week rate", detail: "+1,744 stars in 45 days after the v0.6 release", strength: 0.8}
+      - {type: release_published, family: github, days_ago: 16, title: "Released v0.6 — RISC-V vector backend", strength: 0.6}
+      - {type: paper_with_code, family: arxiv, days_ago: 28, title: "Tessel: Tile-Level Autotuning Across Heterogeneous Accelerators", strength: 0.6}
+      - {type: hn_discussion, family: hackernews, days_ago: 15, title: "Tessel: compile PyTorch to any accelerator (611 points)", detail: "611 points, 240 comments — front page", strength: 0.8}
+
+  - key: perihelion
+    name: Perihelion Fusion
+    kind: company
+    description: Compact stellarator diagnostics and real-time plasma control software.
+    website: https://perihelion-fusion.example
+    github_org: null
+    x_handle: null
+    location: Boston, MA
+    founded_days_ago: 300
+    stage: pre_seed
+    topics: [energy.fusion]
+    repos: []
+    founders: [lena-ostrowski]
+    jobs:
+      - {title: Plasma Physicist — Diagnostics, department: Research, days_ago: 9}
+      - {title: Power Electronics Engineer, department: Engineering, days_ago: 20}
+    attention: {hn_points_90d: 0, x_followers: null, press_mentions: 0}
+    signals:
+      - {type: author_recurrence, family: arxiv, days_ago: 6, person: lena-ostrowski, title: "Lena Ostrowski: 3 papers in 50 days on real-time stellarator control", strength: 0.6}
+      - {type: website_changed, family: website, days_ago: 10, title: "Careers page changed: 2 new research roles", strength: 0.5}
+      - {type: job_posted, family: jobs, days_ago: 9, title: "Plasma Physicist — Diagnostics posted", strength: 0.55}
+
+  - key: orbitform
+    name: Orbitform
+    kind: company
+    description: Microgravity manufacturing of specialty optical fiber in free-flying capsules.
+    website: https://orbitform.example
+    github_org: null
+    x_handle: orbitform_demo
+    location: Los Angeles, CA
+    founded_days_ago: 420
+    stage: seed
+    topics: [frontier_infrastructure.space, manufacturing.advanced_manufacturing]
+    repos: []
+    founders: [jonah-feld]
+    jobs:
+      - {title: Spacecraft Thermal Engineer, department: Engineering, days_ago: 35}
+    attention: {hn_points_90d: 12, x_followers: 3100, press_mentions: 2}
+    signals:
+      - {type: website_changed, family: website, days_ago: 33, title: "Homepage repositioned from 'fiber' to 'in-space manufacturing platform'", strength: 0.4}
+
+  - key: loomwork
+    name: Loomwork
+    kind: company
+    description: AI copilots for factory floor scheduling and quality inspection.
+    website: https://loomwork.example
+    github_org: null
+    x_handle: loomwork_demo
+    location: New York, NY
+    founded_days_ago: 900
+    stage: series_a
+    topics: [manufacturing.factory_ai, ai.agents]
+    repos: []
+    founders: []
+    jobs:
+      - {title: Account Executive, department: Sales, days_ago: 3}
+      - {title: Customer Success Manager, department: Sales, days_ago: 3}
+    attention: {hn_points_90d: 820, x_followers: 41000, press_mentions: 14}
+    signals:
+      - {type: funding_announced, family: website, days_ago: 21, title: "Announced Series A on company blog", strength: 0.3}
+      - {type: hn_discussion, family: hackernews, days_ago: 20, title: "Loomwork raises Series A (820 points)", strength: 0.6}
+
+people:
+  - {key: mira-okafor, name: Mira Okafor, role: Co-founder & CEO, current_company: Halcyon Dynamics, prior: [Brightline Robotics Institute], domains: [robotics], github: demo-mokafor, x: miraokafor_demo, bio: "building something new in robot touch.", followers: 2840, papers_24mo: 6, headline: "Former manipulation research lead, Brightline Robotics Institute", left_days_ago: 44}
+  - {key: dev-raman, name: Dev Raman, role: Co-founder & CTO, current_company: Halcyon Dynamics, prior: [Helix Frontier Lab], domains: [robotics, ai], github: demo-draman, bio: "robot learning. previously large-scale policy training @ Helix Frontier Lab.", followers: 1210, papers_24mo: 4, headline: "Former policy-training engineer, Helix Frontier Lab"}
+  - {key: ana-lindqvist, name: Ana Lindqvist, role: Founding Engineer, current_company: Halcyon Dynamics, prior: [Brightline Robotics Institute], domains: [robotics], github: demo-alindqvist, bio: "tactile sensing + sim", followers: 430, papers_24mo: 3, left_days_ago: 27}
+  - {key: kenji-sato, name: Kenji Sato, role: Founding Engineer, current_company: Halcyon Dynamics, prior: [Brightline Robotics Institute], domains: [robotics], github: demo-ksato, bio: "GPU sim for contact-rich manipulation", followers: 615, papers_24mo: 2, left_days_ago: 22}
+  - {key: rafael-ortiz, name: Rafael Ortiz, role: Engineer, current_company: Halcyon Dynamics, prior: [Brightline Robotics Institute], domains: [robotics], github: demo-rortiz, bio: "controls", followers: 190, papers_24mo: 1, left_days_ago: 19}
+  - {key: tomas-iwu, name: Tomas Iwu, role: Co-founder & CEO, current_company: Kestrel Autonomy, prior: [Vantor Defense Systems], domains: [defense], github: demo-tiwu, x: tomasiwu_demo, bio: "making the sky boring again", followers: 2210, papers_24mo: 0, headline: "Former GNC lead, Vantor Defense Systems"}
+  - {key: noor-haddad, name: Noor Haddad, role: Co-founder & CTO, current_company: Kestrel Autonomy, prior: [Vantor Defense Systems], domains: [defense], github: demo-nhaddad, bio: "SDR, RF, sensing", followers: 760, papers_24mo: 1}
+  - {key: priya-natarajan, name: Priya Natarajan, role: Co-founder & CEO, current_company: Tessellate Compute, prior: [Oberon Silicon], domains: [semiconductors, ai], github: demo-pnatarajan, x: priyan_demo, bio: "compilers for every chip", followers: 5400, papers_24mo: 3, headline: "Former compiler lead, Oberon Silicon"}
+  - {key: jonas-weber, name: Jonas Weber, role: Co-founder & CTO, current_company: Tessellate Compute, prior: [Oberon Silicon], domains: [semiconductors], github: demo-jweber, bio: "autotuning", followers: 980, papers_24mo: 2}
+  - {key: lena-ostrowski, name: Lena Ostrowski, role: Founder, current_company: Perihelion Fusion, prior: [Solace Plasma Laboratory], domains: [energy], github: demo-lostrowski, bio: "plasma control, real-time diagnostics", followers: 310, papers_24mo: 7, headline: "Former staff scientist, Solace Plasma Laboratory"}
+  - {key: jonah-feld, name: Jonah Feld, role: Founder, current_company: Orbitform, prior: [Coriolis Aerospace], domains: [frontier_infrastructure], bio: "making things in orbit", followers: 2900, papers_24mo: 0}
+  # Founders with no company yet — this is what Founder Radar is for.
+  - {key: sana-qureshi, name: Sana Qureshi, role: null, current_company: null, prior: [Coriolis Aerospace], domains: [defense, frontier_infrastructure], github: demo-squreshi, x: sanaq_demo, bio: "propulsion. new chapter soon.", followers: 1650, papers_24mo: 1, headline: "Former propulsion engineer, Coriolis Aerospace", left_days_ago: 23}
+  - {key: marcus-bell, name: Marcus Bell, role: null, current_company: null, prior: [Coriolis Aerospace], domains: [defense], github: demo-mbell, bio: "turbomachinery", followers: 240, papers_24mo: 0, left_days_ago: 18}
+  - {key: ilse-varga, name: Ilse Varga, role: null, current_company: null, prior: [Coriolis Aerospace], domains: [defense], github: demo-ivarga, bio: "combustion + test stands", followers: 310, papers_24mo: 2, left_days_ago: 15}
+  - {key: elias-brandt, name: Elias Brandt, role: Researcher, current_company: Helix Frontier Lab, prior: [], domains: [ai, robotics], github: demo-ebrandt, x: eliasbrandt_demo, bio: "world models for robots. building something new.", followers: 3900, papers_24mo: 5, headline: "World-model researcher, Helix Frontier Lab"}
+
+# Pre-company activity: a new GitHub org formed by three ex-Coriolis engineers,
+# and a researcher whose open-source world-model repo is accelerating.
+pre_company:
+  - key: sq-propulsion
+    org: demo-sq-propulsion
+    org_created_days_ago: 16
+    members: [sana-qureshi, marcus-bell, ilse-varga]
+    repo:
+      name: rde-sim
+      description: Rotating detonation engine simulation and test-stand data tooling.
+      language: Python
+      topics: [propulsion, cfd, combustion, simulation]
+      created_days_ago: 15
+      stars: {start: 0, end: 57, days: 15, shape: linear}
+      commits_week: [0, 0, 0, 0, 12, 26]
+    signals:
+      - {type: org_created, family: github, days_ago: 16, title: "New GitHub organization demo-sq-propulsion created", strength: 0.6}
+      - {type: affiliation_changed, family: x, days_ago: 23, person: sana-qureshi, title: "Sana Qureshi's bio no longer lists Coriolis Aerospace", detail: "Bio changed to 'propulsion. new chapter soon.'", strength: 0.8}
+      - {type: affiliation_changed, family: x, days_ago: 18, person: marcus-bell, title: "Marcus Bell left Coriolis Aerospace (profile update)", strength: 0.7}
+      - {type: affiliation_changed, family: x, days_ago: 15, person: ilse-varga, title: "Ilse Varga left Coriolis Aerospace (profile update)", strength: 0.7}
+      - {type: x_formation_post, family: x, days_ago: 7, person: sana-qureshi, title: "Post: \"starting something with two people I'd trust with a test stand\"", strength: 0.7}
+  - key: elias-worldmodel
+    owner: elias-brandt
+    repo:
+      name: dreamgrid
+      description: Scalable latent world models for robot policy evaluation.
+      language: Python
+      topics: [world-models, robot-learning, simulation]
+      created_days_ago: 70
+      stars: {start: 210, end: 1290, days: 40, shape: accelerating}
+      commits_week: [6, 8, 10, 15, 18, 24]
+    signals:
+      - {type: author_recurrence, family: arxiv, days_ago: 5, person: elias-brandt, title: "Elias Brandt: 3 world-model papers in 60 days, all with code", strength: 0.65}
+      - {type: star_velocity, family: github, days_ago: 0, title: "+1,080 stars in 40 days on dreamgrid", strength: 0.8}
+      - {type: formation_language, family: website, days_ago: 4, person: elias-brandt, title: "Personal site now reads 'building something new'", strength: 0.7}
+
+papers:
+  - {id: "demo.2609.11873", title: "TactileVLA: Vision-Language-Action Policies with Dense Tactile Tokens", days_ago: 19, categories: [cs.RO, cs.LG], authors: [mira-okafor, dev-raman, ana-lindqvist, kenji-sato], code: demo-halcyon/tactile-vla, company: halcyon,
+     abstract: "We introduce TactileVLA, a vision-language-action policy that consumes high-resolution tactile images as tokens alongside RGB. Across 14 contact-rich industrial assembly tasks, tactile tokens improve success on insertion and cable routing by 31 points over vision-only baselines. Code and a GPU tactile simulator are released."}
+  - {id: "demo.2608.07311", title: "Tessel: Tile-Level Autotuning Across Heterogeneous Accelerators", days_ago: 28, categories: [cs.DC, cs.AR, cs.PL], authors: [priya-natarajan, jonas-weber], code: demo-tessellate/tessel, company: tessellate,
+     abstract: "Tessel lowers PyTorch graphs to a tile-level IR and autotunes schedules per accelerator, reaching 0.82–1.04× of vendor-tuned kernels on three non-NVIDIA targets without hand-written kernels."}
+  - {id: "demo.2608.01994", title: "Millisecond Equilibrium Reconstruction for Compact Stellarators", days_ago: 48, categories: [physics.plasm-ph], authors: [lena-ostrowski], company: perihelion,
+     abstract: "A learned surrogate for equilibrium reconstruction that runs in 1.3 ms on a single FPGA, enabling closed-loop shape control in compact stellarator configurations."}
+  - {id: "demo.2609.04420", title: "Real-Time Island Detection from Sparse Magnetic Diagnostics", days_ago: 27, categories: [physics.plasm-ph, eess.SY], authors: [lena-ostrowski], company: perihelion,
+     abstract: "We detect magnetic island formation from sparse pickup-coil data with a lightweight sequence model, giving 40 ms of warning before confinement degradation."}
+  - {id: "demo.2609.15502", title: "Closed-Loop Coil Current Control for Stellarator Shaping", days_ago: 6, categories: [physics.plasm-ph, eess.SY], authors: [lena-ostrowski], company: perihelion,
+     abstract: "A model-predictive controller for modular coil currents that holds target rotational transform profiles within 2% under perturbation."}
+  - {id: "demo.2608.03117", title: "DreamGrid: Latent World Models as Robot Policy Evaluators", days_ago: 58, categories: [cs.RO, cs.LG], authors: [elias-brandt], code: demo-ebrandt/dreamgrid,
+     abstract: "We show that latent world models trained on 40k hours of teleoperation can rank robot policies with 0.91 Spearman correlation to real-world success."}
+  - {id: "demo.2609.02284", title: "Scaling Laws for Action-Conditioned Video World Models", days_ago: 31, categories: [cs.LG, cs.CV], authors: [elias-brandt], code: demo-ebrandt/dreamgrid,
+     abstract: "We measure how action-conditioned world model fidelity scales with data and parameters, finding a data-limited regime for contact-rich manipulation."}
+  - {id: "demo.2609.16630", title: "World Models Need Contact: Failure Modes in Manipulation Rollouts", days_ago: 5, categories: [cs.RO], authors: [elias-brandt], code: demo-ebrandt/dreamgrid,
+     abstract: "We catalogue systematic failure modes of video world models in contact-rich rollouts and propose a tactile-augmented latent that halves rollout divergence."}
