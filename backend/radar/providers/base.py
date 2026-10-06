@@ -112,6 +112,9 @@ class JobRecord(BaseModel):
     location: str | None = None
     url: str | None = None
     posted_at: datetime | None = None
+    # False when the board response was truncated: the job list is a lower bound, so jobs
+    # missing from it must not be treated as closed.
+    complete: bool = True
 
 
 class Relation(BaseModel):
