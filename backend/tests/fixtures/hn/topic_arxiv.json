@@ -1,0 +1,169 @@
+{
+ "nbHits": 61,
+ "nbPages": 7,
+ "page": 0,
+ "hitsPerPage": 10,
+ "query": "arxiv.org",
+ "hits": [
+  {
+   "objectID": "49580164",
+   "title": "LLMs as a Cognitive Virus",
+   "url": "https://arxiv.org/abs/2609.03344",
+   "points": 398,
+   "num_comments": 256,
+   "author": "canjobear",
+   "created_at": "2026-09-05T20:02:35Z",
+   "created_at_i": 1788638555,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_canjobear",
+    "story_49580164"
+   ]
+  },
+  {
+   "objectID": "49859112",
+   "title": "DeepSeek Elastic Compute (DSec)",
+   "url": "https://arxiv.org/abs/2609.22978",
+   "points": 323,
+   "num_comments": 116,
+   "author": "shenli3514",
+   "created_at": "2026-09-26T18:22:41Z",
+   "created_at_i": 1790446961,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_shenli3514",
+    "story_49859112"
+   ]
+  },
+  {
+   "objectID": "49360140",
+   "title": "Stop Anthropomorphizing Intermediate Tokens as Reasoning/Thinking Traces (2025)",
+   "url": "https://arxiv.org/abs/2504.09762",
+   "points": 316,
+   "num_comments": 281,
+   "author": "nunodonato",
+   "created_at": "2026-08-19T11:35:26Z",
+   "created_at_i": 1787139326,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_nunodonato",
+    "story_49360140"
+   ]
+  },
+  {
+   "objectID": "49823664",
+   "title": "ArXiv receives multiyear commitments to support it as an independent nonprofit",
+   "url": "https://blog.arxiv.org/2026/09/23/arxiv-receives-multiyear-investment/",
+   "points": 311,
+   "num_comments": 40,
+   "author": "JohnHammersley",
+   "created_at": "2026-09-23T22:45:49Z",
+   "created_at_i": 1790203549,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_JohnHammersley",
+    "story_49823664"
+   ]
+  },
+  {
+   "objectID": "49437210",
+   "title": "Black hole singularity is a surface not a point",
+   "url": "https://arxiv.org/abs/2608.21590",
+   "points": 300,
+   "num_comments": 223,
+   "author": "raattgift",
+   "created_at": "2026-08-25T17:02:49Z",
+   "created_at_i": 1787677369,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_raattgift",
+    "story_49437210"
+   ]
+  },
+  {
+   "objectID": "49531651",
+   "title": "The Emergent Symbolic Structure of Artificial Neural Networks",
+   "url": "https://arxiv.org/abs/2608.29530",
+   "points": 297,
+   "num_comments": 110,
+   "author": "schmuhblaster",
+   "created_at": "2026-09-02T04:15:56Z",
+   "created_at_i": 1788322556,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_schmuhblaster",
+    "story_49531651"
+   ]
+  },
+  {
+   "objectID": "49334991",
+   "title": "GPU Offload in Rust: Portable, Safe, and Fast",
+   "url": "https://arxiv.org/abs/2608.13759",
+   "points": 245,
+   "num_comments": 65,
+   "author": "linggen",
+   "created_at": "2026-08-17T17:54:59Z",
+   "created_at_i": 1786989299,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_linggen",
+    "story_49334991"
+   ]
+  },
+  {
+   "objectID": "49732931",
+   "title": "Breaking the 1.58-bit Barrier for Ternary LLMs",
+   "url": "https://arxiv.org/abs/2609.16338",
+   "points": 245,
+   "num_comments": 41,
+   "author": "matt_d",
+   "created_at": "2026-09-16T20:59:24Z",
+   "created_at_i": 1789592364,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_matt_d",
+    "story_49732931"
+   ]
+  },
+  {
+   "objectID": "49575515",
+   "title": "Trusting-Trust Attack against an Entire Linux Distribution",
+   "url": "https://arxiv.org/abs/2607.24888",
+   "points": 241,
+   "num_comments": 59,
+   "author": "signa11",
+   "created_at": "2026-09-05T11:25:18Z",
+   "created_at_i": 1788607518,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_signa11",
+    "story_49575515"
+   ]
+  },
+  {
+   "objectID": "49753878",
+   "title": "An empirical study of harness design for coding agents",
+   "url": "https://arxiv.org/abs/2609.20804",
+   "points": 225,
+   "num_comments": 59,
+   "author": "wek",
+   "created_at": "2026-09-18T13:06:30Z",
+   "created_at_i": 1789736790,
+   "story_text": null,
+   "_tags": [
+    "story",
+    "author_wek",
+    "story_49753878"
+   ]
+  }
+ ]
+}
