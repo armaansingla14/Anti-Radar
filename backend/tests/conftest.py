@@ -25,7 +25,9 @@ def _test_db_url() -> str:
 
     base = os.environ.get("TEST_DATABASE_URL") or get_settings().database_url
     url = make_url(base)
-    return str(url.set(database="radar_test")) if not os.environ.get("TEST_DATABASE_URL") else base
+    if os.environ.get("TEST_DATABASE_URL"):
+        return base
+    return url.set(database="radar_test").render_as_string(hide_password=False)
 
 
 @pytest.fixture(scope="session")
@@ -35,9 +37,10 @@ def db_url() -> str:
     eng = create_engine(admin.render_as_string(hide_password=False), isolation_level="AUTOCOMMIT")
     try:
         with eng.connect() as c:
-            exists = c.execute(text("SELECT 1 FROM pg_database WHERE datname='radar_test'")).scalar()
+            name = make_url(url).database
+            exists = c.execute(text("SELECT 1 FROM pg_database WHERE datname=:n"), {"n": name}).scalar()
             if not exists:
-                c.execute(text("CREATE DATABASE radar_test"))
+                c.execute(text(f'CREATE DATABASE "{name}"'))
     except Exception as e:  # noqa: BLE001
         pytest.skip(f"Postgres not available for integration tests: {e}")
     finally:
