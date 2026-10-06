@@ -312,5 +312,5 @@ def sweep(*, github: bool = True, arxiv: bool = True, hn: bool = True, websites:
 
 
 def _status(result) -> dict[str, Any]:
-    run, stats = result[0], result[1]
+    run = result[0]
     return {"status": run.status, "signals": run.signals_created, "errors": len(run.errors or [])}
