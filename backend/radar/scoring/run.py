@@ -21,14 +21,17 @@ from radar.thesis.loader import Thesis, get_thesis
 log = logging.getLogger(__name__)
 
 
-def _upsert_snapshot(session: Session, r: ScoreResult, day: date) -> None:
+def _upsert_snapshot(session: Session, r: ScoreResult, day: date, reconstructed: bool = False) -> None:
+    attention = r.attention_json()
+    if reconstructed:
+        attention = {**attention, "reconstructed": True}
     values = {
         "entity_type": r.entity_type,
         "entity_id": r.entity_id,
         "day": day,
         "score": float(r.total),
         "components": r.components_json(),
-        "attention": r.attention_json(),
+        "attention": attention,
         "collision": r.collision.to_api(),
         "version": r.version,
         "is_demo": r.is_demo,
@@ -84,17 +87,23 @@ def company_metrics(f: EntityFeatures, r: ScoreResult, day: date) -> dict[str, A
     }
 
 
-def score_all(session: Session, day: date | None = None, thesis: Thesis | None = None) -> dict[str, Any]:
-    """Score every non-dismissed company and person for ``day`` (default: today) and persist snapshots."""
+def score_all(
+    session: Session, day: date | None = None, thesis: Thesis | None = None, *, reconstruct: bool = False
+) -> dict[str, Any]:
+    """Score every non-dismissed company and person for ``day`` (default: today) and persist snapshots.
+
+    ``reconstruct=True`` rebuilds a *past* day's scores from data dated on or before that
+    day (backfilled star/commit histories, signals). Snapshots are flagged
+    ``attention.reconstructed`` and denormalized company metrics are left untouched."""
     day = day or clock.today()
     thesis = thesis or get_thesis()
     prefs = load_prefs(session)
     index = load_signal_index(session, day)
 
-    people = build_person_features(session, day, index, thesis)
+    people = build_person_features(session, day, index, thesis, reconstruct=reconstruct)
     person_scores = score_people(people, thesis, prefs, day)
 
-    companies = build_company_features(session, day, index, thesis)
+    companies = build_company_features(session, day, index, thesis, reconstruct=reconstruct)
     for f in companies:
         known = [(pid, person_scores[pid].total) for pid in f.founder_ids if pid in person_scores]
         f.founder_ids = [pid for pid, _ in known]
@@ -102,10 +111,12 @@ def score_all(session: Session, day: date | None = None, thesis: Thesis | None =
     company_scores = score_companies(companies, thesis, prefs, day)
 
     for r in person_scores.values():
-        _upsert_snapshot(session, r, day)
+        _upsert_snapshot(session, r, day, reconstruct)
     for f in companies:
         r = company_scores[f.entity_id]
-        _upsert_snapshot(session, r, day)
+        _upsert_snapshot(session, r, day, reconstruct)
+        if reconstruct:
+            continue
         stmt = insert(CompanyMetric).values(company_id=f.entity_id, metrics=company_metrics(f, r, day))
         session.execute(
             stmt.on_conflict_do_update(

@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.orm import Session
 
 from radar.detectors.hiring import is_open, is_technical_class, job_class, job_start
@@ -257,14 +257,24 @@ def _repo_created(r: Repository) -> date | None:
 
 
 def build_company_features(
-    session: Session, day: date, index: SignalIndex | None = None, thesis: Thesis | None = None
+    session: Session,
+    day: date,
+    index: SignalIndex | None = None,
+    thesis: Thesis | None = None,
+    *,
+    reconstruct: bool = False,
 ) -> list[EntityFeatures]:
-    """Features for every non-dismissed company (incl. 'project' orgs) as of ``day``."""
+    """Features for every non-dismissed company (incl. 'project' orgs) as of ``day``.
+
+    ``reconstruct`` includes entities first seen after ``day`` — used to rebuild score
+    history from backfilled time series (only data dated <= day is used either way)."""
     thesis = thesis or get_thesis()
     index = index or load_signal_index(session, day)
     companies = list(
         session.scalars(
-            select(Company).where(Company.dismissed.is_(False), Company.first_seen_at <= day_end(day))
+            select(Company).where(
+                Company.dismissed.is_(False), true() if reconstruct else Company.first_seen_at <= day_end(day)
+            )
         )
     )
     if not companies:
@@ -409,13 +419,20 @@ def _current(points: list[tuple[date, float]], day: date, fallback: float | None
 
 
 def build_person_features(
-    session: Session, day: date, index: SignalIndex | None = None, thesis: Thesis | None = None
+    session: Session,
+    day: date,
+    index: SignalIndex | None = None,
+    thesis: Thesis | None = None,
+    *,
+    reconstruct: bool = False,
 ) -> list[PersonFeatures]:
     thesis = thesis or get_thesis()
     index = index or load_signal_index(session, day)
     people = list(
         session.scalars(
-            select(Person).where(Person.dismissed.is_(False), Person.first_seen_at <= day_end(day))
+            select(Person).where(
+                Person.dismissed.is_(False), true() if reconstruct else Person.first_seen_at <= day_end(day)
+            )
         )
     )
     if not people:
