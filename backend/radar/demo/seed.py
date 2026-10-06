@@ -253,7 +253,7 @@ def score_history(days: tuple[int, ...] = (30, 21, 14, 10, 7, 5, 3, 2, 1)) -> in
 
 
 def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = True, fictional: bool = True,
-              history: bool = True) -> dict[str, Any]:
+              history: bool = True, llm_outputs: bool = True) -> dict[str, Any]:
     from radar.pipeline.stage import apply_stage_estimates
     from radar.thesis.classifier import classify_entities, ensure_topics
     from radar.thesis.loader import get_thesis
@@ -269,7 +269,7 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
         backfill_first_seen()
     if fictional:
         out["fictional"] = seed_fictional()
-    out["llm_cache"] = import_llm_cache()
+    out["llm_cache"] = import_llm_cache() if llm_outputs else 0
     thesis = get_thesis()
     with session_scope() as s:
         ensure_topics(s, thesis)
@@ -285,6 +285,6 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
             score_all(s, clock.today())
     from radar.demo.warm import import_reports
 
-    out["reports"] = import_reports()
+    out["reports"] = import_reports() if llm_outputs else 0
     clock.init_from_db()
     return out
