@@ -116,6 +116,7 @@ def test_founder_components_sum_to_at_most_100(thesis):
         young_org_names=["Acme"],
         theme_scores={"robotics": 1.0},
         signals=[sig],
+        own_signals=[sig],
     )
     weak = person()
     c = people_cohort([strong, weak])
@@ -152,3 +153,42 @@ def test_company_founder_signal_weighting():
     )
     assert three.value == pytest.approx(20 * (0.6 * 0.8 + 0.2 * 0.2 + 0.2 * 0.4))
     assert three.raw["founders"][0]["person_id"] == str(ids[1])
+
+
+def test_formation_ignores_signals_not_about_the_person(thesis):
+    """#1: a co-contributor's bio change / a repo measurement linked via a shared repo is not this
+    person's formation evidence."""
+    other_bio = SignalLite(uuid.uuid4(), "bio_changed", "github", "Mira's bio changed",
+                           datetime(2026, 10, 1, tzinfo=UTC), 1.0, 0.9, entity_id=uuid.uuid4())
+    repo_measure = SignalLite(uuid.uuid4(), "new_contributors", "github", "repo: 14 new contributors",
+                              datetime(2026, 10, 5, tzinfo=UTC), 1.0, 0.9, entity_id=uuid.uuid4())
+    p = person(signals=[other_bio, repo_measure], own_signals=[])
+    c = people_cohort([p])
+    form = next(x for x in founder_score(p, c, thesis, {}, TODAY).components if x.key == "formation")
+    assert form.value == 0 and form.evidence == [] and form.raw["collision"] == 0
+    assert "transition" not in form.explanation.lower()
+
+
+def test_founder_signal_does_not_call_contributors_founders():
+    """#7: contributor-only links get no founder credit and are not described as founders."""
+    f = EntityFeatures(entity_id=uuid.uuid4(), name="c", linked_people=19)
+    comp = founder_signal(f)
+    assert comp.value == 0 and "linked founder" not in comp.explanation
+    assert "19 linked people are not marked as founders" in comp.explanation
+    assert comp.raw["linked_people"] == 19
+
+
+def test_person_attention_unmeasured_awards_no_gap(thesis, monkeypatch):
+    """#9: no attention source -> attention None, gap not claimed, 0 points."""
+    import radar.scoring.founder as founder_mod
+
+    p = person(owned_repo_stars=5000.0, recent_repo_stars_30d=900.0, commits_30d=300.0)
+    c = people_cohort([p])
+    real_row = founder_mod.person_row
+    monkeypatch.setattr(founder_mod, "person_row",
+                        lambda q, t: {**real_row(q, t), "followers": None, "hn_mentions": None})
+    fs = founder_score(p, c, thesis, {}, TODAY)
+    att = next(x for x in fs.components if x.key == "attention_gap")
+    assert fs.attention.attention is None and fs.attention.to_api()["attention"] is None
+    assert att.value == 0 and att.raw["gap"] is None and "not measured" in att.explanation
+    assert "0th" not in att.explanation

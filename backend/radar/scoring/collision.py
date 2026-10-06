@@ -5,6 +5,11 @@ Each signal gets a weight ``w = confidence * strength * exp(-age / decay_days)``
 (``F = 1 - prod(1 - w)``), so a burst of same-source signals saturates at 1
 instead of piling up. Families then add, with a bonus for each additional
 *independent* family, and a multiplier if they landed within a tight span.
+
+Only discrete events count (releases, papers, HN posts, jobs, affiliation changes…).
+Measurement signals (``MEASUREMENT_SIGNAL_TYPES``) restate metric features that
+Technical Momentum / Acceleration already score, and are dated at observation time,
+so they are excluded here (they remain evidence elsewhere).
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 from typing import Any
 
-from radar.scoring.features import SignalLite
+from radar.scoring.features import MEASUREMENT_SIGNAL_TYPES, SignalLite
 from radar.thesis.loader import CollisionCfg
 
 FAMILY_OF_SOURCE: dict[str, str] = {
@@ -95,7 +100,7 @@ def collision(signals: list[SignalLite], today: date | datetime, cfg: CollisionC
     seen: set = set()
     for s in signals:
         fam = FAMILY_OF_SOURCE.get(s.source_type)
-        if fam is None or s.id in seen:
+        if fam is None or s.id in seen or s.signal_type in MEASUREMENT_SIGNAL_TYPES:
             continue
         seen.add(s.id)
         ev = s.event_at if s.event_at.tzinfo else s.event_at.replace(tzinfo=UTC)

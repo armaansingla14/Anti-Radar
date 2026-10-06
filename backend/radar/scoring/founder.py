@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
-from radar.scoring.attention import AttentionResult, gap_result
+from radar.scoring.attention import AttentionResult, gap_points, gap_result
 from radar.scoring.cohort import Cohort, ordinal
 from radar.scoring.collision import CollisionResult, collision
 from radar.scoring.features import (
@@ -127,7 +127,9 @@ def pedigree(p: PersonFeatures) -> Component:
 
 def formation(p: PersonFeatures, today: date, thesis: Thesis) -> tuple[Component, CollisionResult]:
     mx = FOUNDER_MAX["formation"]
-    col = collision(p.signals, today, thesis.scoring.collision)
+    # Only signals about this person: a co-contributor's bio change or a repo-level measurement
+    # is not evidence that *this* person is forming something.
+    col = collision(p.own_signals, today, thesis.scoring.collision)
     v = 0.5 * float(p.recent_transition) + 0.3 * col.score + 0.2 * float(p.joined_young_org)
     parts = []
     if p.recent_transition:
@@ -142,7 +144,7 @@ def formation(p: PersonFeatures, today: date, thesis: Thesis) -> tuple[Component
         "collision": round(col.score, 4),
         "transition_signal_ids": [str(i) for i in p.transition_evidence],
     }
-    evidence = top_signals(p.signals, lambda s: s.signal_type in FORMATION_SIGNAL_TYPES)
+    evidence = top_signals(p.own_signals, lambda s: s.signal_type in FORMATION_SIGNAL_TYPES)
     expl = "; ".join(parts)
     return Component(
         "formation", "Formation Signal", mx * v, mx, expl[0].upper() + expl[1:] + ".", raw, evidence
@@ -174,16 +176,17 @@ def person_attention(
             }
         )
     res = gap_result(technical, sources, cfg)
-    value = mx * min(max(res.gap / 100, 0.0), 1.0)
-    if res.coverage == "low":
-        value *= cfg.low_coverage_penalty
-    att = "unknown" if res.attention is None else f"the {ordinal(res.attention)} percentile"
+    value = gap_points(res, cfg, mx)
     tech = "not measured" if tech_blend is None else f"at the {ordinal(technical)} percentile"
-    expl = f"Technical output {tech} vs public attention {att} ({res.coverage} coverage)."
+    if res.attention is None:
+        expl = f"Technical output {tech}; public attention not measured, so no gap is awarded."
+    else:
+        expl = (f"Technical output {tech} vs public attention at the {ordinal(res.attention)} percentile "
+                f"({res.coverage} coverage).")
     raw = {
         "technical": round(technical, 1),
         "attention": None if res.attention is None else round(res.attention, 1),
-        "gap": round(res.gap, 1),
+        "gap": None if res.attention is None else round(res.gap, 1),
         "coverage": res.coverage,
         "flagged": res.flagged,
     }
@@ -216,13 +219,19 @@ def founder_signal(f: EntityFeatures, max_points: float = 20) -> Component:
         f.signals, lambda s: s.signal_type in FORMATION_SIGNAL_TYPES or s.source_type == "arxiv"
     )
     if not scores:
+        linked = (
+            f" {f.linked_people} linked {'people are' if f.linked_people != 1 else 'person is'} not marked "
+            f"as founder{'s' if f.linked_people != 1 else ''}, so no founder credit is given for them."
+            if f.linked_people
+            else ""
+        )
         return Component(
             "founder_signal",
             "Founder Signal",
             0.0,
             max_points,
-            "No founders identified yet — team unknown, so no founder credit is given.",
-            {"founders": []},
+            "No founders identified yet — team unknown, so no founder credit is given." + linked,
+            {"founders": [], "linked_people": f.linked_people},
             evidence,
         )
     if len(scores) == 1:

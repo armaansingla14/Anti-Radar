@@ -17,7 +17,7 @@ ATTN_MAX_WEIGHT = 0.6  # weight of the strongest attention source vs the mean of
 class AttentionResult:
     technical: float  # 0..100
     attention: float | None  # 0..100; None when no attention source is available
-    gap: float
+    gap: float  # technical - attention; 0 when attention is unmeasured (no gap can be claimed)
     flagged: bool
     coverage: str  # good | partial | low
     sources: list[dict[str, Any]] = field(default_factory=list)
@@ -26,7 +26,7 @@ class AttentionResult:
         """AttentionGap-shaped dict (schemas/api.py)."""
         return {
             "technical": round(self.technical, 1),
-            "attention": round(self.attention, 1) if self.attention is not None else 0.0,
+            "attention": round(self.attention, 1) if self.attention is not None else None,
             "gap": round(self.gap, 1),
             "flagged": self.flagged,
             "coverage": self.coverage,
@@ -66,7 +66,8 @@ def gap_result(technical: float, sources: list[dict[str, Any]], cfg: AttentionCf
     # it is known (a 90k-star repo with no HN post in our corpus is not "under the radar").
     attention = (ATTN_MAX_WEIGHT * max(avail) + (1 - ATTN_MAX_WEIGHT) * sum(avail) / len(avail)) if avail else None
     coverage = coverage_of(len(avail))
-    gap = technical - (attention if attention is not None else 0.0)
+    # Unmeasured attention is unknown, not zero: no gap is claimed (or scored) without a measurement.
+    gap = technical - attention if attention is not None else 0.0
     flagged = (
         attention is not None
         and technical >= cfg.flag_tech_min * 100
@@ -98,15 +99,23 @@ def attention_gap(
     return gap_result(technical, sources, cfg)
 
 
-def attention_component(res: AttentionResult, cfg: AttentionCfg, max_points: float = 10) -> Component:
+def gap_points(res: AttentionResult, cfg: AttentionCfg, max_points: float) -> float:
+    """Points for a measured gap; 0 when attention was not measured (unknown is not 'unnoticed')."""
+    if res.attention is None:
+        return 0.0
     value = max_points * min(max(res.gap / 100, 0.0), 1.0)
     if res.coverage == "low":
         value *= cfg.low_coverage_penalty
+    return value
+
+
+def attention_component(res: AttentionResult, cfg: AttentionCfg, max_points: float = 10) -> Component:
+    value = gap_points(res, cfg, max_points)
     n_avail = sum(1 for s in res.sources if s["available"])
     if res.attention is None:
         expl = (
-            f"Technical signal at the {ordinal(res.technical)} percentile but no public-attention source "
-            f"is available; gap discounted for low coverage."
+            f"Technical signal at the {ordinal(res.technical)} percentile, but public attention is not "
+            f"measured (no attention source available), so no gap is awarded."
         )
     else:
         expl = (
@@ -116,7 +125,7 @@ def attention_component(res: AttentionResult, cfg: AttentionCfg, max_points: flo
     raw = {
         "technical": round(res.technical, 1),
         "attention": None if res.attention is None else round(res.attention, 1),
-        "gap": round(res.gap, 1),
+        "gap": None if res.attention is None else round(res.gap, 1),
         "coverage": res.coverage,
         "flagged": res.flagged,
     }

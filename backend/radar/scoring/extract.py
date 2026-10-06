@@ -45,9 +45,13 @@ SIGNAL_WINDOW_DAYS = 120
 YOUNG_ORG_DAYS = 180
 SERIES_LOOKBACK_DAYS = 70
 CURRENT_TOLERANCE_DAYS = 7  # "current" value may be at most this stale
+START_TOLERANCE_DAYS = 3  # a window's baseline may be at most this much older than the window start
 WEEKLY_TOLERANCE_DAYS = 6
 PAPER_WINDOW_DAYS = 730
-REPO_METRICS = ("stars", "forks", "contributors", "commits_week", "releases")
+REPO_METRICS = ("stars", "forks", "commits_week", "releases")
+# 'contributors' = cumulative distinct authors by first-commit week (GitHub backfill);
+# 'contributors_total' = the /contributors count (includes bots; a different measure).
+CONTRIBUTOR_METRICS = ("contributors", "contributors_total")
 
 Series = dict[tuple[uuid.UUID, str], list[tuple[date, float]]]
 
@@ -73,19 +77,38 @@ def value_at(points: list[tuple[date, float]], target: date, tolerance_days: int
 
 
 def window_delta(
-    points: list[tuple[date, float]], day: date, end_offset: int, start_offset: int, created: date | None
+    points: list[tuple[date, float]],
+    day: date,
+    end_offset: int,
+    start_offset: int,
+    created: date | None,
+    *,
+    zero_at_creation: bool = True,
 ) -> float | None:
-    """Change of a cumulative metric between day-start_offset and day-end_offset."""
+    """Change of a cumulative metric between day-start_offset and day-end_offset.
+
+    The baseline must lie within ``START_TOLERANCE_DAYS`` of the window start, so a "30-day"
+    delta never silently spans 45 days. With ``zero_at_creation`` (stars, forks: a new repo
+    starts at 0) a repo created inside the window uses 0 as baseline, and a repo created
+    shortly before the window start whose first snapshot lands after it uses the value
+    interpolated between 0 at creation and that first snapshot (an approximation that
+    under- rather than over-counts). Contributor counts must pass ``zero_at_creation=False``:
+    a repo created from existing history already has contributors on day one."""
     end, start = day - timedelta(days=end_offset), day - timedelta(days=start_offset)
     if created is not None and created > end:
         return 0.0
-    end_tol = CURRENT_TOLERANCE_DAYS if end_offset == 0 else 3
+    end_tol = CURRENT_TOLERANCE_DAYS if end_offset == 0 else START_TOLERANCE_DAYS
     v_end = value_at(points, end, end_tol)
     if v_end is None:
         return None
-    if created is not None and created > start:
+    if zero_at_creation and created is not None and created > start:
         return v_end
-    v_start = value_at(points, start, max(3, (start_offset - end_offset) // 2))
+    v_start = value_at(points, start, START_TOLERANCE_DAYS)
+    if v_start is None and zero_at_creation and created is not None and points:
+        first_day, first_v = points[0]
+        if first_day > start and (first_day - created).days <= START_TOLERANCE_DAYS:
+            span = (first_day - created).days
+            v_start = first_v * (start - created).days / span if span > 0 else first_v
     return None if v_start is None else v_end - v_start
 
 
@@ -170,6 +193,7 @@ def load_signal_index(session: Session, day: date, window_days: int = SIGNAL_WIN
             r.source_url,
             bool(r.is_demo),
             r.raw_value,
+            r.entity_id,
         )
         lites[r.id] = s
         idx.by_entity[r.entity_id][r.id] = s
@@ -221,6 +245,78 @@ def load_series(
     for eid, metric, d, v in rows:
         out[(eid, metric)].append((d, float(v)))
     return out
+
+
+@dataclass
+class ContributorSeries:
+    """Per-repo contributor series, one measure each (never mixed across definitions)."""
+
+    first_commit: list[tuple[date, float]] = field(default_factory=list)  # cumulative, first-commit based
+    is_backfill: bool = False  # first_commit is a step series from /stats/contributors (complete when fetched)
+    totals: list[tuple[date, float]] = field(default_factory=list)  # /contributors counts
+
+
+def load_contributor_series(
+    session: Session, ids: Iterable[uuid.UUID], day: date, lookback_days: int = SERIES_LOOKBACK_DAYS
+) -> dict[uuid.UUID, ContributorSeries]:
+    """Split stored contributor points by definition.
+
+    'contributors' backfill points count distinct non-bot authors by first-commit week; older
+    'observed' points under the same metric are /contributors counts (bots included, a different
+    measure), so when backfill exists they are treated as totals, never diffed against backfill."""
+    ids = list(set(ids))
+    raw: dict[uuid.UUID, dict[str, list[tuple[date, float]]]] = defaultdict(lambda: defaultdict(list))
+    if ids:
+        for eid, metric, d, v, src in session.execute(
+            select(MetricSnapshot.entity_id, MetricSnapshot.metric, MetricSnapshot.day, MetricSnapshot.value,
+                   MetricSnapshot.source)
+            .where(
+                MetricSnapshot.entity_id.in_(ids),
+                MetricSnapshot.metric.in_(CONTRIBUTOR_METRICS),
+                MetricSnapshot.day <= day,
+                MetricSnapshot.day >= day - timedelta(days=lookback_days),
+            )
+            .order_by(MetricSnapshot.day)
+        ).all():
+            key = "total" if metric == "contributors_total" else "backfill" if src == "backfill" else "other"
+            raw[eid][key].append((d, float(v)))
+    out: dict[uuid.UUID, ContributorSeries] = {}
+    for eid, parts in raw.items():
+        if parts["backfill"]:
+            out[eid] = ContributorSeries(parts["backfill"], True, parts["total"] or parts["other"])
+        else:
+            out[eid] = ContributorSeries(parts["other"], False, parts["total"] or parts["other"])
+    return out
+
+
+def new_contributors_delta(
+    cs: ContributorSeries | None, day: date, created: date | None = None, days: int = 30
+) -> float | None:
+    """Distinct first-time contributors in the last ``days``, from one consistent series.
+
+    A backfill step series is complete as of the repo's last fetch, so if that fetch is recent
+    (a totals point within the current tolerance) values are read without staleness limits."""
+    if created is not None and created > day:
+        return 0.0  # the repo did not exist yet
+    if cs is None or not cs.first_commit:
+        return None
+    if cs.is_backfill and value_at(cs.totals, day, CURRENT_TOLERANCE_DAYS) is not None:
+        start = day - timedelta(days=days)
+        v_end = value_at(cs.first_commit, day, 10**6)
+        v_start = value_at(cs.first_commit, start, 10**6)
+        return None if v_end is None else v_end - (v_start or 0.0)
+    return window_delta(cs.first_commit, day, 0, days, None, zero_at_creation=False)
+
+
+def latest_new_contributors_signal(signals: Iterable[SignalLite], repo_id: uuid.UUID, day: date) -> float | None:
+    """Count from the repo's own recent 'new_contributors' signal (first-commit based, founders excluded)."""
+    lo = day_start(day - timedelta(days=CURRENT_TOLERANCE_DAYS))
+    best = None
+    for s in signals:
+        if (s.signal_type == "new_contributors" and s.entity_id == repo_id and s.raw_value is not None
+                and s.event_at >= lo and (best is None or s.event_at > best.event_at)):
+            best = s
+    return None if best is None else float(best.raw_value)
 
 
 def _topics(
@@ -294,11 +390,14 @@ def build_company_features(
         people_by[cp.company_id].append(cp)
     all_repo_ids = [r.id for rs in repos_by.values() for r in rs]
     series = load_series(session, all_repo_ids, REPO_METRICS, day)
+    contrib_series = load_contributor_series(session, all_repo_ids, day)
     company_series = load_series(
         session, cids, ("followers", "hn_probe_mentions", "hn_probe_points"), day, lookback_days=30
     )
     hist_cut = day - timedelta(days=7)
-    with_history = {eid for (eid, _), pts in series.items() if pts and pts[0][0] <= hist_cut}
+    with_history = {eid for (eid, _), pts in series.items() if pts and pts[0][0] <= hist_cut} | {
+        eid for eid, cs in contrib_series.items() if cs.first_commit and cs.first_commit[0][0] <= hist_cut
+    }
     topics = _topics(session, cids + all_repo_ids)
     jobs_by: dict[uuid.UUID, list[Job]] = defaultdict(list)
     for j in session.scalars(select(Job).where(Job.company_id.in_(cids))):
@@ -321,7 +420,8 @@ def build_company_features(
     for c in companies:
         repos = repos_by.get(c.id, [])
         links = people_by.get(c.id, [])
-        founders = [cp for cp in links if cp.is_founder] or links
+        # Only confirmed founders: linked GitHub contributors are not a founding team.
+        founders = [cp for cp in links if cp.is_founder]
         ser = {r.id: (r, {m: series.get((r.id, m), []) for m in REPO_METRICS}) for r in repos}
 
         def agg(metric: str, end: int, start: int, ser=ser) -> float | None:
@@ -335,14 +435,20 @@ def build_company_features(
             else None
         )
         contributors_total = sum_known(
-            _current(s["contributors"], day, r.contributors_count) for r, s in ser.values()
+            _current(cs.totals if (cs := contrib_series.get(r.id)) else [], day, r.contributors_count)
+            for r in repos
         )
-        new_contributors = agg("contributors", 0, 30)
-        if new_contributors is None and c.id in new_contrib:
-            new_contributors = float(new_contrib[c.id])
 
         ids = [c.id, *ser.keys(), *(cp.person_id for cp in links)]
         signals = index.for_entities(ids)
+        # Per repo: the provider's first-commit-based count if fresh, else a delta on one consistent series.
+        new_contributors = sum_known(
+            sig if (sig := latest_new_contributors_signal(signals, r.id, day)) is not None
+            else new_contributors_delta(contrib_series.get(r.id), day, _repo_created(r))
+            for r in repos
+        )
+        if new_contributors is None and c.id in new_contrib:
+            new_contributors = float(new_contrib[c.id])
         hn = [s for s in signals if s.source_type == "hackernews" and s.event_at >= lo90]
         # HN attention is "available" for an entity only if it was measured: HN signals in our corpus,
         # or an explicit attention probe (ops.probe_attention). No data is not the same as zero.
@@ -408,6 +514,7 @@ def build_company_features(
                 theme_scores=theme_scores,
                 topic_evidence=topic_ev,
                 founder_ids=[cp.person_id for cp in founders],
+                linked_people=len(links),
                 signals=signals,
                 tokens=tokenize(
                     c.description, *(r.description for r in repos), *(" ".join(r.topics or []) for r in repos)
@@ -519,7 +626,13 @@ def build_person_features(
         repos = owned.get(p.id, [])
         keyed = key_repos.get(p.id, [])
         signals = index.for_entities([p.id, *(r.id for r, _ in keyed)])
-        transition = [s.id for s in signals if s.signal_type in FORMATION_SIGNAL_TYPES]
+        # Formation evidence must be about this person: never a co-contributor's bio/affiliation
+        # change that merely shares a repo link.
+        own = [
+            s for s in index.for_entities([p.id])
+            if s.signal_type not in FORMATION_SIGNAL_TYPES or s.entity_id == p.id
+        ]
+        transition = [s.id for s in own if s.signal_type in FORMATION_SIGNAL_TYPES]
         affiliations = list(
             dict.fromkeys(
                 a.strip() for a in [p.current_company, *(p.prior_affiliations or [])] if a and a.strip()
@@ -583,6 +696,7 @@ def build_person_features(
                 theme_scores=theme_scores,
                 topic_evidence=topic_ev,
                 signals=signals,
+                own_signals=own,
                 is_demo=bool(p.is_demo),
             )
         )

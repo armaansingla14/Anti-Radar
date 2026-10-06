@@ -17,6 +17,7 @@ from radar.models.core import (
     MetricSnapshot,
     Person,
     PreferenceWeight,
+    RepoContributor,
     Repository,
     ScoreSnapshot,
     Signal,
@@ -25,7 +26,7 @@ from radar.models.core import (
 )
 from radar.scoring.anti_score import SCORE_VERSION
 from radar.scoring.deltas import score_delta
-from radar.scoring.extract import build_company_features
+from radar.scoring.extract import build_company_features, build_person_features
 from radar.scoring.feedback import apply_feedback, load_prefs
 from radar.scoring.run import anti_score_from_snapshot, score_all
 
@@ -262,3 +263,92 @@ def test_unknown_yesterday_and_hiring(db, thesis):
     assert h["by_class"] == {"robotics_controls": 1} and h["new_30d"] == 1
     assert classify_role("Staff CUDA Kernel Engineer", thesis) == "gpu_compiler"
     assert classify_role("Office Manager", thesis) is None
+
+
+def _metric(db, r, metric, days_ago, value, source="observed"):
+    db.add(MetricSnapshot(entity_type="repository", entity_id=r.id, metric=metric,
+                          day=DAY - timedelta(days=days_ago), value=float(value), source=source))
+
+
+def test_transition_credit_only_for_the_person_it_is_about(db):
+    """#1: Mira's bio change linked to a shared repo must not give Ana a 'recent transition'."""
+    c = company(db, "halcyon")
+    r = repo(db, c, "tactile", 5)
+    ana = Person(slug="ana", name="Ana", first_seen_at=at(30))
+    mira = Person(slug="mira", name="Mira", first_seen_at=at(30))
+    db.add_all([ana, mira])
+    db.flush()
+    for p in (ana, mira):
+        db.add(RepoContributor(repository_id=r.id, person_id=p.id, contributions=50))
+    bio = add_signal(db, mira, "person", "bio_changed", "github", 3, "Mira's bio no longer lists X", 0.9,
+                     related=[(r, "repository")])
+    add_signal(db, r, "repository", "new_contributors", "github", 1, "halcyon/tactile: 14 new contributors",
+               0.9, raw=14)
+    db.flush()
+    feats = {p.person_id: p for p in build_person_features(db, DAY)}
+    assert feats[mira.id].recent_transition and feats[mira.id].transition_evidence == [bio.id]
+    assert not feats[ana.id].recent_transition and feats[ana.id].transition_evidence == []
+    assert all(s.id != bio.id for s in feats[ana.id].own_signals)
+
+    score_all(db, DAY)
+    snap = db.scalars(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == ana.id)).one()
+    form = snap.components["formation"]
+    assert form["value"] == 0 and "transition" not in form["explanation"].lower()
+    assert form["evidence"] == []
+
+
+def test_contributors_are_not_counted_as_founders(db):
+    """#7: contributor-only links give no founder credit and are not called founders."""
+    c = company(db, "vmodal")
+    repo(db, c, "tools", 3)
+    for i in range(3):
+        p = Person(slug=f"contrib-{i}", name=f"C{i}", first_seen_at=at(30))
+        db.add(p)
+        db.flush()
+        db.add(CompanyPerson(company_id=c.id, person_id=p.id, role="contributor", is_founder=False))
+    db.flush()
+    f = next(x for x in build_company_features(db, DAY) if x.entity_id == c.id)
+    assert f.founder_ids == [] and f.linked_people == 3
+    score_all(db, DAY)
+    fs = db.scalars(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == c.id)).one().components["founder_signal"]
+    assert fs["value"] == 0 and "linked founder" not in fs["explanation"]
+    assert "3 linked people are not marked as founders" in fs["explanation"]
+
+
+def test_new_contributors_never_mix_contributor_definitions(db):
+    """#33/#16: backfill (first-commit) series vs /contributors totals; repo created from history."""
+    c = company(db, "godseye")
+    r = repo(db, c, "view", 2, created_days_ago=20)
+    for d, v in ((60, 50), (40, 55), (10, 65)):
+        _metric(db, r, "contributors", d, v, source="backfill")
+    _metric(db, r, "contributors", 0, 34)  # legacy observed /contributors count (different measure)
+    db.flush()
+    f = next(x for x in build_company_features(db, DAY) if x.entity_id == c.id)
+    assert f.new_contributors_30d == 10.0  # 65 - 55, not 34 - 55 nor the full 34
+    assert f.contributors_total == 34.0
+
+    # once the provider stores totals separately, they are used for the total
+    _metric(db, r, "contributors_total", 0, 36)
+    db.flush()
+    f = next(x for x in build_company_features(db, DAY) if x.entity_id == c.id)
+    assert f.contributors_total == 36.0 and f.new_contributors_30d == 10.0
+
+    # the provider's first-commit-based signal wins when fresh
+    add_signal(db, r, "repository", "new_contributors", "github", 1, "godseye/view: 7 new contributors", 0.5,
+               raw=7)
+    db.flush()
+    f = next(x for x in build_company_features(db, DAY) if x.entity_id == c.id)
+    assert f.new_contributors_30d == 7.0
+
+
+def test_measurement_signals_do_not_feed_acceleration(db):
+    """#5/#6: a star_velocity measurement restating stars_30d is not collision evidence."""
+    c = company(db, "dexmal")
+    r = repo(db, c, "opendm", 30)
+    add_signal(db, r, "repository", "star_velocity", "github", 0, "dexmal/opendm: +1,735 stars in 30 days", 0.92,
+               related=[(c, "company")])
+    db.flush()
+    score_all(db, DAY)
+    snap = db.scalars(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == c.id)).one()
+    assert snap.collision["score"] == 0 and snap.collision["signal_count"] == 0
+    assert snap.components["acceleration"]["raw"]["collision"] == 0

@@ -86,3 +86,15 @@ def test_score_bounded():
 
 def test_number_words():
     assert number_word(3, True) == "Three" and number_word(15) == "15"
+
+
+def test_measurement_signals_are_not_collision_events():
+    """#5/#6: measurement signals restate metric features; they never count as collision."""
+    from radar.scoring.features import MEASUREMENT_SIGNAL_TYPES
+
+    for t in MEASUREMENT_SIGNAL_TYPES:
+        r = collision([sig("github", 1, 0.9, stype=t)], TODAY, CFG)
+        assert r.score == 0 and r.signal_count == 0 and r.families == []
+    event = sig("github", 1, 0.9, stype="release_published")
+    r = collision([event, sig("github", 1, 0.9, stype="star_velocity")], TODAY, CFG)
+    assert r.signal_count == 1 and r.contributions[0][0].id == event.id

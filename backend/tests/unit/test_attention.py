@@ -54,7 +54,21 @@ def test_no_attention_sources_cannot_flag_and_is_penalised():
     r = attention_gap(ent(), c, 20.0, CFG)
     assert r.attention is None and r.coverage == "low" and not r.flagged
     comp = attention_component(r, CFG)
-    assert comp.value <= 10 * CFG.low_coverage_penalty + 1e-9
+    assert comp.value == 0  # unknown attention is not "unnoticed": no gap is awarded
+
+
+def test_unmeasured_attention_is_null_in_api_not_zeroth_percentile():
+    """#9: attention=None must reach the API as null, never 0.0, and no gap is claimed."""
+    from radar.schemas.api import AttentionGap
+
+    _, c = _crowd()
+    r = attention_gap(ent(), c, 20.0, CFG)
+    api = r.to_api()
+    assert api["attention"] is None and api["gap"] == 0
+    assert AttentionGap.model_validate(api).attention is None
+    comp = attention_component(r, CFG)
+    assert comp.raw["attention"] is None and comp.raw["gap"] is None
+    assert "0th" not in comp.explanation and "not measured" in comp.explanation
 
 
 def test_low_coverage_penalty_applied():

@@ -25,6 +25,12 @@ def _upsert_snapshot(session: Session, r: ScoreResult, day: date, reconstructed:
     attention = r.attention_json()
     if reconstructed:
         attention = {**attention, "reconstructed": True}
+    else:
+        # Like-for-like value for diffing against reconstructed history. A live run uses exactly the
+        # reconstruction computation for this day: features are built only from data dated <= day, and
+        # observation-dated measurement signals are excluded from collision (MEASUREMENT_SIGNAL_TYPES),
+        # so nothing a reconstruction of today could not see enters the score.
+        attention = {**attention, "reconstructed_score": float(r.total)}
     values = {
         "entity_type": r.entity_type,
         "entity_id": r.entity_id,

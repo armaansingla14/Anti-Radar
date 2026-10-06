@@ -15,6 +15,12 @@ from typing import Any
 FORMATION_SIGNAL_TYPES = frozenset(
     {"affiliation_changed", "bio_changed", "formation_language", "x_formation_post"}
 )
+# Measurement signals restate metric features (stars_30d, commits_4w, new contributors, open roles)
+# and are dated when observed, not when the change happened. They are evidence, never collision events:
+# counting them would double-count the metrics and make reconstructed history incomparable.
+MEASUREMENT_SIGNAL_TYPES = frozenset(
+    {"star_velocity", "star_acceleration", "commit_acceleration", "new_contributors", "hiring_active"}
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +35,7 @@ class SignalLite:
     source_url: str | None = None
     is_demo: bool = False
     raw_value: float | None = None
+    entity_id: uuid.UUID | None = None  # the signal's primary entity (who/what it is about)
 
     def evidence(self, weight: float | None = None) -> dict[str, Any]:
         """EvidenceItem-shaped dict (schemas/api.py)."""
@@ -72,7 +79,8 @@ class EntityFeatures:
     theme_scores: dict[str, float] = field(default_factory=dict)
     topic_evidence: dict[str, list[str]] = field(default_factory=dict)  # topic key -> matched keywords
     founder_scores: list[float] = field(default_factory=list)
-    founder_ids: list[uuid.UUID] = field(default_factory=list)
+    founder_ids: list[uuid.UUID] = field(default_factory=list)  # CompanyPerson.is_founder links only
+    linked_people: int = 0  # all current CompanyPerson links (contributors included)
     signals: list[SignalLite] = field(default_factory=list)
     tokens: set[str] = field(default_factory=set)
     is_demo: bool = False
@@ -101,7 +109,10 @@ class PersonFeatures:
     topic_scores: dict[str, float] = field(default_factory=dict)
     theme_scores: dict[str, float] = field(default_factory=dict)
     topic_evidence: dict[str, list[str]] = field(default_factory=dict)
-    signals: list[SignalLite] = field(default_factory=list)
+    signals: list[SignalLite] = field(default_factory=list)  # person + key-repo signals (evidence)
+    # Signals about this person (primary entity, or linked to the person directly), without other
+    # people's formation signals. Formation is scored only from these.
+    own_signals: list[SignalLite] = field(default_factory=list)
     is_demo: bool = False
 
 

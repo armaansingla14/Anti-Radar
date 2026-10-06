@@ -9,7 +9,14 @@ from hypothesis import strategies as st
 
 from radar.schemas.api import AttentionGap, Collision, ScoreComponent
 from radar.scoring.anti_score import SCORE_VERSION, score_companies, score_people
-from radar.scoring.extract import value_at, weekly_sum, window_delta
+from radar.scoring.extract import (
+    ContributorSeries,
+    latest_new_contributors_signal,
+    new_contributors_delta,
+    value_at,
+    weekly_sum,
+    window_delta,
+)
 from radar.scoring.features import EntityFeatures, PersonFeatures, SignalLite
 from radar.scoring.feedback import (
     adjustment_keys,
@@ -97,6 +104,63 @@ def test_window_delta_missing_vs_new_repo():
         window_delta([(TODAY, 120.0)], TODAY, 0, 30, TODAY - timedelta(days=4)) == 120
     )  # repo younger than window
     assert window_delta([], TODAY, 7, 35, TODAY - timedelta(days=2)) == 0  # did not exist in that window
+
+
+def test_window_delta_repo_created_just_before_window_start():
+    """#8: created before the window start, first snapshot just after it -> interpolated baseline, not None."""
+    created = TODAY - timedelta(days=32)
+    pts = [(TODAY - timedelta(days=30), 6.0), (TODAY - timedelta(days=29), 15.0), (TODAY, 1652.0)]
+    # 0 at creation (day -32), 6 at day -30: baseline on day -32 ... exact start day here is -30 -> 6
+    assert window_delta(pts, TODAY, 0, 30, created) == pytest.approx(1646.0)
+    late = [(TODAY - timedelta(days=28), 6.0), (TODAY, 1652.0)]  # first point 2 days after start
+    d = window_delta(late, TODAY, 0, 30, TODAY - timedelta(days=31))
+    assert d is not None and 1646.0 < d <= 1652.0  # interpolated baseline in (0, 6)
+    assert window_delta(late, TODAY, 0, 30, TODAY - timedelta(days=30)) == 1652.0  # created on start day
+    # creation long before the first point: the baseline is genuinely unknown
+    assert window_delta(late, TODAY, 0, 30, TODAY - timedelta(days=90)) is None
+
+
+def test_window_delta_rejects_stale_baseline():
+    """#24: a '30-day' delta never uses a baseline weeks older than the window start."""
+    pts = [(TODAY - timedelta(days=44), 100.0), (TODAY, 400.0)]
+    assert window_delta(pts, TODAY, 0, 30, None) is None
+    ok = [(TODAY - timedelta(days=33), 100.0), (TODAY, 400.0)]
+    assert window_delta(ok, TODAY, 0, 30, None) == 300.0
+
+
+def test_window_delta_contributors_no_zero_baseline_at_creation():
+    """#16: a repo created from existing history already has contributors; no 0 baseline."""
+    pts = [(TODAY - timedelta(days=16), 24.0), (TODAY, 39.0)]
+    created = TODAY - timedelta(days=20)
+    assert window_delta(pts, TODAY, 0, 30, created) == 39.0  # stars-like semantics
+    assert window_delta(pts, TODAY, 0, 30, created, zero_at_creation=False) is None
+
+
+def test_new_contributors_from_one_consistent_series():
+    """#33/#16: backfill (first-commit) series is never diffed against /contributors totals."""
+    backfill = [(TODAY - timedelta(days=60), 50.0), (TODAY - timedelta(days=10), 65.0)]
+    totals = [(TODAY, 34.0)]  # /contributors count: different measure
+    cs = ContributorSeries(backfill, True, totals)
+    assert new_contributors_delta(cs, TODAY) == 15.0
+    # backfill step series not refreshed recently: fall back to tolerance-bounded window delta
+    stale = ContributorSeries(backfill, True, [(TODAY - timedelta(days=20), 34.0)])
+    assert new_contributors_delta(stale, TODAY) is None
+    # repo created from older history: first commits predate creation, so they are not new
+    hist = ContributorSeries([(TODAY - timedelta(days=60), 24.0), (TODAY - timedelta(days=3), 38.0)], True,
+                             [(TODAY, 39.0)])
+    assert new_contributors_delta(hist, TODAY, created=TODAY - timedelta(days=20)) == 14.0
+    assert new_contributors_delta(None, TODAY) is None
+    assert new_contributors_delta(None, TODAY, created=TODAY + timedelta(days=1)) == 0.0
+
+
+def test_new_contributors_signal_used_only_for_its_repo_and_when_fresh():
+    rid = uuid.uuid4()
+    at = datetime(2026, 10, 6, 9, tzinfo=UTC)
+    mk = lambda eid, when, n: SignalLite(uuid.uuid4(), "new_contributors", "github", "t", when, 1.0, 0.5,  # noqa: E731
+                                         raw_value=n, entity_id=eid)
+    sigs = [mk(rid, at - timedelta(days=20), 3.0), mk(rid, at, 14.0), mk(uuid.uuid4(), at, 99.0)]
+    assert latest_new_contributors_signal(sigs, rid, TODAY) == 14.0
+    assert latest_new_contributors_signal(sigs[:1], rid, TODAY) is None  # stale
 
 
 def test_weekly_sum_scales_partial_and_needs_two():
