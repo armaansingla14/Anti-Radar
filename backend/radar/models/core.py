@@ -114,6 +114,9 @@ class User(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200))
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     last_visit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # last_visit_at as it was when the current visit began (see services.feed.touch_last_visit):
+    # the anchor for the Daily "since last visit" window.
+    prev_visit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Company(Base, EntityMixin):
