@@ -57,7 +57,7 @@ def _banner(title: str) -> None:
 
 
 def _report(result) -> None:
-    run, stats = result[0], result[1]
+    run = result[0]
     color = {"ok": "green", "partial": "yellow"}.get(run.status, "red")
     console.print(
         f"  [{color}]{run.status.upper()}[/] {run.provider}: {run.records_fetched} fetched · "

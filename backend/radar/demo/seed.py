@@ -165,7 +165,7 @@ def seed_fictional() -> dict[str, Any]:
             company.first_seen_at = _days_ago_dt(c.get("first_seen_days_ago") or COMPANY_FIRST_SEEN.get(key, 45))
             company.attrs = {**(company.attrs or {}), "demo_stage": c.get("stage")}
         # Declared topics from the dataset are stored as method='manual' (kept by the keyword classifier).
-        from radar.models import EntityTopic, Topic
+        from radar.models import EntityTopic
         from radar.thesis.classifier import ensure_topics
         from radar.thesis.loader import get_thesis
 
