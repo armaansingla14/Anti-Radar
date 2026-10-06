@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-10-06T17:46:58.379937+00:00",
+  "as_of": "2026-10-06",
+  "sources": [
+    "github",
+    "arxiv",
+    "hackernews",
+    "website"
+  ],
+  "note": "Real public data captured from official APIs. Facts are true as of the capture date."
+}
