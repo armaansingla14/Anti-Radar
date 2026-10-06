@@ -145,7 +145,7 @@ export function EntityActions({ entityType, entityId, entityName, watched, autoI
         )}
         {templateOnly && (
           <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.06em] text-ink-3" title="No LLM provider is configured on this API instance">
-            LLM disabled — template output
+            Live LLM off — cached or template output
           </span>
         )}
       </div>
