@@ -231,6 +231,17 @@ def _velocity_world(db, hn_on_hit: bool):
         if i == 9:
             hit = (c, r)
     db.flush()
+    # The hit is on-thesis and its HN attention was measured by a probe (0 mentions).
+    from radar.models import EntityTopic
+    from radar.thesis.classifier import ensure_topics
+    from radar.thesis.loader import get_thesis
+
+    topics = ensure_topics(db, get_thesis())
+    db.add(EntityTopic(entity_type="company", entity_id=hit[0].id, topic_id=topics["robotics.manipulation"],
+                       score=0.8, method="manual"))
+    db.add(MetricSnapshot(entity_type="company", entity_id=hit[0].id, metric="hn_probe_mentions", day=DAY, value=0))
+    db.add(MetricSnapshot(entity_type="company", entity_id=hit[0].id, metric="hn_probe_points", day=DAY, value=0))
+    db.flush()
     if hn_on_hit:
         add_signal(db, hit[1], "repository", "hn_post", "hackernews", 20, "Show HN", raw=30)
     return hit
@@ -240,7 +251,7 @@ def test_quiet_velocity_fires(db, thesis):
     c, _ = _velocity_world(db, hn_on_hit=False)
     found = validate(quiet_velocity(ctx(db, thesis)))
     assert [f["entities"][0]["id"] for f in found] == [str(c.id)]
-    assert found[0]["headline"] == "Proj9 gained 600 GitHub stars in 30 days with zero Hacker News discussion"
+    assert found[0]["headline"] == "Proj9 gained 600 GitHub stars in 30 days without a single Hacker News thread"
 
 
 def test_quiet_velocity_near_misses(db, thesis):
@@ -248,11 +259,11 @@ def test_quiet_velocity_near_misses(db, thesis):
     assert quiet_velocity(ctx(db, thesis)) == []
 
 
-def test_quiet_velocity_requires_hn_coverage(db, thesis):
+def test_quiet_velocity_requires_hn_measurement(db, thesis):
     _velocity_world(db, hn_on_hit=False)
-    db.query(IngestionRun).delete()
+    db.query(MetricSnapshot).filter(MetricSnapshot.metric.like("hn_probe%")).delete(synchronize_session=False)
     db.flush()
-    assert quiet_velocity(ctx(db, thesis)) == []  # cannot claim "zero discussion" without HN data
+    assert quiet_velocity(ctx(db, thesis)) == []  # cannot claim "zero discussion" without measuring it
 
 
 # ── hiring pivot ─────────────────────────────────────────────────────────────
