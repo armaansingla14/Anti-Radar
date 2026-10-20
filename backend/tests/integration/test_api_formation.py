@@ -300,3 +300,107 @@ def test_graph_derives_everything_when_table_empty(world, client):
     kinds = {(e["source"], e["target"], e["kind"]) for e in g["edges"]}
     assert (str(world["a"]), str(world["repo"]), "contributor") in kinds
     assert not any(k in ("coauthored_with", "worked_with", "member") for *_, k in kinds)
+
+
+# ── evidence-first card content: headline facts, member pedigree ─────────────
+
+
+def _labs(*items: tuple[str, int]) -> dict:
+    return {"lab_contributions": [{"org": full.split("/")[0], "repo": full, "tier": 1, "label": full.split("/")[0],
+                                   "commits": n} for full, n in items]}
+
+
+def _talent(s, slug: str, handle: str, labs: dict, *, repo: Repository | None, repo_name: str) -> FormationCandidate:
+    p = Person(slug=slug, name=slug.replace("-", " ").title(), github_handle=handle, attrs=labs)
+    s.add(p)
+    s.flush()
+    if repo is not None:
+        s.add(repo)
+    sig = _signal(p, "person", f"{handle} created a new repository: {repo_name}", 40,
+                  f"https://github.com/{repo_name}", "new_project")
+    sig.meta = {"repo": repo_name, "stars": 999}  # detection-time meta is not used for traction numbers
+    s.add(sig)
+    s.flush()
+    c = _candidate(f"person-{slug}", p, "person", [p], score=51, tier="early", kind="person",
+                   label="POSSIBLE FORMATION", theme="robotics", subtopic=None, conv=0.0)
+    c.why_now = [{"signal_id": str(sig.id), "title": sig.title, "detail": "600 stars at detection",
+                  "source_url": sig.source_url, "source_type": "github", "event_at": sig.event_at.isoformat()}]
+    s.add(c)
+    return c
+
+
+def test_person_headline_facts_pedigree_and_traction(world, client, db):
+    _talent(db, "kev", "kev", _labs(("google-deepmind/mujoco_menagerie", 149), ("google-deepmind/mujoco", 123)),
+            repo=Repository(full_name="kev/mjbatch", owner="kev", owner_type="User", stars=600, forks=60,
+                            gh_created_at=NOW - timedelta(days=40)), repo_name="kev/mjbatch")
+    db.commit()
+    card = client.get("/api/formation/person-kev").json()["card"]
+    assert card["headline_facts"] == ["272 verified commits to google-deepmind/mujoco_menagerie and mujoco",
+                                      "New repo kev/mjbatch: 600★ · 60 forks in 40 days"]
+    assert card["headline_fact_kinds"] == ["pedigree", "traction"]
+    m = card["members"][0]
+    assert m["verified"] is True and m["pedigree"] == "google-deepmind/mujoco_menagerie · 149 commits (verified)"
+    # WHY NOW carries the stored traction (the date column already says when it was created)
+    assert card["why_now"][0]["title"] == "Created kev/mjbatch — 600★ · 60 forks since"
+    assert "founder" not in " ".join([*card["headline_facts"], m["pedigree"]]).lower()
+
+
+def test_headline_facts_never_invent_missing_metrics(world, client, db):
+    # No repositories row for the new project: no traction fact, WHY NOW line untouched (signal meta is ignored).
+    _talent(db, "nora", "nora", _labs(("sgl-project/sglang", 784)), repo=None, repo_name="nora/thing")
+    # A repository with zero stars and forks and an unknown creation date says nothing either.
+    _talent(db, "zed", "zed", {}, repo=Repository(full_name="zed/empty", owner="zed", owner_type="User"),
+            repo_name="zed/empty")
+    db.commit()
+    nora = client.get("/api/formation/person-nora").json()["card"]
+    assert nora["headline_facts"] == ["784 verified commits to sgl-project/sglang"]
+    assert nora["why_now"][0]["title"] == "nora created a new repository: nora/thing"
+    assert "999" not in str(nora["headline_facts"]) and "★" not in str(nora)
+    zed = client.get("/api/formation/person-zed").json()["card"]
+    assert zed["headline_facts"] == [] and zed["headline_fact_kinds"] == []
+    assert zed["members"][0] == {**zed["members"][0], "pedigree": None, "verified": False}
+
+
+def test_team_headline_facts(world, client, db):
+    team = client.get("/api/formation/acme-robo-team").json()["card"]
+    # No verified lab history on either member: no pedigree fact, no pedigree line, nothing marked verified.
+    assert team["headline_facts"] == ["First public repository created 12 days ago · 2 members",
+                                      "acme-robo/hand: 40★ in 12 days"]
+    assert team["headline_fact_kinds"] == ["formation", "traction"]
+    assert all(m["pedigree"] is None and m["verified"] is False for m in team["members"])
+
+    org = Company(slug="smg", name="smg", kind="project", github_org="smg",
+                  attrs={"gh_org_created_at": (NOW - timedelta(days=138)).isoformat()})
+    y = Person(slug="yin", name="Yin Z", github_handle="yin", attrs=_labs(("sgl-project/sglang", 784)))
+    r = Person(slug="rog", name="Rog W", github_handle="rog", attrs=_labs(("vllm-project/vllm", 214)))
+    db.add_all([org, y, r])
+    db.flush()
+    db.add(Repository(full_name="smg/smg", owner="smg", owner_type="Organization", company_id=org.id, stars=648,
+                      forks=197, gh_created_at=datetime(2025, 11, 22, tzinfo=UTC)))
+    c = _candidate("team-smg", org, "company", [r, y], score=51, tier="early", label="FORMATION SIGNALS DETECTED")
+    c.components["technical_activity"]["raw"] = {"metrics": {"stars_30d": 40, "new_contributors_30d": 3}}
+    db.add(c)
+    db.commit()
+    smg = client.get("/api/formation/team-smg").json()["card"]
+    assert smg["headline_facts"] == [
+        "2 members previously contributed to sgl-project/sglang (784 commits) and vllm-project/vllm (214 commits)"
+        " — verified",
+        "GitHub org created 138 days ago · 2 members, both with verified lab history",
+        "smg/smg: 648★ · 197 forks since Nov 2025",
+        "+40★ · 3 new contributors in 30 days",
+    ]
+    assert smg["headline_fact_kinds"] == ["pedigree", "formation", "traction", "momentum"]
+    assert {m["name"]: m["pedigree"] for m in smg["members"]} == {
+        "Rog W": "vllm-project/vllm · 214 commits (verified)",
+        "Yin Z": "sgl-project/sglang · 784 commits (verified)"}
+
+
+def test_fact_helpers_are_pure_and_honest():
+    from radar.services.formation import momentum_fact, repo_counts, repo_traction
+
+    assert repo_counts(None) is None and repo_traction(None, NOW.date()) is None
+    assert repo_counts(Repository(full_name="a/b", owner="a", stars=0, forks=0)) is None
+    assert repo_traction(Repository(full_name="a/b", owner="a", stars=12, forks=1), NOW.date()) == "12★ · 1 fork"
+    assert momentum_fact({}) is None and momentum_fact({"stars_30d": None}) is None
+    assert momentum_fact({"stars_30d": 105}, shown_stars=105) is None  # already said by the repository fact
+    assert momentum_fact({"commits_4w": 30}) == "30 commits in the last 4 weeks"

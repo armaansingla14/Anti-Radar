@@ -7,23 +7,41 @@ import { pad2 } from "@/lib/format";
 import type { FormationCard } from "@/lib/types";
 import { FormationWhy } from "./FormationWhy";
 import { FormationLabel, ThemeLine } from "./Labels";
-import { memberNames, memberSummary, watchTarget } from "./logic";
+import { headlineFacts, memberEntries, memberNames, memberSummary, watchTarget } from "./logic";
 import { SignalStrip } from "./SignalStrip";
 import { WhyNow } from "./WhyNow";
 
 export const formationHref = (c: Pick<FormationCard, "slug" | "id">) => `/formation/${encodeURIComponent(c.slug || c.id)}`;
 
-/** Member line: "3 people · Ana Chen, Raj Patel and Li Wei · previously NVIDIA, CMU (self-reported)". */
+/**
+ * Member line: "1 person · Kevin Zakka — google-deepmind/mujoco_menagerie · 149 commits (verified)".
+ * Members with verified lab commits come first with their pedigree; then names;
+ * profile affiliations stay labelled self-reported.
+ */
 export function MemberLine({ card, className }: { card: FormationCard; className?: string }) {
   const { count, previously } = memberSummary(card);
-  const names = memberNames(card.members);
+  const { shown, rest } = memberEntries(card.members);
+  const anyPedigree = shown.some((m) => m.pedigree);
+  const showNames = shown.length > 0 && (anyPedigree || card.title !== memberNames(card.members));
   return (
     <p className={clsx("text-[13.5px] leading-snug text-ink-2", className)}>
       <span className="tnum font-mono text-[11px] uppercase tracking-[0.06em] text-ink">{count}</span>
-      {names && card.title !== names && (
+      {showNames && (
         <>
           <span aria-hidden className="mx-2 text-ink-3">·</span>
-          {names}
+          {shown.map((m, i) => (
+            <span key={`${m.name}-${i}`}>
+              {i > 0 && (m.pedigree || shown[i - 1].pedigree ? "; " : i === shown.length - 1 && !rest ? " and " : ", ")}
+              <span className={m.pedigree ? "text-ink" : undefined}>{m.name}</span>
+              {m.pedigree && (
+                <span className="text-ink-2">
+                  {" — "}
+                  <span className="font-mono text-[11.5px] tracking-[0.01em]">{m.pedigree}</span>
+                </span>
+              )}
+            </span>
+          ))}
+          {rest > 0 && ` and ${rest} ${rest === 1 ? "other" : "others"}`}
         </>
       )}
       {previously.length > 0 && (
@@ -44,9 +62,28 @@ export function MemberLine({ card, className }: { card: FormationCard; className
   );
 }
 
+/** Headline facts: 2–4 verified / measured facts, one mono glyph per family. */
+export function HeadlineFacts({ card, className }: { card: FormationCard; className?: string }) {
+  const facts = headlineFacts(card);
+  if (facts.length === 0) return null;
+  return (
+    <ul aria-label="Key facts" className={clsx("space-y-1", className)}>
+      {facts.map((f, i) => (
+        <li key={`${f.kind}-${i}`} className="grid grid-cols-[18px_1fr] items-baseline gap-x-2">
+          <span aria-hidden className={clsx("font-mono text-[12.5px] leading-none", f.kind === "pedigree" ? "text-accent" : "text-ink-2")}>
+            {f.glyph}
+          </span>
+          <span className="tnum text-[14.5px] leading-snug text-ink">{f.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
- * Formation candidate card. Hierarchy: label → title → who → WHY NOW → signal
- * strip; the Formation Score sits smaller on the right and supports the story.
+ * Formation candidate card. Hierarchy: label + theme → title → headline facts →
+ * who (with verified pedigree) → WHY NOW → signal strip; the Formation Score
+ * sits smaller on the right and supports the story.
  * Carries data-card/data-href for J/K/O, data-action="why" for Y, "watch" for W.
  */
 export function FormationCardView({ card, rank, className }: { card: FormationCard; rank?: number; className?: string }) {
@@ -75,7 +112,8 @@ export function FormationCardView({ card, rank, className }: { card: FormationCa
             {card.title}
           </Link>
         </h3>
-        <MemberLine card={card} className="mt-1.5" />
+        <HeadlineFacts card={card} className="mt-3" />
+        <MemberLine card={card} className="mt-3" />
 
         <div className="mt-5">
           <h4 className="label mb-2.5 text-ink">Why now</h4>

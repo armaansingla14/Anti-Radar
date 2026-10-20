@@ -836,6 +836,10 @@ export interface FormationMember {
   /** Self-reported / inferred affiliation strings. */
   affiliations: string[];
   is_demo: boolean;
+  /** Strongest verified lab-repository contribution, e.g. "sgl-project/sglang · 784 commits (verified)". Commits, not employment. */
+  pedigree?: string | null;
+  /** True when `pedigree` is backed by verified commits. */
+  verified?: boolean;
 }
 
 export interface FormationCard {
@@ -866,6 +870,10 @@ export interface FormationCard {
   anchor: EntityRef;
   is_demo: boolean;
   data_age?: DataAge | null;
+  /** 2–4 deterministic facts (verified commits, stored repo counts, org age, 30-day momentum); never invented. */
+  headline_facts?: string[];
+  /** Parallel to headline_facts: "pedigree" | "traction" | "formation" | "momentum". */
+  headline_fact_kinds?: string[];
 }
 
 export interface FormationCounts {

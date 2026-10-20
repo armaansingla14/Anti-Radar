@@ -32,6 +32,29 @@ export function tierTitle(tier: string): string {
   return TIERS.find((t) => t.key === tier)?.title ?? tier;
 }
 
+/**
+ * Which tier sections to render. Unfiltered: only non-empty tiers get a section,
+ * most important first; empty tiers collapse into one quiet line. Nothing at all
+ * → no sections and no line (the page shows its honest empty state). A tier
+ * filter always renders that tier (its empty message is the answer).
+ */
+export function tierLayout(
+  counts: Pick<FormationCounts, TierKey | "total">,
+  tier: TierKey | null = null,
+): { sections: TierKey[]; empty: TierKey[] } {
+  if (tier) return { sections: [tier], empty: [] };
+  if (!counts.total) return { sections: [], empty: [] };
+  return {
+    sections: TIERS.filter((t) => counts[t.key] > 0).map((t) => t.key),
+    empty: TIERS.filter((t) => !(counts[t.key] > 0)).map((t) => t.key),
+  };
+}
+
+/** "High confidence — none this period · Emerging — none this period" ("" when no tier is empty). */
+export function emptyTierLine(empty: TierKey[]): string {
+  return empty.map((k) => `${tierTitle(k)} — none this period`).join(" · ");
+}
+
 // ── Source families ──────────────────────────────────────────────────────────
 
 const FAMILY_WORD: Record<string, string> = {
@@ -122,6 +145,34 @@ export function memberNames(members: FormationMember[], max = 3): string {
   if (names.length <= max) return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
   const rest = names.length - max;
   return `${names.slice(0, max).join(", ")} and ${rest} ${rest === 1 ? "other" : "others"}`;
+}
+
+// ── Evidence-first card content ──────────────────────────────────────────────
+
+/** Mono glyph per headline-fact family (verified pedigree, traction, formation, momentum). */
+export const FACT_GLYPH: Record<string, string> = { pedigree: "✓", traction: "★", formation: "○", momentum: "↗" };
+
+/** The card's headline facts with their family glyph (backend-computed; never invented here). */
+export function headlineFacts(card: Pick<FormationCard, "headline_facts" | "headline_fact_kinds">): { text: string; kind: string; glyph: string }[] {
+  const kinds = card.headline_fact_kinds ?? [];
+  return (card.headline_facts ?? [])
+    .map((text, i) => {
+      const kind = kinds[i] ?? "";
+      return { text: text.trim(), kind, glyph: FACT_GLYPH[kind] ?? "·" };
+    })
+    .filter((f) => f.text);
+}
+
+/**
+ * Members for the card line: verified (lab-commit pedigree) first, keeping the
+ * API order otherwise; at most `max` shown, with how many are left over.
+ */
+export function memberEntries(members: FormationMember[], max = 3): { shown: { name: string; pedigree: string | null }[]; rest: number } {
+  const ordered = [...members.filter((m) => m.verified && m.pedigree), ...members.filter((m) => !(m.verified && m.pedigree))];
+  return {
+    shown: ordered.slice(0, max).map((m) => ({ name: m.name, pedigree: m.verified && m.pedigree ? m.pedigree : null })),
+    rest: Math.max(ordered.length - max, 0),
+  };
 }
 
 // ── Relationships ────────────────────────────────────────────────────────────

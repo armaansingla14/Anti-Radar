@@ -803,6 +803,10 @@ class FormationMember(BaseModel):
     founder_score: int | None = None
     affiliations: list[str] = Field(default_factory=list)  # self-reported (GitHub profile), cleaned
     is_demo: bool = False
+    # Strongest verified lab-repository contribution, e.g. "sgl-project/sglang · 784 commits (verified)".
+    # Verified commits, never employment. None when the member has no verified lab commits.
+    pedigree: str | None = None
+    verified: bool = False  # True when ``pedigree`` is backed by verified commits (Person.attrs lab_contributions)
 
 
 class FormationCard(BaseModel):
@@ -829,6 +833,11 @@ class FormationCard(BaseModel):
     anchor: EntityRef
     is_demo: bool = False
     data_age: DataAge | None = None
+    # 2–4 crisp deterministic facts (verified lab commits, stored repository counts, org age, 30-day momentum).
+    # Never invented: a fact whose numbers are not on record is omitted.
+    headline_facts: list[str] = Field(default_factory=list)
+    # Parallel to ``headline_facts``: pedigree | traction | formation | momentum (display glyph).
+    headline_fact_kinds: list[str] = Field(default_factory=list)
 
 
 class FormationCounts(BaseModel):

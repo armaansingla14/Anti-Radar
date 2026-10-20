@@ -10,9 +10,12 @@ import { ALL_NAV, NAV_PRIMARY } from "../lib/routes.ts";
 import {
   cleanAffiliations,
   convergenceStrength,
+  emptyTierLine,
   familyWords,
   formationDeck,
   formationListHref,
+  headlineFacts,
+  memberEntries,
   memberNames,
   memberSummary,
   parseFormationQuery,
@@ -20,6 +23,7 @@ import {
   relationshipVerb,
   relationshipYears,
   sortRelationships,
+  tierLayout,
   toAntiScore,
   watchTarget,
 } from "../components/formation/logic.ts";
@@ -92,6 +96,54 @@ describe("formation copy", () => {
     assert.equal(memberSummary({ members: [member("a", "Ana")], previous_affiliations: [] }).count, "1 person");
     assert.equal(memberNames([member("a", "Ana"), member("b", "Raj"), member("c", "Li")]), "Ana, Raj and Li");
     assert.equal(memberNames([member("a", "A"), member("b", "B"), member("c", "C"), member("d", "D")]), "A, B, C and 1 other");
+  });
+});
+
+describe("tier collapse", () => {
+  it("renders only non-empty tiers, most important first, and collapses the rest into one quiet line", () => {
+    const l = tierLayout({ high: 0, emerging: 0, early: 10, total: 10 });
+    assert.deepEqual(l, { sections: ["early"], empty: ["high", "emerging"] });
+    assert.equal(emptyTierLine(l.empty), "High confidence — none this period · Emerging — none this period");
+    assert.deepEqual(tierLayout({ high: 2, emerging: 0, early: 1, total: 3 }).sections, ["high", "early"]);
+    assert.deepEqual(tierLayout({ high: 1, emerging: 1, early: 1, total: 3 }), { sections: ["high", "emerging", "early"], empty: [] });
+    assert.equal(emptyTierLine([]), "");
+  });
+
+  it("shows nothing (the page's honest empty state) when every tier is empty", () => {
+    assert.deepEqual(tierLayout({ high: 0, emerging: 0, early: 0, total: 0 }), { sections: [], empty: [] });
+  });
+
+  it("always renders the filtered tier, even when empty", () => {
+    assert.deepEqual(tierLayout({ high: 0, emerging: 0, early: 4, total: 4 }, "high"), { sections: ["high"], empty: [] });
+  });
+});
+
+describe("evidence-first card content", () => {
+  it("pairs headline facts with a family glyph and tolerates older payloads", () => {
+    const facts = headlineFacts({
+      headline_facts: ["272 verified commits to google-deepmind/mujoco_menagerie and mujoco", "New repo k/mjbatch: 600★ · 60 forks in 40 days", " "],
+      headline_fact_kinds: ["pedigree", "traction", "momentum"],
+    });
+    assert.deepEqual(facts.map((f) => [f.glyph, f.kind]), [["✓", "pedigree"], ["★", "traction"]]);
+    assert.deepEqual(headlineFacts({}), []);
+    assert.equal(headlineFacts({ headline_facts: ["x"] })[0].glyph, "·");
+  });
+
+  it("lists verified members first with their pedigree; unverified members never get one", () => {
+    const ms = [
+      member("a", "Ana"),
+      member("r", "Roger", { verified: true, pedigree: "vllm-project/vllm · 214 commits (verified)" }),
+      member("b", "Ben", { verified: false, pedigree: "should not show" }),
+      member("y", "Yineng", { verified: true, pedigree: "sgl-project/sglang · 784 commits (verified)" }),
+    ];
+    const { shown, rest } = memberEntries(ms);
+    assert.deepEqual(shown, [
+      { name: "Roger", pedigree: "vllm-project/vllm · 214 commits (verified)" },
+      { name: "Yineng", pedigree: "sgl-project/sglang · 784 commits (verified)" },
+      { name: "Ana", pedigree: null },
+    ]);
+    assert.equal(rest, 1);
+    assert.deepEqual(memberEntries([member("a", "Ana")]), { shown: [{ name: "Ana", pedigree: null }], rest: 0 });
   });
 });
 

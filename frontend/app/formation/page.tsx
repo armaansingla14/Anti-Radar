@@ -5,7 +5,7 @@ import { SectionLabel } from "@/components/SectionLabel";
 import { themeLabel } from "@/components/feed/prose";
 import { FormationCardView } from "@/components/formation/FormationCardView";
 import { FormationFilters } from "@/components/formation/FormationFilters";
-import { formationDeck, parseFormationQuery, TIERS } from "@/components/formation/logic";
+import { emptyTierLine, formationDeck, parseFormationQuery, tierLayout, TIERS } from "@/components/formation/logic";
 import { ApiError, getFormation } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import type { FormationCard, FormationFeed } from "@/lib/types";
@@ -40,8 +40,12 @@ export default async function FormationPage({ searchParams }: PageProps<"/format
   }
 
   const filterName = [q.theme && `in ${themeLabel(q.theme)}`, q.demo === true && "including demo data"].filter(Boolean).join(", ");
-  const tiers = TIERS.filter((t) => !q.tier || t.key === q.tier);
   const c = feed?.counts ?? null;
+  const layout = c ? tierLayout(c, q.tier) : { sections: [], empty: [] };
+  const tiers = TIERS.filter((t) => layout.sections.includes(t.key));
+  // Header strip: big numerals for non-empty tiers only; empty tiers collapse into one quiet line.
+  const stripTiers = c ? TIERS.filter((t) => c[t.key] > 0) : [];
+  const stripEmpty = c && c.total > 0 ? emptyTierLine(TIERS.filter((t) => !(c[t.key] > 0)).map((t) => t.key)) : "";
 
   return (
     <div className="pb-24">
@@ -57,19 +61,26 @@ export default async function FormationPage({ searchParams }: PageProps<"/format
           </p>
           <div className="mt-4">{feed && <AsOf feed={feed} />}</div>
         </div>
-        {c && (
-          <dl className="flex gap-8 lg:pb-[30px]">
-            {TIERS.map((t, i) => (
-              <div key={t.key} className="border-t border-ink pt-2.5">
-                <dt className="label">{t.title}</dt>
-                <dd className={`tnum mt-1 font-serif text-[40px] leading-none tracking-[-0.02em] ${i === 0 && c.high > 0 ? "text-accent" : "text-ink"}`}>
-                  <a href={`#tier-${t.key}`} className="hover:underline decoration-1 underline-offset-4">
-                    {c[t.key]}
-                  </a>
-                </dd>
-              </div>
-            ))}
-          </dl>
+        {c && c.total > 0 && (
+          <div className="lg:pb-[30px]">
+            <dl className="flex gap-8 lg:justify-end">
+              {stripTiers.map((t) => (
+                <div key={t.key} className="border-t border-ink pt-2.5">
+                  <dt className="label">{t.title}</dt>
+                  <dd className={`tnum mt-1 font-serif text-[40px] leading-none tracking-[-0.02em] ${t.key === "high" ? "text-accent" : "text-ink"}`}>
+                    <a href={`#tier-${t.key}`} className="hover:underline decoration-1 underline-offset-4">
+                      {c[t.key]}
+                    </a>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {stripEmpty && (
+              <p data-tier-empty className="mt-3 font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-3 lg:text-right">
+                {stripEmpty}
+              </p>
+            )}
+          </div>
         )}
       </header>
 

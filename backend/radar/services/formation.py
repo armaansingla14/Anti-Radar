@@ -21,7 +21,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, case, func, or_, select
@@ -55,6 +55,8 @@ from radar.schemas.api import (
     RelationshipOut,
     ScoreComponent,
 )
+from radar.scoring.extract import person_lab_contributions
+from radar.scoring.features import LabContribution
 from radar.services import entities as E
 from radar.services import presenters as P
 from radar.services.freshness import data_age, feed_as_of, light_data_age
@@ -70,6 +72,10 @@ REPO_LIMIT = 12
 PAPER_LIMIT = 12
 WHY_NOW_LIMIT = 6
 MEMBER_AFFILIATIONS = 4
+HEADLINE_FACTS = 4  # at most, per card
+NEW_REPO_FACTS = 2  # new repositories cited per person card
+RECENT_REPO_DAYS = 180  # "in N days" up to this age, "since Mon YYYY" beyond
+STAR = "\u2605"
 
 # Display order of FORMATION SCORE components (unknown keys follow, largest max first).
 # Mirrors scoring/formation.py FORMATION_MAX (kept local so presentation never imports scoring).
@@ -188,6 +194,190 @@ def _entity_ref(ent: Company | Person | None, anchor_type: str, anchor_id: uuid.
     return EntityRef(type=anchor_type, id=str(ent.id), slug=ent.slug, name=P.display_name(ent).name)
 
 
+# ── evidence-first card content (deterministic, from stored facts only) ──────
+# Lab pedigree comes from verified commits (``Person.attrs['lab_contributions']``) — never employment.
+# Traction numbers come from the stored ``Repository`` row (stars / forks / gh_created_at); when that row
+# is missing the fact is omitted rather than estimated.
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n:,} {word}{'' if n == 1 else 's'}"
+
+
+def _and(items: Sequence[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def member_pedigree(labs: Sequence[LabContribution]) -> str | None:
+    """'sgl-project/sglang · 784 commits (verified)' — the strongest verified lab contribution."""
+    if not labs:
+        return None
+    lc = labs[0]
+    return f"{lc.full_name} \u00b7 {_plural(lc.commits, 'commit')} (verified)"
+
+
+def person_pedigree_fact(labs: Sequence[LabContribution]) -> str | None:
+    """'272 verified commits to google-deepmind/mujoco_menagerie and mujoco' (the strongest lab's repositories,
+    summed), plus the next lab when there is one."""
+    if not labs:
+        return None
+    org = labs[0].org.lower()
+    same = [c for c in labs if c.org.lower() == org]
+    total = sum(c.commits for c in same)
+    names = [same[0].full_name, *(c.repo for c in same[1:])]
+    if len(names) > 3:
+        names = [*names[:2], f"{len(names) - 2} more {same[0].org} repositories"]
+    fact = f"{total:,} verified commit{'' if total == 1 else 's'} to {_and(names)}"
+    other = next((c for c in labs if c.org.lower() != org), None)
+    if other is not None:
+        fact += f" \u00b7 {other.commits:,} to {other.full_name}"
+    return fact
+
+
+def team_pedigree_fact(member_labs: Sequence[Sequence[LabContribution]]) -> str | None:
+    """'2 members previously contributed to sgl-project/sglang (784 commits) and vllm-project/vllm (214 commits)
+    — verified' (each verified member's strongest lab repository)."""
+    tops = [labs[0] for labs in member_labs if labs]
+    if not tops:
+        return None
+    by_repo: dict[str, list[LabContribution]] = defaultdict(list)
+    for c in tops:
+        by_repo[c.full_name].append(c)
+    ranked = sorted(by_repo.items(), key=lambda kv: (-max(c.commits for c in kv[1]), kv[0].lower()))
+    parts = []
+    for name, cs in ranked[:3]:
+        counts = sorted((c.commits for c in cs), reverse=True)
+        parts.append(f"{name} ({' + '.join(f'{n:,}' for n in counts)} commit{'' if sum(counts) == 1 else 's'})")
+    if len(ranked) > 3:
+        parts.append(f"{len(ranked) - 3} more lab repositories")
+    who = _plural(len(tops), "member")
+    return f"{who} previously contributed to {_and(parts)} \u2014 verified"
+
+
+def repo_counts(r: Repository | None) -> str | None:
+    """'600★ · 60 forks' from the stored repository row; None when unknown or zero."""
+    if r is None:
+        return None
+    stars, forks = int(r.stars or 0), int(r.forks or 0)
+    bits = ([f"{stars:,}{STAR}"] if stars > 0 else []) + ([_plural(forks, "fork")] if forks > 0 else [])
+    return " \u00b7 ".join(bits) or None
+
+
+def repo_traction(r: Repository | None, today: date) -> str | None:
+    """'600★ · 60 forks in 40 days' (age from gh_created_at; 'since Nov 2025' when older; no age if unknown)."""
+    counts = repo_counts(r)
+    if counts is None or r is None:
+        return None
+    if r.gh_created_at is not None:
+        age = (today - r.gh_created_at.date()).days
+        if 0 <= age <= RECENT_REPO_DAYS:
+            counts += f" in {_plural(max(age, 1), 'day')}"
+        elif age > RECENT_REPO_DAYS:
+            counts += f" since {r.gh_created_at:%b %Y}"
+    return counts
+
+
+def org_fact(c: Company, repos: Sequence[Repository], n_members: int, n_verified: int, today: date) -> str | None:
+    """'GitHub org created 138 days ago · 2 members, both with verified lab history' (None if the creation date
+    is unknown)."""
+    from radar.scoring.formation import company_created_info
+
+    created, basis, _ = company_created_info(c, repos)
+    if created is None:
+        return None
+    age = max((today - created).days, 0)
+    what = ("First public repository" if basis == "first_public_repo_created_at"
+            else "GitHub org" if basis == "github_org_created_at" else "Org")
+    when = "today" if age == 0 else f"{_plural(age, 'day')} ago"
+    fact = f"{what} created {when} \u00b7 {_plural(n_members, 'member')}"
+    if n_verified:
+        both = "both" if n_members == n_verified == 2 else "all" if n_members == n_verified else str(n_verified)
+        fact += f", {both} with verified lab history" if n_members > 1 else " with verified lab history"
+    return fact
+
+
+def momentum_fact(metrics: dict[str, Any] | None, shown_stars: int = 0) -> str | None:
+    """'+1,166★ · 17 new contributors in 30 days' from the stored technical-activity metrics. The star gain is
+    left out when it is (nearly) all of a repository's stars already shown (a repository younger than 30 days)."""
+    m = metrics or {}
+
+    def num(k: str) -> int:
+        try:
+            return round(float(m.get(k) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    stars, newc, commits = num("stars_30d"), num("new_contributors_30d"), num("commits_4w")
+    if shown_stars and stars >= 0.9 * shown_stars:
+        stars = 0
+    bits = ([f"+{stars:,}{STAR}"] if stars > 0 else []) + ([_plural(newc, "new contributor")] if newc > 0 else [])
+    if bits:
+        return f"{' · '.join(bits)} in 30 days"
+    return f"{_plural(commits, 'commit')} in the last 4 weeks" if commits > 0 else None
+
+
+def _tech_metrics(c: FormationCandidate) -> dict[str, Any]:
+    raw = ((c.components or {}).get("technical_activity") or {}).get("raw") or {}
+    m = raw.get("metrics")
+    return m if isinstance(m, dict) else {}
+
+
+def _cited_signal_ids(c: FormationCandidate) -> set[uuid.UUID]:
+    items = list(c.why_now or [])
+    items += ((c.components or {}).get("formation_evidence") or {}).get("evidence") or []
+    return {u for u in (_uuid(i.get("signal_id")) for i in items if isinstance(i, dict) and i.get("signal_id")) if u}
+
+
+def headline_facts(c: FormationCandidate, *, anchor: Company | Person | None, member_labs: Sequence[Sequence[
+                   LabContribution]], new_repos: Sequence[Repository], company_repos: Sequence[Repository],
+                   today: date) -> list[tuple[str, str]]:
+    """(kind, text) facts, most telling first: verified pedigree, traction, formation, momentum (<= 4)."""
+    out: list[tuple[str, str]] = []
+    if c.kind == "person":
+        ped = person_pedigree_fact(member_labs[0] if member_labs else [])
+        if ped:
+            out.append(("pedigree", ped))
+        for r in sorted(new_repos, key=lambda r: (-(r.stars or 0), r.full_name))[:NEW_REPO_FACTS]:
+            t = repo_traction(r, today)
+            if t:
+                out.append(("traction", f"New repo {r.full_name}: {t}"))
+    else:
+        ped = team_pedigree_fact(member_labs)
+        if ped:
+            out.append(("pedigree", ped))
+        if isinstance(anchor, Company):
+            f = org_fact(anchor, company_repos, len(c.member_ids or []), sum(1 for x in member_labs if x), today)
+            if f:
+                out.append(("formation", f))
+        top = max(company_repos, key=lambda r: (r.stars or 0, r.forks or 0, r.full_name), default=None)
+        t = repo_traction(top, today)
+        if top is not None and t:
+            out.append(("traction", f"{top.full_name}: {t}"))
+        mo = momentum_fact(_tech_metrics(c), int(top.stars or 0) if top is not None and t else 0)
+        if mo:
+            out.append(("momentum", mo))
+    return out[:HEADLINE_FACTS]
+
+
+_NEW_REPO_PHRASE = " created a new repository"
+
+
+def enrich_why_now(items: list[EvidenceItem], kind: str, new_project: dict[uuid.UUID, str],
+                   repos: dict[str, Repository]) -> list[EvidenceItem]:
+    """Rewrite a new-repository line with its stored traction: 'Created kevinzakka/mjbatch — 600★ · 60 forks
+    since' (the date column carries the creation date). Unchanged when the counts are not on record."""
+    out = []
+    for e in items:
+        sid = _uuid(e.signal_id) if e.signal_id else None
+        repo = new_project.get(sid) if sid else None
+        counts = repo_counts(repos.get(repo.lower())) if repo else None
+        if repo and counts:
+            who = e.title.split(_NEW_REPO_PHRASE)[0] if _NEW_REPO_PHRASE in e.title and kind != "person" else None
+            e = e.model_copy(update={"title": f"{f'{who} created' if who else 'Created'} {repo} \u2014 {counts} since"})
+        out.append(e)
+    return out
+
+
 # ── cards ────────────────────────────────────────────────────────────────────
 
 
@@ -206,6 +396,32 @@ def formation_cards(session: Session, cands: Sequence[FormationCandidate], *,
             ids = [c.anchor_id for c in cands if c.anchor_type == et]
             if ids:
                 ages.update(data_age(session, et, ids))
+    labs = {pid: person_lab_contributions(p) for pid, p in people.items()}
+    today = clock.today()
+    # Company anchors' repositories (org age, top repository traction) — one query.
+    company_ids = [c.anchor_id for c in cands if isinstance(anchors.get(c.anchor_id), Company)]
+    company_repos: dict[uuid.UUID, list[Repository]] = defaultdict(list)
+    if company_ids:
+        for r in session.scalars(select(Repository).where(Repository.company_id.in_(company_ids))):
+            company_repos[r.company_id].append(r)  # type: ignore[index]
+    # New-repository signals cited by the candidates (why now / formation evidence) -> repository name.
+    cited = {sid for c in cands for sid in _cited_signal_ids(c)}
+    new_project: dict[uuid.UUID, str] = {}
+    if cited:
+        for sid, meta in session.execute(select(Signal.id, Signal.meta).where(
+                Signal.id.in_(cited), Signal.signal_type == "new_project")):
+            repo = (meta or {}).get("repo")
+            if isinstance(repo, str) and "/" in repo:
+                new_project[sid] = repo
+    wanted = {r.lower() for r in new_project.values()}
+    for c in cands:
+        repo = _tech_metrics(c).get("new_project_repo")
+        if isinstance(repo, str) and "/" in repo:
+            wanted.add(repo.lower())
+    repos_by_name: dict[str, Repository] = {}
+    if wanted:
+        repos_by_name = {r.full_name.lower(): r for r in session.scalars(
+            select(Repository).where(func.lower(Repository.full_name).in_(wanted)))}
     out = []
     for c in cands:
         members_rows = [people[m] for m in (c.member_ids or []) if m in people]
@@ -213,7 +429,17 @@ def formation_cards(session: Session, cands: Sequence[FormationCandidate], *,
             id=str(p.id), slug=p.slug, name=P.display_name(p).name, headline=P.headline(p), avatar_url=P.avatar(p),
             founder_score=round(scores[p.id]) if p.id in scores else None,
             affiliations=_member_affiliations(p), is_demo=p.is_demo,
+            pedigree=member_pedigree(labs[p.id]), verified=bool(labs[p.id]),
         ) for p in members_rows]
+        mine = _cited_signal_ids(c)
+        names = {new_project[sid].lower() for sid in mine if sid in new_project}
+        np_repo = _tech_metrics(c).get("new_project_repo")
+        if isinstance(np_repo, str):
+            names.add(np_repo.lower())
+        facts = headline_facts(
+            c, anchor=anchors.get(c.anchor_id), member_labs=[labs[p.id] for p in members_rows],
+            new_repos=[repos_by_name[n] for n in sorted(names) if n in repos_by_name],
+            company_repos=company_repos.get(c.anchor_id, []), today=today)
         prev: list[str] = []
         for p in members_rows:
             prev.extend(_prior_orgs(p))
@@ -230,8 +456,9 @@ def formation_cards(session: Session, cands: Sequence[FormationCandidate], *,
             previous_affiliations_note=P.SELF_REPORTED_NOTE if prev else None,
             independent_signals=int(c.independent_signals or 0), families=list(c.signal_families or []),
             first_detected_at=c.first_detected_at, latest_activity_at=c.latest_activity_at,
-            why_now=_evidence_items(c.why_now, WHY_NOW_LIMIT),
+            why_now=enrich_why_now(_evidence_items(c.why_now, WHY_NOW_LIMIT), c.kind, new_project, repos_by_name),
             anchor=_entity_ref(anchor, c.anchor_type, c.anchor_id, c.title), is_demo=c.is_demo, data_age=age,
+            headline_facts=[t for _, t in facts], headline_fact_kinds=[k for k, _ in facts],
         ))
     return out
 
