@@ -108,6 +108,10 @@ test("demo tour: ten scenes over real data", async ({ page }, testInfo) => {
     if (m.type() === "error") errors.push(`console: ${m.text()}`);
   });
   const noErrors = (where: string) => expect(errors, `console/page errors at ${where}`).toEqual([]);
+  // Seconds since t0 at which each beat is on screen ("in") and is left ("out"): lets a voiceover be laid
+  // over the take scene by scene (see e2e/voiceover.py).
+  const marks: { key: string; scene: number; in_s: number; out_s?: number }[] = [];
+  const now = () => (Date.now() - t0) / 1000;
 
   // ── Scene 1: title card, pre-flight (dataset cookie, wake backend, resolve scenes, warm pages) ──
   await page.goto("/demo", { waitUntil: "domcontentloaded" });
@@ -124,6 +128,7 @@ test("demo tour: ten scenes over real data", async ({ page }, testInfo) => {
     await page.goto("/demo", { waitUntil: "domcontentloaded" });
     await expect(page.locator('[data-demo="demo-start"][data-demo-state="ready"]')).toBeVisible({ timeout: 120_000 });
   }
+  marks.push({ key: "title", scene: 1, in_s: now() });
   const cookies = await page.context().cookies();
   expect(cookies.find((c) => c.name === "radar_dataset")?.value, "demo dataset cookie").toBe("demo");
 
@@ -136,6 +141,7 @@ test("demo tour: ten scenes over real data", async ({ page }, testInfo) => {
   console.log(`[demo] picks ${JSON.stringify(plan!.picks)}`);
   noErrors("title");
   await page.waitForTimeout(DWELL.title * PACE * 1000);
+  marks[0].out_s = now();
 
   // One deliberate click (Start); the mouse then rests off-stage so nothing in the app shows a hover state.
   await page.locator('[data-demo="demo-start"]').click();
@@ -151,6 +157,7 @@ test("demo tour: ten scenes over real data", async ({ page }, testInfo) => {
     const t = Date.now();
 
     await settledAt(page, i);
+    marks.push({ key, scene: step.scene, in_s: now() });
     const state = await page.evaluate(() => window.__antiDemo!.state());
     console.log(`[demo] ${pad2(step.scene)} ${key.padEnd(14)} settled ${((Date.now() - t) / 1000).toFixed(1)}s  ${state.path ?? "(card)"}`);
 
@@ -185,6 +192,7 @@ test("demo tour: ten scenes over real data", async ({ page }, testInfo) => {
     }
 
     await dwell(page, key);
+    marks.at(-1)!.out_s = now();
     if (i < steps.length - 1) await page.keyboard.press("ArrowRight");
   }
   noErrors("end");
@@ -193,7 +201,7 @@ test("demo tour: ten scenes over real data", async ({ page }, testInfo) => {
   console.log(`[demo] tour finished in ${seconds.toFixed(1)}s (take ≈ ${(seconds - takeStart).toFixed(1)}s)`);
   if (RECORD) {
     const video = page.video();
-    const meta = { video: video ? await video.path() : null, take_start_s: takeStart, total_s: seconds };
+    const meta = { video: video ? await video.path() : null, take_start_s: takeStart, total_s: seconds, marks };
     fs.writeFileSync(path.join(testInfo.project.outputDir, "demo-tour-meta.json"), JSON.stringify(meta, null, 2));
   }
 });

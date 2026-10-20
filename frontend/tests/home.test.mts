@@ -165,6 +165,10 @@ describe("attention + collision views", () => {
     const v2 = attentionView({ ...base, technical_score: 90, attention_score: null, gap_points: null, explanation: "x", social_available: true });
     assert.deepEqual([v2.technical, v2.attention, v2.gap, v2.explanation, v2.socialAvailable], [90, null, null, "x", true]);
   });
+  it("shows the percentile gap, not the 0–10 score component", () => {
+    const v = attentionView({ ...base, technical_score: 97, attention_score: 26, gap: 71.1, gap_points: 7.11 });
+    assert.equal(v.gap, 71.1);
+  });
   it("uses backend collision labels when present, honest fallbacks otherwise", () => {
     const c = { families: ["arxiv", "github"], summary: "2 independent sources within 5 days" };
     assert.deepEqual(collisionView(c), { strength: null, families: ["GitHub", "Research"], sentence: c.summary });

@@ -69,7 +69,7 @@ export interface AttentionGap {
   technical_score?: number;
   /** Public attention, 0..100; null = unmeasured (never read as 0). */
   attention_score?: number | null;
-  /** technical − attention; null when attention is unmeasured. */
+  /** ANTI SCORE Attention Gap component (0–10 points), not the percentile difference (that is `gap`). */
   gap_points?: number | null;
   /** Plain-English reading of the gap. */
   explanation?: string;

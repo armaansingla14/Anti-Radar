@@ -199,7 +199,9 @@ export function attentionView(g: AttentionGap): AttentionView {
   const technical = g.technical_score ?? g.technical;
   const rawAttention = g.attention_score !== undefined ? g.attention_score : g.attention;
   const attention = rawAttention !== null && rawAttention !== undefined && Number.isFinite(rawAttention) ? rawAttention : null;
-  const gap = g.gap_points !== undefined ? g.gap_points : attention === null ? null : g.gap;
+  // The displayed gap is the percentile difference (technical − attention), never `gap_points` (the 0–10
+  // ANTI SCORE component), and it is never claimed when attention was not measured.
+  const gap = attention === null ? null : g.gap;
   return {
     technical,
     attention,

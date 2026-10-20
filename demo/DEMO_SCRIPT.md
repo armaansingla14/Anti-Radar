@@ -25,7 +25,7 @@ Two things to say if anyone asks:
 
 **6. The person (1:03).** The second thread is Kevin Zakka: 272 verified commits to Google DeepMind's MuJoCo repositories. In September he started mjbatch, for running thousands of physics simulations in parallel, and it reached 600 stars in 40 days. That history comes from commit records, not from his bio.
 
-**7. Who should we meet (1:20).** This is the weekly list, ranked by evidence rather than fame. Kevin is number one, at medium priority; nobody is high priority this week. His meeting brief gives thirty-second context, what he's built, five questions to ask and what to verify first. Every line is cited and marked fact or inference. It's a template, because no language model is switched on.
+**7. Who should we meet (1:20).** This is the weekly list, ranked by evidence rather than fame. Kevin is number one, at medium priority; nobody has higher priority this week. His meeting brief gives thirty-second context, what he's built, five questions and what to verify. Every line is cited and marked fact or inference. It's a template, because no language model is switched on.
 
 **8. Attention gap (1:47).** ShengShu has the biggest attention gap. Its new robotics model, Motus2, gained 616 GitHub stars in 30 days, and the last week ran almost eight times faster than the four before it. Technical momentum is 97; public attention is 26. There are no Hacker News threads, and X and press weren't measured, so they get no credit.
 
