@@ -172,7 +172,9 @@ flowchart LR
 
 The public site runs on a **verified snapshot**: real public data collected by Radar on Oct 20, 2026, with every source URL and timestamp kept, so the demo is stable and every claim can be checked. `/demo` walks through the product in ten scenes. (An optional live backend, refreshed by scheduled jobs, deploys with `deploy.py --live`.)
 
-Live URL: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#production-url).
+**https://anti-radar-one.vercel.app** · guided tour: **https://anti-radar-one.vercel.app/demo**
+
+Hosted on free tiers: the first visit after a quiet period can take 30–60 s while the backend wakes up.
 
 ## Demo video
 
