@@ -2,9 +2,10 @@
  * Typed API client.
  *
  * On the server (React Server Components, route handlers) requests go straight
- * to BACKEND_URL with `cache: "no-store"`. In the browser they go through the
- * same-origin proxy at /api/proxy/<path>, so the backend address never ships
- * to the client.
+ * to the backend with `cache: "no-store"`: BACKEND_URL, or DEMO_BACKEND_URL when
+ * the visitor's `radar_dataset=demo` cookie is set (see lib/session.ts). In the
+ * browser they go through the same-origin proxy at /api/proxy/<path>, so the
+ * backend address never ships to the client.
  */
 import type {
   CompanyDetail,
@@ -35,6 +36,7 @@ import type {
   WatchlistResponse,
   WatchRequest,
 } from "./types";
+import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -59,12 +61,20 @@ export type QueryParams = Record<string, QueryValue>;
 
 const isServer = typeof window === "undefined";
 
-/** Base URL for a backend path ("/api/radar" → absolute or proxied URL). */
-export function apiUrl(path: string, params?: QueryParams): string {
+/**
+ * Base URL for a backend path ("/api/radar" → absolute or proxied URL).
+ * `backend` overrides the server-side backend base (default: the live BACKEND_URL).
+ */
+export function apiUrl(path: string, params?: QueryParams, backend?: string): string {
   const clean = path.startsWith("/api/") ? path.slice(4) : path.startsWith("/") ? path : `/${path}`;
-  const base = isServer
-    ? `${(process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/+$/, "")}/api${clean}`
-    : `/api/proxy${clean}`;
+  let base: string;
+  if (isServer) {
+    const resolved = backend ? { ok: true as const, base: backend } : resolveBackend("live");
+    if (!resolved.ok) throw new ApiError(503, path, resolved.detail);
+    base = `${resolved.base}/api${clean}`;
+  } else {
+    base = `/api/proxy${clean}`;
+  }
   const qs = toQueryString(params);
   return qs ? `${base}?${qs}` : base;
 }
@@ -97,16 +107,30 @@ async function request<T>(
   path: string,
   opts: { params?: QueryParams; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
-  const res = await fetch(apiUrl(path, opts.params), {
-    method,
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
-    },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    signal: opts.signal,
-  });
+  let backend: string | undefined;
+  if (isServer) {
+    // Server-side: honor the visitor's dataset cookie (live vs verified-snapshot demo backend).
+    const resolved = resolveBackend((await requestCookies()).dataset);
+    if (!resolved.ok) throw new ApiError(503, path, resolved.detail);
+    backend = resolved.base;
+  }
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(path, opts.params, backend), {
+      method,
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
+    });
+  } catch (err) {
+    await rethrowNextInternal(err);
+    if (isServer && !opts.signal?.aborted) throw new ApiError(503, path, "backend_waking");
+    throw err;
+  }
   if (!res.ok) throw new ApiError(res.status, path, await readError(res));
   if (res.status === 204) return undefined as T;
   const text = await res.text();

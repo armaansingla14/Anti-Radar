@@ -7,9 +7,12 @@ LLM narratives live in radar.llm.narratives and are attached by detail services.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -38,8 +41,10 @@ from radar.schemas.api import (
     IntelCard,
     PersonCard,
     TopicTag,
+    VelocityMetric,
 )
 from radar.scoring.run import anti_score_from_snapshot
+from radar.services.freshness import light_data_age
 from radar.thesis.loader import get_thesis
 
 NEW_DAYS = 7
@@ -223,12 +228,14 @@ def headline(p: Person) -> str | None:
     h = (p.attrs or {}).get("headline")
     if h:
         return h
-    if p.current_role and p.current_company:
-        return f"{p.current_role}, {p.current_company}"
-    if p.current_company:
-        return p.current_company
-    if p.prior_affiliations:
-        return f"Previously {p.prior_affiliations[-1]}"
+    company = clean_label(p.current_company)
+    if p.current_role and company:
+        return f"{p.current_role}, {company}"
+    if company:
+        return company
+    prior = [a for a in map(clean_label, p.prior_affiliations or []) if a]
+    if prior:
+        return f"Previously {prior[-1]}"
     return (p.bio or "")[:90] or None
 
 
@@ -239,6 +246,184 @@ def avatar(p: Person) -> str | None:
     if a:
         return a
     return f"https://github.com/{p.github_handle}.png?size=96" if p.github_handle else None
+
+
+# ── display hygiene ──────────────────────────────────────────────────────────
+
+DISPLAY_NAME_MAX = 40
+# ": ", " | ", " — ", " – " separate a name from a tagline ("Mistral AI: frontier models"); a plain
+# " - " only does when the whole thing is too long to be a name ("TUM - Autonomous Vehicle Systems
+# Lab" is a name; "V-Modal AI - Visual Memory Layer: Find, recall…" is not).
+_TAGLINE_SPLIT = re.compile(r"\s+[–—]\s+|:\s+|\s*\|\s*")
+_HYPHEN_SPLIT = re.compile(r"\s+-\s+")
+_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-]+$")  # owner/repo
+SELF_REPORTED_NOTE = "Self-reported on GitHub profile"
+HANDLE_ONLY_NOTE = "handle only"
+
+
+@dataclass(frozen=True)
+class DisplayName:
+    name: str  # what to show
+    raw: str  # as recorded
+    note: str | None = None  # why it differs ("cleaned from a repository name / tagline", "handle only")
+
+    @property
+    def raw_if_changed(self) -> str | None:
+        return self.raw if self.raw != self.name else None
+
+
+def _truncate(text: str, limit: int = DISPLAY_NAME_MAX) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;-–—")
+    return (cut or text[: limit - 1]) + "…"
+
+
+def clean_company_name(name: str | None, *, github_org: str | None = None, slug: str | None = None
+                       ) -> tuple[str, str | None]:
+    """(display name, note). Strips an ``owner/`` prefix from repo slugs and a tagline after
+    ' - ' / ':' / '|'; trims to 40 characters; falls back to the GitHub org (title-cased) or slug
+    only when the name is missing."""
+    raw = (name or "").strip()
+    if not raw:
+        base = github_org or slug or "Unnamed"
+        return base.replace("-", " ").replace("_", " ").title(), "No name on record; derived from GitHub org"
+    out, note = raw, None
+    if _SLUG_RE.match(out):
+        out, note = out.rsplit("/", 1)[1], "Repository name"
+    splitter = _TAGLINE_SPLIT
+    if len(out) > DISPLAY_NAME_MAX:
+        splitter = re.compile(f"{_TAGLINE_SPLIT.pattern}|{_HYPHEN_SPLIT.pattern}")
+    parts = [p.strip() for p in splitter.split(out) if p and p.strip()]
+    if len(parts) > 1 and len(parts[0]) >= 2:
+        out, note = parts[0], "Name shortened from a tagline"
+    if len(out) > DISPLAY_NAME_MAX:
+        out, note = _truncate(out), note or "Name shortened"
+    return out, note
+
+
+def is_handle_only(name: str | None, *handles: str | None) -> bool:
+    n = (name or "").strip().lstrip("@").lower()
+    return not n or any(h and n == h.strip().lstrip("@").lower() for h in handles)
+
+
+def display_name(entity: Any) -> DisplayName:
+    """Clean display name for a Company or Person; the raw name is always kept.
+
+    People recorded under nothing but a handle are shown as ``@handle`` with note "handle only"."""
+    raw = (getattr(entity, "name", None) or "").strip()
+    if isinstance(entity, Person):
+        handle = entity.github_handle or entity.x_handle
+        if handle and is_handle_only(raw, entity.github_handle, entity.x_handle):
+            return DisplayName(name=f"@{handle.lstrip('@')}", raw=raw, note=HANDLE_ONLY_NOTE)
+        return DisplayName(name=_truncate(raw, 60) if raw else entity.slug, raw=raw)
+    name, note = clean_company_name(raw, github_org=getattr(entity, "github_org", None),
+                                    slug=getattr(entity, "slug", None))
+    return DisplayName(name=name, raw=raw, note=note)
+
+
+_BIBTEX_MARKS = {'"': "\u0308", "'": "\u0301", "`": "\u0300", "^": "\u0302", "~": "\u0303", "=": "\u0304",
+                 ".": "\u0307", "u": "\u0306", "v": "\u030c", "H": "\u030b", "c": "\u0327"}
+_BIBTEX_ACCENT = re.compile(r"\{?\\([\"'`^~=.uvHc])\s*\{?([A-Za-z])\}?\}?")
+
+
+def clean_label(value: str | None) -> str | None:
+    """Free-text affiliation / company labels from profiles: drop BibTeX escapes and braces,
+    a leading '@', and values with no letters or digits ("✖️", "-")."""
+    if not value:
+        return None
+    v = _BIBTEX_ACCENT.sub(lambda m: m.group(2) + _BIBTEX_MARKS.get(m.group(1), ""), value)  # {\"o} -> ö
+    v = v.replace("{", "").replace("}", "").replace("\\", "")
+    v = unicodedata.normalize("NFC", v).strip().lstrip("@").strip()
+    v = re.sub(r"\s+", " ", v)
+    if not any(ch.isalnum() for ch in v):
+        return None
+    return v[:120]
+
+
+# ── velocity ─────────────────────────────────────────────────────────────────
+
+# key -> (label, unit noun). Values are per day (scoring/velocity.py); accelerations are the change
+# between the previous and the latest 7-day rate.
+VELOCITY_LABELS: dict[str, tuple[str, str]] = {
+    "star_velocity_7d": ("Star velocity (7d)", "stars"),
+    "star_velocity_30d": ("Star velocity (30d)", "stars"),
+    "star_velocity_prev_7d": ("Star velocity (previous 7d)", "stars"),
+    "star_acceleration": ("Star acceleration", "stars"),
+    "commit_velocity_7d": ("Commit velocity (7d)", "commits"),
+    "commit_velocity_30d": ("Commit velocity (30d)", "commits"),
+    "commit_velocity_prev_7d": ("Commit velocity (previous 7d)", "commits"),
+    "commit_acceleration": ("Commit acceleration", "commits"),
+    "contributor_velocity_30d": ("New contributors (30d)", "contributors"),
+    "release_velocity_90d": ("Release cadence (90d)", "releases"),
+    "issue_velocity_30d": ("Open issues, net change (30d)", "issues"),
+}
+_BASES = ("observed", "backfill", "insufficient_history")
+
+
+def _num(v: float) -> str:
+    a = abs(v)
+    if a >= 100:
+        return f"{v:,.0f}"
+    if a >= 10:
+        return f"{v:.0f}"
+    return f"{v:.1f}".rstrip("0").rstrip(".") if a >= 1 else f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def _rate(v: float, noun: str) -> str:
+    """Per-day rate in readable units: per day when |v| ≥ 1/day, else per week."""
+    if v == 0:
+        return f"0 {noun}/day"
+    if abs(v) >= 1:
+        return f"{_num(v)} {noun}/day"
+    return f"{_num(v * 7)} {noun}/week"
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool)
+
+
+def velocity_metrics(metrics: dict[str, Any] | None) -> list[VelocityMetric]:
+    """API view of ``CompanyMetric.metrics['velocity']`` (tolerates a missing / partial dict).
+
+    ``insufficient_history`` values are shown as such, never as zero; backfilled values are marked
+    reconstructed; company sums over only some repositories are noted as lower bounds."""
+    vel = (metrics or {}).get("velocity")
+    if not isinstance(vel, dict):
+        return []
+    extra = sorted(k for k in vel if k not in VELOCITY_LABELS and ("velocity" in k or "acceleration" in k)
+                   and not k.endswith(("_basis", "_text")) and (vel[k] is None or _is_num(vel[k])))
+    coverage = vel.get("coverage") if isinstance(vel.get("coverage"), dict) else {}
+    repos = vel.get("repos") if _is_num(vel.get("repos")) else None
+    out = []
+    for k in [k for k in VELOCITY_LABELS if k in vel] + extra:
+        v = vel.get(k)
+        value = float(v) if _is_num(v) else None
+        basis = vel.get(f"{k}_basis")
+        if basis not in _BASES or value is None:
+            basis = "insufficient_history" if value is None else "observed"
+        label, noun = VELOCITY_LABELS.get(k, (k.replace("_", " ").capitalize(), ""))
+        unit = f"{noun}/day" if noun else None
+        if value is None:
+            human = "Insufficient observed history"
+        elif k.endswith("_acceleration"):
+            fam = k.removesuffix("_acceleration")
+            prev, cur = vel.get(f"{fam}_velocity_prev_7d"), vel.get(f"{fam}_velocity_7d")
+            if isinstance(vel.get(f"{k}_text"), str) and vel[f"{k}_text"]:
+                human = vel[f"{k}_text"]
+            elif _is_num(prev) and _is_num(cur) and noun:
+                human = f"{_num(prev)} → {_num(cur)} {noun}/day"
+            else:
+                human = f"{'+' if value > 0 else ''}{_num(value)} {noun}/day".rstrip()
+        else:
+            human = _rate(value, noun) if noun else _num(value)
+        if basis == "backfill":
+            human += " (reconstructed)"
+        n = coverage.get(k)
+        note = (f"Sum over {int(n)} of {int(repos)} repositories (lower bound)"
+                if value is not None and _is_num(n) and repos and 0 < n < repos else None)
+        out.append(VelocityMetric(key=k, label=label, value=value, unit=unit, basis=basis, human=human, note=note))
+    return out
 
 
 # ── evidence & why ───────────────────────────────────────────────────────────
@@ -425,8 +610,10 @@ def company_summaries(session: Session, companies: Sequence[Company]) -> list[Co
     out = []
     for c in companies:
         snap, m = snaps.get(c.id), mets.get(c.id, {})
+        dn = display_name(c)
         out.append(CompanySummary(
-            id=str(c.id), slug=c.slug, name=c.name, one_liner=one_liner(c), kind=c.kind, stage=c.stage,
+            id=str(c.id), slug=c.slug, name=dn.name, raw_name=dn.raw_if_changed, name_note=dn.note,
+            one_liner=one_liner(c), kind=c.kind, stage=c.stage,
             score=round(snap.score) if snap else None, delta_7d=d7.get(c.id),
             thesis_tags=tags.get(c.id, []),
             attention_gap=(snap.attention or {}).get("gap") if snap else None,
@@ -480,9 +667,12 @@ def person_cards(session: Session, people: Sequence[Person]) -> list[PersonCard]
     out = []
     for p in people:
         snap, cp = snaps.get(p.id), links.get(p.id)
+        dn = display_name(p)
         out.append(PersonCard(
-            id=str(p.id), slug=p.slug, name=p.name, headline=headline(p), current_company=p.current_company,
-            current_role=p.current_role or (cp.role if cp else None), prior_affiliations=p.prior_affiliations or [],
+            id=str(p.id), slug=p.slug, name=dn.name, raw_name=dn.raw_if_changed, name_note=dn.note,
+            headline=headline(p), current_company=clean_label(p.current_company),
+            current_role=p.current_role or (cp.role if cp else None),
+            prior_affiliations=[a for a in map(clean_label, p.prior_affiliations or []) if a],
             domains=p.domains or [], github_handle=p.github_handle, x_handle=p.x_handle,
             personal_site=p.personal_site, avatar_url=avatar(p),
             founder_score=round(snap.score) if snap else None, delta_7d=d7.get(p.id),
@@ -505,8 +695,10 @@ def company_cards(session: Session, companies: Sequence[Company], start_rank: in
     for i, c in enumerate(companies):
         snap = snaps.get(c.id)
         ascore = anti_score_from_snapshot(snap) if snap else None
+        dn = display_name(c)
         cards.append(IntelCard(
-            rank=start_rank + i, entity_type="company", id=str(c.id), slug=c.slug, name=c.name,
+            rank=start_rank + i, entity_type="company", id=str(c.id), slug=c.slug, name=dn.name,
+            raw_name=dn.raw_if_changed, name_note=dn.note,
             kind_label=kind_label(c, tags.get(c.id, [])), one_liner=one_liner(c),
             score=round(snap.score) if snap else 0, delta_7d=d7.get(c.id), delta_30d=d30.get(c.id),
             thesis_tags=tags.get(c.id, []), why_surfaced=why_surfaced(snap, mets.get(c.id)),
@@ -516,6 +708,7 @@ def company_cards(session: Session, companies: Sequence[Company], start_rank: in
             sparkline=sparks.get(c.id, []), sparkline_label="GitHub stars · 30d" if c.id in sparks else None,
             first_seen_at=c.first_seen_at, is_new=bool(c.first_seen_at and c.first_seen_at >= cutoff),
             watched=c.id in watched, is_demo=c.is_demo, data_note=data_note(c.is_demo),
+            data_age=light_data_age(c),
         ))
     return cards
 
@@ -536,14 +729,17 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
         why = [EvidenceItem.model_validate(e) for e in _person_evidence(snap)]
         domains = ", ".join(theme_label(d) for d in (p.domains or [])[:2])
         lines = []
-        if p.current_company is None and p.prior_affiliations:
-            lines.append(f"No current company listed — previously {p.prior_affiliations[-1]}.")
+        prior = [a for a in map(clean_label, p.prior_affiliations or []) if a]
+        if clean_label(p.current_company) is None and prior:
+            lines.append(f"No current company listed — previously {prior[-1]}.")
         if domains:
             lines.append(f"Technical domain: {domains}.")
         if ascore and ascore.attention_gap and ascore.attention_gap.flagged:
             lines.append("Technical output well ahead of public following.")
+        dn = display_name(p)
         cards.append(IntelCard(
-            rank=start_rank + i, entity_type="person", id=str(p.id), slug=p.slug, name=p.name,
+            rank=start_rank + i, entity_type="person", id=str(p.id), slug=p.slug, name=dn.name,
+            raw_name=dn.raw_if_changed, name_note=dn.note,
             kind_label=person_kind_label(p, links.get(p.id)),
             one_liner=headline(p), score=round(snap.score) if snap else 0, delta_7d=d7.get(p.id),
             delta_30d=d30.get(p.id), thesis_tags=tags.get(p.id, []), why_surfaced=why, why_anti=lines,
@@ -551,6 +747,7 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
             sparkline=sparks.get(p.id, []), sparkline_label="Founder score · 30d" if p.id in sparks else None,
             first_seen_at=p.first_seen_at, is_new=bool(p.first_seen_at and p.first_seen_at >= cutoff),
             watched=p.id in watched, is_demo=p.is_demo, data_note=data_note(p.is_demo),
+            data_age=light_data_age(p),
         ))
     return cards
 

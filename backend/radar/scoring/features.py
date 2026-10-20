@@ -19,7 +19,8 @@ FORMATION_SIGNAL_TYPES = frozenset(
 # and are dated when observed, not when the change happened. They are evidence, never collision events:
 # counting them would double-count the metrics and make reconstructed history incomparable.
 MEASUREMENT_SIGNAL_TYPES = frozenset(
-    {"star_velocity", "star_acceleration", "commit_acceleration", "new_contributors", "hiring_active"}
+    {"star_velocity", "star_acceleration", "commit_acceleration", "new_contributors", "hiring_active",
+     "young_org_team"}
 )
 
 

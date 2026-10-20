@@ -13,9 +13,15 @@ from radar import clock
 from radar.models.core import CompanyMetric, ScoreSnapshot
 from radar.schemas.api import AntiScore, AttentionGap, Collision, ScoreComponent
 from radar.scoring.anti_score import SCORE_VERSION, ScoreResult, score_companies, score_people
-from radar.scoring.extract import build_company_features, build_person_features, load_signal_index
+from radar.scoring.extract import (
+    build_company_features,
+    build_company_velocity,
+    build_person_features,
+    load_signal_index,
+)
 from radar.scoring.features import EntityFeatures
 from radar.scoring.feedback import load_prefs
+from radar.scoring.velocity import aggregate_velocity
 from radar.thesis.loader import Thesis, get_thesis
 
 log = logging.getLogger(__name__)
@@ -62,8 +68,10 @@ def _upsert_snapshot(session: Session, r: ScoreResult, day: date, reconstructed:
     )
 
 
-def company_metrics(f: EntityFeatures, r: ScoreResult, day: date) -> dict[str, Any]:
-    return {
+def company_metrics(
+    f: EntityFeatures, r: ScoreResult, day: date, velocity: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    out = {
         "computed_on": day.isoformat(),
         "score": r.total,
         "score_version": r.version,
@@ -91,6 +99,9 @@ def company_metrics(f: EntityFeatures, r: ScoreResult, day: date) -> dict[str, A
         "components": {c.key: round(c.value, 2) for c in r.components},
         "has_history": f.has_history,
     }
+    # Per-day velocities with an observed/backfill/insufficient_history basis per value (scoring.velocity).
+    out["velocity"] = velocity if velocity is not None else {"computed_on": day.isoformat(), **aggregate_velocity([])}
+    return out
 
 
 def score_all(
@@ -115,6 +126,7 @@ def score_all(
         f.founder_ids = [pid for pid, _ in known]
         f.founder_scores = [float(s) for _, s in known]
     company_scores = score_companies(companies, thesis, prefs, day)
+    velocity = {} if reconstruct else build_company_velocity(session, day, [f.entity_id for f in companies])
 
     for r in person_scores.values():
         _upsert_snapshot(session, r, day, reconstruct)
@@ -123,7 +135,7 @@ def score_all(
         _upsert_snapshot(session, r, day, reconstruct)
         if reconstruct:
             continue
-        stmt = insert(CompanyMetric).values(company_id=f.entity_id, metrics=company_metrics(f, r, day))
+        stmt = insert(CompanyMetric).values(company_id=f.entity_id, metrics=company_metrics(f, r, day, velocity.get(f.entity_id)))
         session.execute(
             stmt.on_conflict_do_update(
                 index_elements=["company_id"],

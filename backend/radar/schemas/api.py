@@ -115,6 +115,33 @@ class TimeSeries(BaseModel):
 # ── Entities ─────────────────────────────────────────────────────────────────
 
 
+SourceFamily = Literal["github", "research", "hiring", "web", "community", "social"]
+VelocityBasis = Literal["observed", "backfill", "insufficient_history"]
+
+
+class DataAge(BaseModel):
+    """How fresh an entity's data is. ``families`` maps each source family (github, research,
+    hiring, web, community = Hacker News, social = X) to when it last produced an observation
+    about the entity (None = never observed). Cards carry ``updated_at`` only."""
+
+    updated_at: datetime | None = None
+    last_observed_at: datetime | None = None  # max over families
+    age_days: int | None = None  # data-clock days since last_observed_at
+    families: dict[str, datetime | None] = Field(default_factory=dict)
+
+
+class VelocityMetric(BaseModel):
+    """One derived rate from scoring (CompanyMetric.metrics['velocity'])."""
+
+    key: str  # star_velocity_7d, star_acceleration, commit_velocity_30d, …
+    label: str
+    value: float | None = None
+    unit: str | None = None  # "stars/day"
+    basis: VelocityBasis = "insufficient_history"
+    human: str  # "61 stars/day", "12 → 61 stars/day", "Insufficient observed history"
+    note: str | None = None  # e.g. "Sum over 2 of 3 repositories (lower bound)"
+
+
 class FactField(BaseModel):
     """A displayed field with provenance."""
 
@@ -137,7 +164,9 @@ class TopicTag(BaseModel):
 class PersonCard(BaseModel):
     id: str
     slug: str
-    name: str
+    name: str  # display name ("@handle" when only a handle is known)
+    raw_name: str | None = None  # the name as recorded, when it differs from `name`
+    name_note: str | None = None  # e.g. "handle only"
     headline: str | None = None  # "Former NVIDIA robotics researcher"
     current_company: str | None = None
     current_role: str | None = None
@@ -196,7 +225,9 @@ class IntelCard(BaseModel):
     entity_type: EntityKind
     id: str
     slug: str
-    name: str
+    name: str  # display name (cleaned of repo slugs / taglines; "@handle" for handle-only people)
+    raw_name: str | None = None  # the name as recorded, when it differs from `name`
+    name_note: str | None = None
     kind_label: str  # "STEALTH ROBOTICS COMPANY", "OPEN-SOURCE PROJECT", "FOUNDER"
     one_liner: str | None = None
     score: int
@@ -215,12 +246,15 @@ class IntelCard(BaseModel):
     watched: bool = False
     is_demo: bool = False
     data_note: str | None = None  # e.g. "Real data captured 2026-10-06"
+    data_age: DataAge | None = None  # light: updated_at only
 
 
 class CompanySummary(BaseModel):
     id: str
     slug: str
-    name: str
+    name: str  # display name
+    raw_name: str | None = None  # the name as recorded, when it differs from `name`
+    name_note: str | None = None
     one_liner: str | None = None
     kind: str
     stage: str
@@ -287,11 +321,14 @@ class CompanyDetail(BaseModel):
     match_candidates: list[dict[str, Any]] = Field(default_factory=list)
     watched: bool = False
     data_note: str | None = None
+    data_age: DataAge | None = None
+    velocity: list[VelocityMetric] = Field(default_factory=list)  # empty until scoring computes it
 
 
 class PersonDetail(BaseModel):
     card: PersonCard
     bio: str | None = None
+    bio_note: str | None = None  # e.g. "Self-reported on GitHub profile"
     facts: list[FactField]
     founder_score: AntiScore | None = None
     score_history: list[ScorePoint] = Field(default_factory=list)
@@ -304,6 +341,7 @@ class PersonDetail(BaseModel):
     sources: list[SourceRef] = Field(default_factory=list)
     watched: bool = False
     data_note: str | None = None
+    data_age: DataAge | None = None
 
 
 # ── Feeds ────────────────────────────────────────────────────────────────────
@@ -336,7 +374,7 @@ class RadarCounts(BaseModel):
     strange_signals: int
     thesis_shifts: int
     new_entities_7d: int
-    signals_24h: int
+    signals_24h: int  # signals in the 24h before the data as-of time (snapshot day when is_snapshot)
 
 
 class RadarFeed(BaseModel):
@@ -347,9 +385,12 @@ class RadarFeed(BaseModel):
     founders: list[IntelCard]
     strange_signals: list[StrangeSignal]
     thesis_shifts: list[ThesisShift]
-    data_freshness: dict[str, Any]  # {provider: last_success_iso}
-    demo_mode: bool
+    data_freshness: dict[str, Any]  # {provider: last_success_iso}; real providers only
+    demo_mode: bool  # whether labeled synthetic entities are included in this response
     snapshot_note: str | None = None
+    data_as_of: date  # the day the data describes (snapshot day when is_snapshot, else today)
+    is_snapshot: bool = False  # serving the verified snapshot rather than live data
+    snapshot_age_days: int | None = None  # wall-clock days since data_as_of when is_snapshot
 
 
 class WatchChange(BaseModel):

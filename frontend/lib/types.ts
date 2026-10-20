@@ -133,6 +133,35 @@ export interface TimeSeries {
 
 // ── Entities ─────────────────────────────────────────────────────────────────
 
+/** Source families tracked for data age (community = Hacker News, social = X). */
+export type SourceFamily = "github" | "research" | "hiring" | "web" | "community" | "social";
+
+/** How fresh an entity's data is. Cards carry `updated_at` only; details fill every field. */
+export interface DataAge {
+  updated_at: ISODateTime | null;
+  /** Max over families. */
+  last_observed_at: ISODateTime | null;
+  /** Data-clock days since last_observed_at. */
+  age_days: number | null;
+  /** Last observation per source family (null = never observed). Empty on cards. */
+  families: Partial<Record<SourceFamily, ISODateTime | null>>;
+}
+
+export type VelocityBasis = "observed" | "backfill" | "insufficient_history";
+
+/** One derived rate from scoring (per day). */
+export interface VelocityMetric {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: string | null;
+  basis: VelocityBasis;
+  /** "61 stars/day", "12 → 61 stars/day", "Insufficient observed history"; backfill ends in "(reconstructed)". */
+  human: string;
+  /** e.g. "Sum over 2 of 3 repositories (lower bound)". */
+  note?: string | null;
+}
+
 export interface FactField {
   label: string;
   value: JsonValue;
@@ -153,7 +182,12 @@ export interface TopicTag {
 export interface PersonCard {
   id: string;
   slug: string;
+  /** Display name ("@handle" when only a handle is known). */
   name: string;
+  /** The name as recorded, when it differs from `name`. */
+  raw_name?: string | null;
+  /** e.g. "handle only". */
+  name_note?: string | null;
   headline: string | null;
   current_company: string | null;
   current_role: string | null;
@@ -220,7 +254,10 @@ export interface IntelCard {
   entity_type: EntityKind;
   id: string;
   slug: string;
+  /** Display name (cleaned of repo slugs / taglines; "@handle" for handle-only people). */
   name: string;
+  raw_name?: string | null;
+  name_note?: string | null;
   kind_label: string;
   one_liner: string | null;
   score: number;
@@ -239,12 +276,17 @@ export interface IntelCard {
   watched: boolean;
   is_demo: boolean;
   data_note: string | null;
+  /** Light: updated_at only. */
+  data_age?: DataAge | null;
 }
 
 export interface CompanySummary {
   id: string;
   slug: string;
+  /** Display name. */
   name: string;
+  raw_name?: string | null;
+  name_note?: string | null;
   one_liner: string | null;
   kind: string;
   stage: string;
@@ -316,11 +358,16 @@ export interface CompanyDetail {
   match_candidates: JsonObject[];
   watched: boolean;
   data_note: string | null;
+  data_age?: DataAge | null;
+  /** Empty until scoring has computed velocity. */
+  velocity?: VelocityMetric[];
 }
 
 export interface PersonDetail {
   card: PersonCard;
   bio: string | null;
+  /** e.g. "Self-reported on GitHub profile". */
+  bio_note?: string | null;
   facts: FactField[];
   founder_score: AntiScore | null;
   score_history: ScorePoint[];
@@ -333,6 +380,7 @@ export interface PersonDetail {
   sources: SourceRef[];
   watched: boolean;
   data_note: string | null;
+  data_age?: DataAge | null;
 }
 
 // ── Feeds ────────────────────────────────────────────────────────────────────
@@ -364,6 +412,7 @@ export interface RadarCounts {
   strange_signals: number;
   thesis_shifts: number;
   new_entities_7d: number;
+  /** Signals in the 24h before the data as-of time (the snapshot day when is_snapshot). */
   signals_24h: number;
 }
 
@@ -375,9 +424,17 @@ export interface RadarFeed {
   founders: IntelCard[];
   strange_signals: StrangeSignal[];
   thesis_shifts: ThesisShift[];
+  /** Last successful ingestion per real provider (no snapshot/demo pseudo-providers). */
   data_freshness: Record<string, string | null>;
+  /** Whether labeled synthetic entities are included in this response. */
   demo_mode: boolean;
+  /** "Snapshot collected Oct 6, 2026 · 14 days old" when is_snapshot, else null. */
   snapshot_note: string | null;
+  /** The day the data describes (snapshot day when is_snapshot, else today). */
+  data_as_of?: ISODate;
+  is_snapshot?: boolean;
+  /** Wall-clock days since data_as_of when is_snapshot; null when live. */
+  snapshot_age_days?: number | null;
 }
 
 export interface WatchChange {

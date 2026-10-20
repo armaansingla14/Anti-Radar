@@ -484,3 +484,100 @@ def test_truncated_board_does_not_close_unseen_jobs(db):
     assert _count(db, Job, Job.closed_at.is_not(None)) == 0  # a lower bound is not a closure
     ingest_batch(db, _jobs("1"))  # complete crawl: now the others really are gone
     assert _count(db, Job, Job.closed_at.is_not(None)) == 2
+
+
+# ── V2: self-reported provenance, README change, alias normalization, project kind ──
+
+
+def test_github_profile_fields_are_self_reported_inference(db):
+    ingest_batch(db, _github_batch())
+    person = db.scalars(select(Person)).one()
+    prov = {p.field: p for p in db.scalars(select(FieldProvenance).where(FieldProvenance.entity_id == person.id))}
+    for fld in ("current_company", "bio"):
+        assert prov[fld].epistemic == "INFERENCE", fld
+        assert prov[fld].source_type == "github:self-reported" and prov[fld].confidence == pytest.approx(0.6)
+    assert prov["github_handle"].epistemic == "FACT"  # the account itself is observed
+    company = db.scalars(select(Company)).one()
+    cprov = {p.field: p for p in db.scalars(select(FieldProvenance).where(FieldProvenance.entity_id == company.id))}
+    assert cprov["description"].epistemic == "INFERENCE" and cprov["website"].epistemic == "INFERENCE"
+    assert cprov["github_org"].epistemic == "FACT"
+
+
+def test_self_reported_rule_only_applies_to_github_profiles(db):
+    ingest_batch(db, ProviderBatch(provider="website", companies=[
+        CompanyRecord(ref=domain_ref("tactica.dev"), name="Tactica", website="https://tactica.dev",
+                      description="Tactile skins")]))
+    prov = db.scalars(select(FieldProvenance).where(FieldProvenance.field == "description")).one()
+    assert prov.epistemic == "FACT" and prov.source_type == "website"
+
+
+def _readme_batch(sha: str | None) -> ProviderBatch:
+    return ProviderBatch(provider="github", repositories=[
+        RepoRecord(ref=repo_ref("tactica/skin"), full_name="tactica/skin", owner="tactica", stars=5,
+                   readme_excerpt=f"readme {sha}", attrs={"readme_sha": sha})])
+
+
+def test_readme_sha_change_emits_readme_changed_once(db):
+    ingest_batch(db, _readme_batch("aaa"))
+    assert _signals(db, "readme_changed") == []  # first observation is not a change
+    ingest_batch(db, _readme_batch("aaa"))
+    assert _signals(db, "readme_changed") == []
+    ingest_batch(db, _readme_batch("bbb"))
+    ingest_batch(db, _readme_batch("bbb"))
+    [sig] = _signals(db, "readme_changed")
+    assert sig.epistemic == "FACT" and sig.meta["old_sha"] == "aaa" and sig.meta["new_sha"] == "bbb"
+    assert db.scalars(select(Repository)).one().attrs["readme_sha"] == "bbb"
+    ingest_batch(db, _readme_batch(None))  # README not fetched this time: not a change, sha kept
+    assert len(_signals(db, "readme_changed")) == 1
+    assert db.scalars(select(Repository)).one().attrs["readme_sha"] == "bbb"
+
+
+def _person_batch(company: str) -> ProviderBatch:
+    return ProviderBatch(provider="github", people=[
+        PersonRecord(ref=gh_user_ref("ada"), name="Ada Lovelace", github_handle="ada", current_company=company)])
+
+
+def test_alias_spellings_are_not_affiliation_changes_and_normalized_forms_are_stored(db):
+    ingest_batch(db, _person_batch("@google-deepmind"))
+    ingest_batch(db, _person_batch("DeepMind"))
+    assert _signals(db, "affiliation_changed") == []
+    p = db.scalars(select(Person)).one()
+    assert p.attrs["affiliations_normalized"]["current_company"] == "Google DeepMind"
+    ingest_batch(db, _person_batch("Tactica"))
+    [sig] = _signals(db, "affiliation_changed")
+    p = db.scalars(select(Person)).one()
+    assert p.current_company == "Tactica" and p.prior_affiliations == ["DeepMind"]  # raw strings kept
+    assert p.attrs["affiliations_normalized"] == {"current_company": "Tactica",
+                                                  "prior_affiliations": ["Google DeepMind"]}
+
+
+def test_young_org_without_domain_is_a_project_until_a_domain_appears(db):
+    org = gh_org_ref("newlab")
+    ingest_batch(db, ProviderBatch(provider="github", companies=[
+        CompanyRecord(ref=org, name="newlab", github_org="newlab", attrs={"gh_org_created_at": "2026-08-01"})]))
+    assert db.scalars(select(Company)).one().kind == "project"
+    ingest_batch(db, ProviderBatch(provider="github", companies=[
+        CompanyRecord(ref=org, name="newlab", github_org="newlab", website="https://newlab.ai",
+                      alt_refs=[domain_ref("newlab.ai")])]))
+    c = db.scalars(select(Company)).one()
+    assert c.kind == "company" and c.domain == "newlab.ai"
+
+
+def test_org_stub_from_repo_owner_is_a_project(db):
+    ingest_batch(db, ProviderBatch(provider="github", repositories=[
+        RepoRecord(ref=repo_ref("teamx/core"), full_name="teamx/core", owner="teamx", owner_type="Organization",
+                   owner_company=gh_org_ref("teamx"))]))
+    assert db.scalars(select(Company)).one().kind == "project"
+
+
+def test_live_run_does_not_release_demo_snapshot_pin(db, monkeypatch):
+    monkeypatch.setattr(clock, "snapshot_pinned", lambda: True)
+    clock.set_as_of(date(2026, 10, 6))
+    try:
+        run, _ = run_provider(session_scope, "github", lambda: _github_batch(), params={})
+        assert run.status == "ok" and clock.as_of() == date(2026, 10, 6)
+        monkeypatch.setattr(clock, "snapshot_pinned", lambda: False)
+        run_provider(session_scope, "github", lambda: _github_batch(), params={})
+        assert clock.as_of() is None
+    finally:
+        clock.set_as_of(None)

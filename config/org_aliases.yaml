@@ -1,0 +1,51 @@
+# Organization alias map used to normalize free-text, self-reported affiliations
+# (GitHub profile "company", arXiv affiliations, personal sites).
+#
+# canonical name -> list of aliases. Matching is case-insensitive and ignores
+# punctuation, a leading "@", and legal suffixes (Inc, LLC, Ltd, Corp).
+# The raw string is always kept next to the normalized one (Person.attrs['affiliations_normalized']);
+# normalization never changes what a person actually wrote.
+#
+# Keep aliases unambiguous: a bare word that is also an ordinary English word
+# ("meta", "fair") is only matched when it is the *entire* affiliation string.
+
+Google DeepMind: [google-deepmind, google deepmind, deepmind, deep mind, deepmind technologies, gdm]
+Google Research: [google research, google brain, googlebrain, google ai]
+Google: [google, google llc, alphabet]
+OpenAI: [openai, open ai, openai inc, open-ai]
+Anthropic: [anthropic, anthropics, anthropic pbc]
+Meta AI: [meta ai, meta-ai, fair, meta fair, facebook ai research, facebookresearch, facebook ai, meta superintelligence labs, msl]
+Meta: [meta, facebook, meta platforms, facebook inc]
+NVIDIA: [nvidia, nvidia corporation, nvidia research, nvidia ai, nvlabs, nv labs]
+Tesla: [tesla, tesla motors, tesla inc, tesla ai, teslamotors]
+SpaceX: [spacex, space x, space exploration technologies]
+Anduril: [anduril, anduril industries, anduril-industries]
+Palantir: [palantir, palantir technologies]
+xAI: [xai, x ai, x.ai]
+Microsoft: [microsoft, msft, microsoft corporation]
+Microsoft Research: [microsoft research, msr, msresearch]
+Apple: [apple, apple inc]
+Amazon: [amazon, aws, amazon web services]
+Hugging Face: [hugging face, huggingface, hf]
+Physical Intelligence: [physical intelligence, physical-intelligence, pi robotics]
+Boston Dynamics: [boston dynamics, bostondynamics, boston dynamics ai institute, rai institute]
+Figure: [figure ai, figure-ai, figure robotics]
+Skild AI: [skild, skild ai, skildai]
+Waymo: [waymo, google waymo]
+Toyota Research Institute: [toyota research institute, tri, toyotaresearchinstitute]
+Mistral AI: [mistral, mistral ai, mistralai]
+Cohere: [cohere, cohere ai, cohere for ai]
+Databricks: [databricks, mosaicml, mosaic ml]
+AMD: [amd, advanced micro devices]
+Intel: [intel, intel corporation, intel labs]
+Qualcomm: [qualcomm, qualcomm ai research]
+Lockheed Martin: [lockheed martin, lockheed, lmco]
+Northrop Grumman: [northrop grumman, northrop]
+Raytheon: [raytheon, rtx, raytheon technologies]
+Blue Origin: [blue origin, blueorigin]
+Commonwealth Fusion Systems: [commonwealth fusion, commonwealth fusion systems, cfs energy]
+Stanford University: [stanford, stanford university, stanford ai lab, sail, stanfordnlp]
+MIT: [mit, massachusetts institute of technology, mit csail, csail]
+UC Berkeley: [berkeley, uc berkeley, university of california berkeley, bair, berkeley ai research]
+Carnegie Mellon University: [cmu, carnegie mellon, carnegie mellon university]
+ETH Zurich: [eth, eth zurich, eth zürich, ethz]

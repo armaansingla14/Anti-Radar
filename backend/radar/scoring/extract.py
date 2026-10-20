@@ -38,6 +38,7 @@ from radar.models.core import (
 )
 from radar.scoring.features import FORMATION_SIGNAL_TYPES, EntityFeatures, PersonFeatures, SignalLite
 from radar.scoring.novelty import tokenize
+from radar.scoring.velocity import aggregate_velocity, compute_velocity
 from radar.thesis.loader import Thesis, get_thesis
 
 KEY_CONTRIBUTOR_SHARE = 0.15  # contributions / top contributor's, to count a repo as 'key'
@@ -52,6 +53,8 @@ REPO_METRICS = ("stars", "forks", "commits_week", "releases")
 # 'contributors' = cumulative distinct authors by first-commit week (GitHub backfill);
 # 'contributors_total' = the /contributors count (includes bots; a different measure).
 CONTRIBUTOR_METRICS = ("contributors", "contributors_total")
+VELOCITY_METRICS = ("stars", "commits_week", "contributors", "contributors_total", "releases_total", "open_issues")
+VELOCITY_LOOKBACK_DAYS = 100  # 90-day release window + endpoint tolerance
 
 Series = dict[tuple[uuid.UUID, str], list[tuple[date, float]]]
 
@@ -717,3 +720,87 @@ def _org_created(session: Session, org_ids: set[uuid.UUID]) -> dict[uuid.UUID, t
         c.id: (org_created_date(c.founded_date, repo_dates.get(c.id, [])), c.name)
         for c in session.scalars(select(Company).where(Company.id.in_(list(org_ids))))
     }
+
+
+# ── Velocity ─────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class RepoSeries:
+    """One repository's velocity inputs: metric -> sorted points, and the observed (non-backfill) days."""
+
+    points: dict[str, list[tuple[date, float]]] = field(default_factory=lambda: defaultdict(list))
+    observed: dict[str, set[date]] = field(default_factory=lambda: defaultdict(set))
+
+
+def load_velocity_series(
+    session: Session, ids: Iterable[uuid.UUID], day: date, lookback_days: int = VELOCITY_LOOKBACK_DAYS
+) -> dict[uuid.UUID, RepoSeries]:
+    """Series for ``VELOCITY_METRICS`` within the lookback, plus the last point before it (a step
+    series' value at a window start can come from an older change point)."""
+    ids = list(set(ids))
+    out: dict[uuid.UUID, RepoSeries] = defaultdict(RepoSeries)
+    if not ids:
+        return out
+    lo = day - timedelta(days=lookback_days)
+    cols = (MetricSnapshot.entity_id, MetricSnapshot.metric, MetricSnapshot.day, MetricSnapshot.value,
+            MetricSnapshot.source)
+    base = (MetricSnapshot.entity_id.in_(ids), MetricSnapshot.metric.in_(VELOCITY_METRICS))
+    rows = list(session.execute(
+        select(*cols)
+        .where(*base, MetricSnapshot.day < lo)
+        .distinct(MetricSnapshot.entity_id, MetricSnapshot.metric)
+        .order_by(MetricSnapshot.entity_id, MetricSnapshot.metric, MetricSnapshot.day.desc())
+    ).all())
+    rows += session.execute(
+        select(*cols).where(*base, MetricSnapshot.day >= lo, MetricSnapshot.day <= day).order_by(MetricSnapshot.day)
+    ).all()
+    for eid, metric, d, v, src in sorted(rows, key=lambda r: r[2]):
+        rs = out[eid]
+        rs.points[metric].append((d, float(v)))
+        if src == "observed":
+            rs.observed[metric].add(d)
+    for rs in out.values():
+        # 'contributors' observed points written before the backfill era were /contributors counts (bots
+        # included). A backfilled repo keeps only observed points from deep fetches, which also write
+        # 'contributors_total' on the same day and use the backfill's definition.
+        total_days = {d for d, _ in rs.points.get("contributors_total", [])}
+        pts = rs.points.get("contributors", [])
+        obs = rs.observed["contributors"]
+        if any(d not in obs for d, _ in pts):
+            kept: list[tuple[date, float]] = []
+            last_backfill = 0.0
+            for d, v in pts:
+                if d not in obs:
+                    last_backfill = v
+                    kept.append((d, v))
+                elif d in total_days and v >= last_backfill:  # a cumulative count cannot be below its past
+                    kept.append((d, v))
+            rs.points["contributors"] = kept
+    return out
+
+
+def build_company_velocity(
+    session: Session, day: date, company_ids: Iterable[uuid.UUID] | None = None
+) -> dict[uuid.UUID, dict]:
+    """Per-company velocity (sum over its repositories) as of ``day``; see ``scoring.velocity``."""
+    q = select(Repository.id, Repository.company_id, Repository.gh_created_at).where(
+        Repository.company_id.is_not(None)
+    )
+    cids: list[uuid.UUID] = []
+    if company_ids is not None:
+        cids = list(set(company_ids))
+        if not cids:
+            return {}
+        q = q.where(Repository.company_id.in_(cids))
+    repos = session.execute(q).all()
+    series = load_velocity_series(session, [r.id for r in repos], day)
+    per_company: dict[uuid.UUID, list[dict]] = defaultdict(list)
+    for rid, cid, created in repos:
+        rs = series.get(rid) or RepoSeries()
+        per_company[cid].append(
+            compute_velocity(rs.points, day, observed_days=rs.observed, created=created.date() if created else None)
+        )
+    for cid in cids if company_ids is not None else ():
+        per_company.setdefault(cid, [])  # no repositories: every value is insufficient_history
+    return {cid: {"computed_on": day.isoformat(), **aggregate_velocity(rows)} for cid, rows in per_company.items()}

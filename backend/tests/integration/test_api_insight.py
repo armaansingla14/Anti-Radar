@@ -132,9 +132,9 @@ def test_status_lists_providers_llm_and_db(seeded, client, monkeypatch):
     by = {p["provider"]: p for p in st["providers"]}
     assert {"github", "hackernews", "arxiv", "website", "x"} <= set(by)
     assert by["x"]["state"] == "disabled"
-    assert by["x"]["reason"].startswith("X_BEARER_TOKEN required — official X API v2")
+    assert by["x"]["reason"].startswith("API access not configured")
     assert by["hackernews"]["state"] == "never_run"
-    assert by["demo"]["state"] == "healthy" and by["demo"]["signals_created"] > 0
+    assert "demo" not in by  # the fictional dataset is reported as SYNTHETIC data, never as a source
     assert st["llm"]["provider"] == "none" and st["llm"]["enabled"] is False
     assert set(st["llm"]["models"]) == {"fast", "standard", "deep"}
     db = st["database"]

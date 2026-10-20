@@ -2,8 +2,14 @@
 
 Change detection emitted here (all FACT, derived from comparing observations):
 ``affiliation_changed`` (never from a name-only arXiv identity), ``bio_changed``, ``formation_language`` (people),
-``website_changed`` (web pages) and ``job_posted`` (new ATS jobs after a
-company's first crawl). Everything is idempotent: re-ingesting the same batch
+``website_changed`` (web pages), ``readme_changed`` (a repository's README content hash
+``attrs.readme_sha`` changed between observations) and ``job_posted`` (new ATS jobs after a
+company's first crawl).
+
+Provenance: values a person or organization typed into their own GitHub profile
+(company, bio, blog, X handle, location, org description/website) are recorded as
+INFERENCE with source_type ``github:self-reported`` — they are claims, not observations.
+Observed counts and dates (stars, followers, created_at) remain FACT. Everything is idempotent: re-ingesting the same batch
 creates no duplicate rows or signals.
 """
 
@@ -41,6 +47,7 @@ from radar.models import (
     Source,
     WebPage,
 )
+from radar.pipeline.aliases import normalized_affiliations, same_org
 from radar.pipeline.resolve import (
     CORROBORATED_AUTHOR_VIA,
     AuthorContext,
@@ -73,6 +80,13 @@ YOUNG_ORG_YEARS = 3
 CONTRIBUTOR_MEMBERSHIP_CONFIDENCE = 0.7
 BIO_MATERIAL_CHANGE_RATIO = 0.9
 _METRIC_PRIORITY = {"observed": 3, "backfill": 2, "demo": 1}
+SELF_REPORTED_NOTE = "self-reported on GitHub profile"
+SELF_REPORTED_SOURCE = "github:self-reported"
+# Profile fields a user/org types themselves on GitHub (never VERIFIED).
+_SELF_REPORTED_FIELDS = {
+    "person": {"bio", "current_company", "location", "personal_site", "x_handle"},
+    "company": {"description", "website", "location", "x_handle", "domain"},
+}
 
 
 @dataclass
@@ -224,15 +238,27 @@ class _Ingestor:
         if self.is_demo and attrs.get("demo_label"):
             entity.demo_label = str(attrs["demo_label"])[:64]
 
-    def _prov(self, entity: Entity, etype: str, fld: str, value: Any, source_url: str | None) -> None:
+    def _prov(self, entity: Entity, etype: str, fld: str, value: Any, source_url: str | None,
+              *, self_reported: bool = False) -> None:
         if value in (None, "", [], {}):
             return
         # Fictional demo values are never VERIFIED facts: they are recorded as INFERENCE.
+        # Neither are self-reported profile fields: a GitHub "company" is a claim, not an observation.
+        inference = self.is_demo or entity.is_demo or self_reported
         record_provenance(
             self.s, etype, entity.id, fld, value,
-            source_type=self.provider, source_url=source_url or canonical_url(entity),
-            epistemic=Epistemic.INFERENCE.value if self.is_demo or entity.is_demo else Epistemic.FACT.value,
+            source_type=SELF_REPORTED_SOURCE if self_reported else self.provider,
+            source_url=source_url or canonical_url(entity),
+            epistemic=Epistemic.INFERENCE.value if inference else Epistemic.FACT.value,
+            confidence=0.6 if self_reported else 1.0,
+            note=SELF_REPORTED_NOTE if self_reported else None,
         )
+
+    def _self_reported(self, etype: str, ref: EntityRef, fld: str) -> bool:
+        """A GitHub profile field typed by the user/org itself (user or org keyed records only)."""
+        if self.provider != "github" or fld not in _SELF_REPORTED_FIELDS.get(etype, set()):
+            return False
+        return split_key(ref)[0] in ("github_user", "github_org")
 
     def _observe(self, entity: Entity, fld: str, new: Any) -> tuple[bool, Any]:
         """Per-provider observation tracking.
@@ -316,7 +342,10 @@ class _Ingestor:
         was_stub = self._unstub(c)
         if was_stub or res.created:
             changed |= self._set(c, "name", rec.name)
-            changed |= self._set(c, "kind", rec.kind)
+            changed |= self._set(c, "kind", _company_kind(rec, c))
+        elif c.kind == "project" and rec.kind == "company" and c.domain:
+            c.kind = "company"  # a pre-company project that now has its own company domain
+            changed = True
         changed |= was_stub
         for fld in ("description", "website", "location", "founded_date"):
             changed |= self._observe(c, fld, getattr(rec, fld))[0]
@@ -327,9 +356,14 @@ class _Ingestor:
         self._count_update(res.created, changed)
         url = rec.source_url
         for fld in ("name", "description", "website", "location"):
-            self._prov(c, "company", fld, getattr(rec, fld), url)
-        self._prov(c, "company", "domain", c.domain if rec.website else None, url)
+            self._prov(c, "company", fld, getattr(rec, fld), url,
+                       self_reported=self._self_reported("company", rec.ref, fld))
+        self._prov(c, "company", "domain", c.domain if rec.website else None, url,
+                   self_reported=self._self_reported("company", rec.ref, "domain"))
         self._prov(c, "company", "github_org", rec.github_org, url)
+        if rec.x_handle:
+            self._prov(c, "company", "x_handle", rec.x_handle.lstrip("@"), url,
+                       self_reported=self._self_reported("company", rec.ref, "x_handle"))
 
     # ── people ──────────────────────────────────────────────────────────────
 
@@ -387,17 +421,22 @@ class _Ingestor:
         if rec.email_domain:
             extra["email_domain"] = rec.email_domain
         changed |= self._merge_attrs(p, extra)
+        changed |= _refresh_normalized_affiliations(p)
         self._count_update(created, changed)
-        for fld in ("name", "bio", "location", "current_company", "github_handle"):
-            self._prov(p, "person", fld, _clean_company(getattr(rec, fld)) if fld == "current_company"
-                       else getattr(rec, fld), url)
+        for fld in ("name", "bio", "location", "current_company", "github_handle", "personal_site", "x_handle"):
+            val = getattr(rec, fld)
+            if fld == "current_company":
+                val = _clean_company(val)
+            elif fld == "x_handle" and val:
+                val = val.lstrip("@")
+            self._prov(p, "person", fld, val, url, self_reported=self._self_reported("person", rec.ref, fld))
 
     def _person_affiliation(self, p: Person, rec: PersonRecord, url: str, *, emit: bool = True) -> bool:
         new = _clean_company(rec.current_company)
         if not new:
             return False
         changed, old = self._observe(p, "current_company", new)
-        if emit and old and _affiliation_differs(old, new):
+        if emit and old and _affiliation_differs(old, new) and not same_org(old, new):
             if old.lower() not in {a.lower() for a in p.prior_affiliations or []}:
                 p.prior_affiliations = [*(p.prior_affiliations or []), old]
             self._derive(
@@ -515,7 +554,16 @@ class _Ingestor:
             if not (new == 0 and (getattr(r, fld) or 0) > 0):  # 0 over a real count = missing data
                 changed |= self._set(r, fld, new)
         changed |= self._set(r, "archived", rec.archived)
+        old_sha = (r.attrs or {}).get("readme_sha")
+        new_sha = rec.attrs.get("readme_sha")
         changed |= self._merge_attrs(r, rec.attrs)
+        if old_sha and new_sha and old_sha != new_sha:
+            self._derive(
+                r, "repository", rec.ref.key, "readme_changed", f"{r.full_name}: README changed",
+                description=(rec.readme_excerpt or "")[:500] or None,
+                metadata={"old_sha": old_sha, "new_sha": new_sha, "repo": r.full_name},
+                discriminator=str(new_sha), source_url=canonical_url(r), normalized_value=0.3,
+            )
         if rec.owner_company is not None:
             company = self._resolve(rec.owner_company, name_hint=rec.owner)
             if r.company_id is None:
@@ -897,6 +945,27 @@ def _clean_company(name: str | None) -> str | None:
     return n or None
 
 
+def _company_kind(rec: CompanyRecord, c: Company) -> str:
+    """A GitHub org with no company domain stays a pre-company 'project' (see resolve._initial_company_kind)."""
+    if rec.kind == "company" and split_key(rec.ref)[0] == "github_org" and not c.domain:
+        return "project"
+    return rec.kind
+
+
+def _refresh_normalized_affiliations(p: Person) -> bool:
+    """Person.attrs['affiliations_normalized'] := alias-normalized current/prior affiliations.
+
+    The raw strings stay in Person.current_company / prior_affiliations.
+    """
+    if not p.current_company and not p.prior_affiliations:
+        return False
+    norm = normalized_affiliations(p.current_company, list(p.prior_affiliations or []))
+    if (p.attrs or {}).get("affiliations_normalized") == norm:
+        return False
+    p.attrs = {**(p.attrs or {}), "affiliations_normalized": norm}
+    return True
+
+
 def _affiliation_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
@@ -983,7 +1052,9 @@ def _shared_context(s: Session, a: uuid.UUID, b: uuid.UUID) -> tuple[str, list[s
     if comps:
         return "company", sorted(comps)
     pa, pb = s.get(Person, a), s.get(Person, b)
-    if pa.current_company and pb.current_company and not _affiliation_differs(pa.current_company, pb.current_company):
+    if pa.current_company and pb.current_company and (
+            not _affiliation_differs(pa.current_company, pb.current_company)
+            or same_org(pa.current_company, pb.current_company)):
         return "affiliation", [pa.current_company, pb.current_company]
     return None
 

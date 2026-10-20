@@ -310,3 +310,122 @@ def test_why_surfaced_skips_evidence_of_zero_value_components():
                     "thesis_fit": {"value": 5.0, "evidence": [{"title": "Thesis match", "weight": 0.5}]}},
         collision={}, attention={})
     assert [e.title for e in P.why_surfaced(snap, {})] == ["Thesis match"]
+
+
+# ── data age, velocity, display hygiene, self-reported labels ────────────────
+
+
+def test_details_carry_data_age(seeded, client):
+    d = client.get("/api/companies/halcyon-dynamics").json()
+    age = d["data_age"]
+    assert set(age["families"]) == {"github", "research", "hiring", "web", "community", "social"}
+    assert age["last_observed_at"] and age["updated_at"] and age["age_days"] is not None
+    assert age["families"]["hiring"]  # Halcyon has job postings
+    p = client.get("/api/founders/sana-qureshi").json()
+    assert set(p["data_age"]["families"]) == set(age["families"])
+
+
+def test_company_velocity_from_scoring_metrics(seeded, client):
+    from radar.models import CompanyMetric
+
+    def set_velocity(vel):
+        with session_scope() as s:
+            cid = s.scalar(select(Company.id).where(Company.slug == "halcyon-dynamics"))
+            cm = s.get(CompanyMetric, cid)
+            m = {k: v for k, v in (cm.metrics or {}).items() if k != "velocity"}
+            cm.metrics = {**m, "velocity": vel} if vel is not None else m
+
+    set_velocity(None)  # not computed (older scoring run): tolerated
+    assert client.get("/api/companies/halcyon-dynamics").json()["velocity"] == []
+    set_velocity({
+        "computed_on": "2026-10-06", "repos": 3, "coverage": {"star_velocity_7d": 2, "star_velocity_30d": 3},
+        "star_velocity_7d": 61.0, "star_velocity_7d_basis": "observed",
+        "star_velocity_30d": 12.0, "star_velocity_30d_basis": "backfill",
+        "star_velocity_prev_7d": 12.0, "star_velocity_prev_7d_basis": "observed",
+        "star_acceleration": 49.0, "star_acceleration_basis": "observed",
+        "star_acceleration_text": "12 → 61 stars/day",
+        "commit_acceleration": 2.0, "commit_acceleration_basis": "observed",  # no _text: built from windows
+        "commit_velocity_prev_7d": 1.0, "commit_velocity_7d": None,
+        "commit_velocity_7d_basis": "insufficient_history",
+        "release_velocity_90d": 0.05, "release_velocity_90d_basis": "observed",
+    })
+    vel = {v["key"]: v for v in client.get("/api/companies/halcyon-dynamics").json()["velocity"]}
+    assert list(vel) == ["star_velocity_7d", "star_velocity_30d", "star_velocity_prev_7d", "star_acceleration",
+                         "commit_velocity_7d", "commit_velocity_prev_7d", "commit_acceleration",
+                         "release_velocity_90d"]  # bookkeeping keys (computed_on, repos, coverage) are not metrics
+    assert vel["star_velocity_7d"]["human"] == "61 stars/day" and vel["star_velocity_7d"]["unit"] == "stars/day"
+    assert vel["star_velocity_7d"]["note"] == "Sum over 2 of 3 repositories (lower bound)"
+    assert vel["star_velocity_30d"]["basis"] == "backfill" and vel["star_velocity_30d"]["note"] is None
+    assert vel["star_velocity_30d"]["human"] == "12 stars/day (reconstructed)"
+    assert vel["star_acceleration"]["human"] == "12 → 61 stars/day"
+    assert vel["commit_acceleration"]["human"] == "+2 commits/day"
+    assert vel["commit_velocity_prev_7d"]["basis"] == "observed"  # value present, basis missing
+    assert vel["release_velocity_90d"]["human"] == "0.35 releases/week"
+    assert vel["commit_velocity_7d"]["value"] is None
+    assert vel["commit_velocity_7d"]["basis"] == "insufficient_history"
+    assert vel["commit_velocity_7d"]["human"] == "Insufficient observed history"
+
+
+def test_display_names_in_cards_and_summaries(seeded, client):
+    with session_scope() as s:
+        s.execute(update(Company).where(Company.slug == "halcyon-dynamics")
+                  .values(name="Halcyon Dynamics - Visual Memory Layer: find and recall anything you saw"))
+        s.execute(update(Person).where(Person.slug == "sana-qureshi")
+                  .values(name="sqbuilds", github_handle="sqbuilds", current_company="✖️",
+                          prior_affiliations=["ETH Z{\\\"u}rich"]))
+    co = client.get("/api/companies/halcyon-dynamics").json()["summary"]
+    assert co["name"] == "Halcyon Dynamics" and co["raw_name"].startswith("Halcyon Dynamics - Visual")
+    assert co["name_note"]
+    card = next(c for c in client.get("/api/radar", params=DEMO).json()["cards"] if c["slug"] == "halcyon-dynamics")
+    assert card["name"] == "Halcyon Dynamics" and card["raw_name"]
+    p = client.get("/api/founders/sana-qureshi").json()
+    assert p["card"]["name"] == "@sqbuilds" and p["card"]["name_note"] == "handle only"
+    assert p["card"]["raw_name"] == "sqbuilds"
+    assert p["card"]["current_company"] is None and p["card"]["prior_affiliations"] == ["ETH Zürich"]
+    # unchanged names carry no raw_name
+    other = client.get("/api/founders/elias-brandt").json()["card"]
+    assert other["name"] == "Elias Brandt" and other["raw_name"] is None and other["name_note"] is None
+
+
+def test_github_profile_fields_are_self_reported(db, client):
+    from radar.models import FieldProvenance
+
+    p = Person(slug="octo", name="Octo Cat", github_handle="octocat", current_company="Stealth Robotics",
+               bio="Building robots", prior_affiliations=["NVIDIA"])
+    db.add(p)
+    db.flush()
+    for fld, val in (("current_company", "Stealth Robotics"), ("bio", "Building robots"),
+                     ("github_handle", "octocat")):
+        db.add(FieldProvenance(entity_type="person", entity_id=p.id, field=fld, value=val,
+                               source_url="https://github.com/octocat", source_type="github", epistemic="FACT"))
+    db.commit()
+    d = client.get("/api/founders/octo").json()
+    facts = {f["label"]: f for f in d["facts"]}
+    assert facts["Current company"]["status"] == "INFERRED"
+    assert facts["Current company"]["note"] == "Self-reported on GitHub profile"
+    assert facts["Current company"]["source_url"] == "https://github.com/octocat"
+    assert facts["Prior affiliations"]["status"] == "INFERRED"
+    assert facts["Prior affiliations"]["note"].startswith("Self-reported on GitHub profile")
+    assert facts["GitHub"]["status"] == "VERIFIED"  # the handle itself is observed, not self-described
+    assert d["bio_note"] == "Self-reported on GitHub profile"
+
+
+def test_clean_company_name_and_labels():
+    name = P.clean_company_name
+    assert name("V-Modal AI - Visual Memory Layer: Find, recall anything") == (
+        "V-Modal AI", "Name shortened from a tagline")
+    assert name("Mistral AI: frontier models")[0] == "Mistral AI"
+    assert name("Foo | Bar")[0] == "Foo"
+    assert name("TUM - Autonomous Vehicle Systems Lab") == ("TUM - Autonomous Vehicle Systems Lab", None)
+    assert name("commaai/openpilot") == ("openpilot", "Repository name")
+    assert name("Halcyon Dynamics") == ("Halcyon Dynamics", None)
+    assert name("awesome-dsh-plugin") == ("awesome-dsh-plugin", None)  # a plain slug is a valid project name
+    long, note = name("Extremely Long Company Name That Keeps Going Forever And Ever")
+    assert len(long) <= 40 and long.endswith("…") and note
+    assert name("", github_org="deep-lab")[0] == "Deep Lab"  # org login only when no name exists
+    assert P.clean_label("✖️") is None and P.clean_label("  - ") is None
+    assert P.clean_label("@google-deepmind") == "google-deepmind"
+    assert P.clean_label('Universit{\\"a}t Wien') == "Universität Wien"
+    assert P.clean_label("Fran{\\c c}ois Labs") == "François Labs"
+    assert P.is_handle_only("OctoCat", "octocat") and not P.is_handle_only("Octo Cat", "octocat")
+    assert P.display_name(Person(slug="x", name="", x_handle="@xhandle")).name == "@xhandle"

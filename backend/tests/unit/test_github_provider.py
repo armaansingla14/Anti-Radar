@@ -26,15 +26,21 @@ from radar.providers.github import (
     build_release_signals,
     build_search_query,
     build_velocity_signals,
+    build_young_org_query,
     commit_activity_to_points,
     compact_series,
     contributor_stats_to_first_weeks,
     contributors_cumulative_points,
     is_bot,
+    is_list_repo,
     new_contributors,
+    noise_org_reason,
     parse_org,
     parse_repo,
     parse_user,
+    qualifying_members,
+    readme_sha,
+    release_points,
     series_deltas,
     star_history_to_series,
     strip_markup,
@@ -297,6 +303,9 @@ def _mock_org_repo(router: respx.Router, *, commit_statuses: list[int]) -> None:
         json=load("star_history_p1.json"), headers={"link": f'<{page2}>; rel="next", <{page2}>; rel="last"'})
     router.get(page2).respond(json=load("star_history_p2.json"))
     router.get(f"{base}/releases").respond(json=load("releases.json"))
+    pulls = f"{base}/pulls"
+    router.get(pulls).respond(json=[{"number": 7}],
+                              headers={"link": f'<{pulls}?state=open&per_page=1&page=3>; rel="last"'})
 
 
 def test_fetch_repo_org_deep_end_to_end(provider, sleeps):
@@ -322,8 +331,14 @@ def test_fetch_repo_org_deep_end_to_end(provider, sleeps):
     observed = {(m.metric, m.value) for m in batch.metrics if m.source == "observed"}
     # 'contributors' today uses the backfill's definition (distinct non-bot authors from /stats/contributors);
     # the /contributors count (bots included) is a separate metric so deltas never mix the two.
-    assert observed == {("stars", 1000), ("forks", 87), ("open_issues", 12), ("watchers", 41),
-                        ("contributors", 4), ("contributors_total", 5)}
+    # open_issues_count (12) includes the 3 open PRs counted from the pulls Link header.
+    assert observed == {("stars", 1000), ("forks", 87), ("open_issues", 9), ("open_prs", 3), ("watchers", 41),
+                        ("contributors", 4), ("contributors_total", 5), ("releases_total", 2)}
+    assert repo.open_issues == 9 and repo.attrs["open_prs"] == 3
+    raw = (FX / "readme_graspnet.md").read_text()
+    assert repo.attrs["readme_sha"] == readme_sha(raw) and len(repo.attrs["readme_sha"]) == 64
+    rel_bf = sorted((m.day, m.value) for m in batch.metrics if m.metric == "releases_total" and m.source == "backfill")
+    assert rel_bf == [(date(2026, 6, 19), 0), (date(2026, 6, 20), 1), (date(2026, 9, 15), 2)]
     contrib_bf = [m for m in batch.metrics if m.metric == "contributors" and m.source == "backfill"]
     assert contrib_bf and max(contrib_bf, key=lambda m: m.day).value <= 4
     star_bf = [m for m in batch.metrics if m.metric == "stars" and m.source == "backfill"]
@@ -352,6 +367,7 @@ def test_user_owned_repo_is_not_a_company(provider):
         router.get(f"{API}/repos/jdoe/tinyvla").respond(json=load("repo_user.json"))
         router.get(f"{API}/repos/jdoe/tinyvla/readme").respond(404, json={"message": "Not Found"})
         router.get(f"{API}/users/jdoe").respond(json=load("user_jdoe.json"))
+        router.get(f"{API}/repos/jdoe/tinyvla/pulls").respond(json=[])
         orgs = router.get(url__regex=rf"{API}/orgs/.*").respond(404)
         batch = provider.fetch_repo("jdoe/tinyvla", deep=False)
     assert not orgs.called
@@ -406,3 +422,152 @@ def test_enabled_reason_mentions_token():
     ok, reason = anon.enabled()
     assert ok and "GITHUB_TOKEN" in reason
 
+
+
+def test_parse_user_marks_profile_fields_self_reported():
+    p = parse_user(load("user_alice.json"))
+    assert p.attrs["self_reported"] is True
+    assert "company" in p.attrs["self_reported_fields"]
+
+
+def test_release_points_are_anchored_on_total_and_exact_at_boundary():
+    rels = [{"published_at": "2026-09-15T12:00:00Z"}, {"published_at": "2026-09-15T18:00:00Z"},
+            {"published_at": "2026-08-01T00:00:00Z"}, {"draft": True, "published_at": None},
+            {"published_at": "2026-10-06T09:00:00Z"}]  # today: only the observed point covers it
+    pts = release_points(rels, 10, repo_ref(REPO), TODAY, complete=False)
+    assert [(p.day, p.value) for p in pts] == [(date(2026, 7, 31), 6), (date(2026, 8, 1), 7), (date(2026, 9, 15), 9)]
+    assert all(p.source == "backfill" and p.metric == "releases_total" for p in pts)
+    assert release_points([], 3, repo_ref(REPO), TODAY, complete=True) == []
+
+
+# ── young-organization discovery ─────────────────────────────────────────────
+
+
+def test_build_young_org_query():
+    assert build_young_org_query("robot learning", date(2026, 5, 9)) == (
+        '"robot learning" created:>=2026-05-09 stars:>=3 fork:false')
+    assert build_young_org_query("vla", date(2026, 5, 9), date(2026, 7, 1), min_stars=5) == (
+        "vla created:2026-05-09..2026-07-01 stars:>=5 fork:false")
+
+
+@pytest.mark.parametrize(
+    ("login", "name", "desc", "blog", "reason"),
+    [("newbot-ai", "NewBot", "Robot hands", "https://newbot.example", None),
+     ("xyz-grasp", None, None, "https://xyz.stanford.edu", "academic"),
+     ("deploy-bot", None, None, None, "bot"),
+     ("awesome-vla", None, None, None, "list"),
+     ("cs287-course-2026", None, None, None, "course_or_event"),
+     ("RoboHackathon", None, None, None, "course_or_event"),
+     ("acme", "Acme", "World-class robotics. Teaching robots new skills, of course.", None, None),
+     ("acme", "Acme", "Homework solutions for 6.141", None, "course_or_event"),
+     ("labsco", "Labs Co", "We build robots", "https://ox.ac.uk", "academic")],
+)
+def test_noise_org_reason(login, name, desc, blog, reason):
+    assert noise_org_reason(login, name, desc, blog) == reason
+
+
+def test_is_list_repo_and_qualifying_members():
+    assert is_list_repo({"name": "awesome-robot-learning"})
+    assert is_list_repo({"name": "papers", "description": "A curated list of VLA papers"})
+    assert not is_list_repo({"name": "core", "description": "Manipulation stack"})
+    yo = load("young_orgs.json")["contributors"]
+    m = qualifying_members({k: yo[k] for k in ("newbot-ai/core", "newbot-ai/sim")}, min_commits=3)
+    assert list(m) == ["alice", "bob", "carol"]  # carol reaches 3 commits across both repos; bots excluded
+    assert m["carol"]["repos"] == {"newbot-ai/core": 2, "newbot-ai/sim": 2}
+    assert list(qualifying_members({"solo-org/proto": yo["solo-org/proto"]}, min_commits=3)) == ["dave"]
+
+
+def _mock_young_orgs(router: respx.Router) -> dict[str, respx.Route]:
+    yo = load("young_orgs.json")
+    routes = {"search": router.get(f"{API}/search/repositories").respond(json=yo["search"])}
+    for login, data in yo["orgs"].items():
+        routes[f"org:{login}"] = router.get(f"{API}/orgs/{login}").respond(json=data)
+    for login, data in yo["first_repo"].items():
+        routes[f"first:{login}"] = router.get(f"{API}/orgs/{login}/repos").respond(json=data)
+    for full, data in yo["contributors"].items():
+        routes[f"contrib:{full}"] = router.get(f"{API}/repos/{full}/contributors").respond(json=data)
+    for full in ("newbot-ai/core", "newbot-ai/sim", "repurposed/agent"):
+        owner, name = full.split("/")
+        repo = {**load("repo_org.json"), "full_name": full, "name": name, "html_url": f"https://github.com/{full}",
+                "owner": {"login": owner, "type": "Organization"}, "created_at": "2026-08-03T10:00:00Z"}
+        routes[f"repo:{full}"] = router.get(f"{API}/repos/{full}").respond(json=repo)
+    routes["star_history"] = router.get(f"{API}/repos/newbot-ai/core/stargazers/history").respond(
+        json=load("star_history_p1.json"), headers={"link": '<https://api.github.com/x?page=2>; rel="next"'})
+    routes["star_page2"] = router.get("https://api.github.com/x").respond(
+        json=load("star_history_p2.json"), headers={"link": '<https://api.github.com/y?page=3>; rel="next"'})
+    routes["star_page3"] = router.get("https://api.github.com/y").respond(
+        json=[], headers={"link": '<https://api.github.com/z?page=4>; rel="next"'})
+    for u in ("alice", "bob", "carol"):
+        routes[f"user:{u}"] = router.get(f"{API}/users/{u}").respond(json=load(f"user_{u}.json"))
+    routes["other"] = router.route(url__startswith=API).respond(404, json={"message": "Not Found"})
+    return routes
+
+
+def test_discover_young_orgs_filters_and_emits_team_signal(provider):
+    with respx.mock(assert_all_called=False) as router:
+        routes = _mock_young_orgs(router)
+        batch = provider.discover_young_orgs(["robot learning"])
+        urls = [str(c.request.url) for c in router.calls]
+    q = routes["search"].calls.last.request.url.params
+    assert routes["search"].call_count == 1  # total_count under the 1,000 cap: no window split
+    assert q["q"] == '"robot learning" created:>=2026-05-09 stars:>=3 fork:false'
+    assert q["sort"] == "updated" and q["per_page"] == "100"
+    # Name-level noise and list repos cost no core calls.
+    assert not any("robo-curators" in u or "cs287" in u for u in urls)
+    assert provider.young_org_report["course_or_event"] == ["cs287-course-2026"]
+    assert provider.young_org_report["academic"] == ["xyz-grasp"]
+    assert provider.young_org_report["too_few_contributors"] == ["solo-org"]
+    assert provider.young_org_report["org_too_old"] == ["oldcorp"]
+    assert batch.rejected == 4
+    assert routes["contrib:solo-org/proto"].call_count == 1
+    assert [u for u in urls if "xyz-grasp" in u] == [f"{API}/orgs/xyz-grasp"]  # academic: rejected after 1 call
+    assert not any("jdoe" in u for u in urls)  # user-owned repos are never screened
+
+    companies = {c.github_org: c for c in batch.companies}
+    assert set(companies) == {"newbot-ai", "repurposed"}
+    assert companies["repurposed"].attrs["young_org_basis"] == "first_public_repo_created_at"
+    teams = {s.entity.key: s for s in batch.signals if s.signal_type == "young_org_team"}
+    nb = teams["github_org:newbot-ai"]
+    assert nb.title == "newbot-ai: 3 contributors with >=3 commits in a 66-day-old organization"
+    assert [m["login"] for m in nb.metadata["members"]] == ["alice", "bob", "carol"]
+    assert nb.metadata["age_basis"] == "org_created_at" and nb.raw_value == 3
+    assert {gh_user_ref("alice"), gh_user_ref("bob"), gh_user_ref("carol")} <= set(nb.related)
+    rp = teams["github_org:repurposed"]
+    assert rp.title == "repurposed: 2 contributors with >=3 commits in a 118-day-old organization"
+    assert rp.metadata["age_basis"] == "first_public_repo_created_at"
+    assert not any(r.type == "person" for r in rp.related)  # frank/gina profiles 404: not linked
+    # Existing org_created signal reused for the young org (not for the 2019 org).
+    created = {s.entity.key for s in batch.signals if s.signal_type == "org_created"}
+    assert created == {"github_org:newbot-ai"}
+    # Members are self-reported profiles; carol's sim commits become a contributor edge.
+    people = {p.github_handle: p for p in batch.people}
+    assert {"alice", "bob", "carol"} <= set(people) and all(p.attrs["self_reported"] for p in people.values())
+    edges = {(r.src.key, r.dst.key) for r in batch.relations if r.kind == "contributor"}
+    assert ("github_user:carol", "repo:newbot-ai/sim") in edges
+    # Young repo: star history capped at 3 pages even with a token.
+    assert routes["star_history"].call_count == 1 and routes["star_page3"].call_count == 1
+    assert not any("page=4" in str(c.request.url) or str(c.request.url).endswith("/z") for c in routes["other"].calls)
+
+
+def test_discover_young_orgs_splits_windows_over_result_cap(provider):
+    with respx.mock(assert_all_called=False) as router:
+        search = router.get(f"{API}/search/repositories").mock(side_effect=[
+            httpx.Response(200, json={"total_count": 2500, "items": []}),
+            httpx.Response(200, json={"total_count": 600, "items": []}),
+            httpx.Response(200, json={"total_count": 900, "items": []}),
+        ])
+        batch = provider.discover_young_orgs(["vla"], max_searches=3)
+    qs = [c.request.url.params["q"] for c in search.calls]
+    assert qs == ["vla created:>=2026-05-09 stars:>=3 fork:false",
+                  "vla created:2026-07-24..2026-10-06 stars:>=3 fork:false",
+                  "vla created:2026-05-09..2026-07-23 stars:>=3 fork:false"]
+    assert batch.companies == [] and batch.errors == []
+
+
+def test_discover_young_orgs_stops_on_rate_limit(provider):
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{API}/search/repositories").respond(
+            403, json={"message": "API rate limit exceeded"},
+            headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999"})
+        batch = provider.discover_young_orgs(["vla", "robot"])
+    assert len(batch.errors) == 1 and "rate limit" in batch.errors[0]

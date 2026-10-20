@@ -1,0 +1,77 @@
+# Render Blueprint — two FREE web services from the same image (backend/Dockerfile, repo-root context).
+#   radar-live : live data (Neon database radar_live); writes need ADMIN_TOKEN.
+#   radar-demo : the verified real-data snapshot (Neon database radar_demo); clock pinned to the snapshot date.
+# Two processes are required because the clock pin is per process. See docs/DEPLOYMENT.md.
+# Secrets are `sync: false`: Render asks for them when the Blueprint is first applied; never commit them.
+services:
+  - type: web
+    name: radar-live
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SEED_ON_START
+        value: none
+      - key: DEMO_SYNTHETIC
+        value: "false"
+      - key: DEMO_SNAPSHOT
+        value: "false"
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: LLM_DAILY_USD_CAP
+        value: "3"
+      - key: DB_POOL_SIZE
+        value: "3"
+      - key: DB_MAX_OVERFLOW
+        value: "2"
+      - key: DATABASE_URL          # Neon pooled URL (…-pooler…/radar_live?sslmode=require)
+        sync: false
+      - key: DATABASE_URL_DIRECT   # Neon direct URL (migrations)
+        sync: false
+      - key: ADMIN_TOKEN           # long random string; the frontend /unlock page sends it as X-Radar-Admin
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RADAR_GITHUB_TOKEN    # fine-grained, read-only, public repos
+        sync: false
+      - key: FRONTEND_URL          # https://<your-project>.vercel.app
+        sync: false
+
+  - type: web
+    name: radar-demo
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: demo
+      - key: DEMO_SNAPSHOT
+        value: "true"
+      - key: DEMO_SYNTHETIC
+        value: "false"
+      - key: LLM_PROVIDER
+        value: none
+      - key: SEED_ON_START
+        value: snapshot
+      - key: DB_POOL_SIZE
+        value: "2"
+      - key: DB_MAX_OVERFLOW
+        value: "1"
+      - key: DATABASE_URL          # Neon pooled URL for radar_demo
+        sync: false
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      - key: ADMIN_TOKEN           # optional on the demo backend
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

@@ -20,7 +20,7 @@ router = APIRouter(tags=["feeds"])
 @router.get("/radar", response_model=RadarFeed)
 def get_radar(
     session: SessionDep,
-    include_demo: Annotated[bool | None, Query(description="Include labeled fictional entities (default: DEMO_MODE)")] = None,
+    include_demo: Annotated[bool | None, Query(description="Include labeled fictional entities (default: DEMO_SYNTHETIC, off)")] = None,
     new_only: Annotated[bool, Query(description="Unknown Yesterday: only entities first seen within 7 days")] = False,
     theme: Annotated[str | None, Query(max_length=120, description="Thesis theme or topic key, e.g. robotics")] = None,
 ) -> RadarFeed:

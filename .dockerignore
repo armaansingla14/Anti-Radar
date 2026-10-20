@@ -1,0 +1,15 @@
+# Root build context (backend/Dockerfile builds from the repo root). Keep it small: only backend/ and config/ matter.
+**/.git
+**/node_modules
+**/.next
+**/__pycache__
+**/.venv
+**/.pytest_cache
+**/.ruff_cache
+.env
+.env.*
+!.env.example
+frontend
+e2e
+docs
+*.log

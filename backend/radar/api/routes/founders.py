@@ -34,7 +34,7 @@ def list_founders(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
 ) -> list[PersonCard]:
-    include_demo = get_settings().demo_mode if include_demo is None else include_demo
+    include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
     try:
         items, total = entities.list_founders(session, q=q, theme=theme, no_company=no_company, sort=sort,
                                       include_demo=include_demo, limit=limit, offset=offset, with_total=True)

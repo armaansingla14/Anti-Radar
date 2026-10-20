@@ -1,0 +1,25 @@
+# Keep the live Render backend awake during US business hours (12:00–01:00 UTC, weekdays) so the first
+# visitor does not wait for a cold start. ~13 h × 22 days ≈ 290 instance-hours/month, inside Render's
+# 750 free hours shared with the (mostly asleep) demo service. Only pings /api/health (no DB work).
+name: keepwarm
+
+on:
+  schedule:
+    - cron: "*/10 12-23 * * 1-5"   # Mon–Fri 12:00–23:50 UTC
+    - cron: "*/10 0 * * 2-6"       # 00:00–00:50 UTC, i.e. the tail of Mon–Fri evenings
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /api/health
+        env:
+          BACKEND_URL_LIVE: ${{ vars.BACKEND_URL_LIVE || secrets.BACKEND_URL_LIVE }}
+        run: |
+          if [ -z "$BACKEND_URL_LIVE" ]; then echo "BACKEND_URL_LIVE not configured; skipping"; exit 0; fi
+          curl -fsS --retry 4 --retry-delay 15 --retry-all-errors --max-time 90 \
+            "${BACKEND_URL_LIVE%/}/api/health" -o /dev/null -w "%{http_code} in %{time_total}s\n"

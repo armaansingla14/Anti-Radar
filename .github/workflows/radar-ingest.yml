@@ -1,0 +1,93 @@
+# Scheduled ingestion + scoring against the LIVE database (one-shot CLI jobs; no long-running worker).
+# Each schedule maps to a list of `radar sweep --only <job>` steps (see "Resolve jobs").
+# NOTE: GitHub disables scheduled workflows after 60 days without repository activity — see docs/DEPLOYMENT.md.
+name: radar-ingest
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"   # Hacker News (+ attention probe) every 3h, then score
+    - cron: "41 */6 * * *"   # GitHub discovery + young orgs every 6h, then score
+    - cron: "23 4 * * *"     # arXiv daily, then score
+    - cron: "53 5 * * *"     # company websites / careers daily, then score
+    - cron: "0 11 * * *"     # morning brief daily at 11:00 UTC
+    - cron: "29 3 * * 0"     # retention weekly (Sunday)
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job to run"
+        required: true
+        default: score
+        type: choice
+        options: [hn, github, orgs, arxiv, web, probe, score, brief, retention]
+
+concurrency:
+  group: radar-ingest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV: production
+      RADAR_NULLPOOL: "1"
+      LLM_PROVIDER: anthropic
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+      RADAR_GITHUB_TOKEN: ${{ secrets.RADAR_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Resolve jobs
+        id: jobs
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          case "$SCHEDULE" in
+            "17 */3 * * *") jobs="hn probe score" ;;
+            "41 */6 * * *") jobs="github orgs score" ;;
+            "23 4 * * *")   jobs="arxiv score" ;;
+            "53 5 * * *")   jobs="web score" ;;
+            "0 11 * * *")   jobs="brief" ;;
+            "29 3 * * 0")   jobs="retention" ;;
+            *)              jobs="$INPUT_JOB" ;;
+          esac
+          case " hn github orgs arxiv web probe score brief retention " in *" ${jobs%% *} "*) ;; *)
+            echo "unknown job list: '$jobs'" >&2; exit 1 ;; esac
+          echo "list=$jobs" >> "$GITHUB_OUTPUT"
+          echo "Running: $jobs" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check secrets
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not set (see docs/DEPLOYMENT.md)"; exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --frozen --no-dev
+      - name: Validate configuration
+        run: uv run python -m radar.config_check --cli
+      - name: Migrate (idempotent)
+        run: uv run alembic upgrade head
+      - name: Sweep
+        env:
+          JOBS: ${{ steps.jobs.outputs.list }}
+        run: |
+          status=0
+          for job in $JOBS; do
+            echo "::group::radar sweep --only $job"
+            if ! uv run radar sweep --only "$job"; then
+              echo "::warning::job $job failed"; status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status

@@ -3,7 +3,8 @@
 Provider state rules (deterministic):
 
 * ``error``     the last finished run has status ``error``
-* ``disabled``  X without ``X_BEARER_TOKEN`` (official X API v2 only)
+* ``disabled``  the provider cannot run in this deployment (see ``radar.providers.registry``),
+                e.g. X without ``X_BEARER_TOKEN``
 * ``never_run`` no finished run recorded
 * ``degraded``  last run ``partial``; last success older than the expected cadence;
                 or GitHub running unauthenticated (60 req/h)
@@ -12,6 +13,9 @@ Provider state rules (deterministic):
 In snapshot-replay mode (``clock.as_of()`` set) freshness is judged relative to the
 capture (the newest provider run in the snapshot, else the end of the as-of day)
 instead of the wall clock, and counts cover the last run only.
+
+The fictional dataset is not a provider: it is reported under ``database.synthetic`` (labeled SYNTHETIC)
+and only when ``DEMO_SYNTHETIC`` is on. The snapshot replay is reported as ``database.snapshot``.
 """
 
 from __future__ import annotations
@@ -38,18 +42,14 @@ from radar.models import (
     ScoreSnapshot,
     Signal,
 )
+from radar.providers import registry
 from radar.schemas.api import ProviderStatus, SystemStatus
 from radar.settings import get_settings
 
-PROVIDERS: list[tuple[str, str, float | None]] = [
-    # (provider key, label, expected cadence in hours)
-    ("github", "GitHub", 12),
-    ("hackernews", "Hacker News", 3),
-    ("arxiv", "arXiv", 36),
-    ("website", "Company websites", 48),
-    ("x", "X (Twitter)", 24),
-]
-EXTRA_PROVIDERS = {"demo": "Fictional demo dataset", "snapshot": "Real-data snapshot replay"}
+# (provider key, label, expected cadence in hours) — derived from the registry (single source of truth).
+PROVIDERS: list[tuple[str, str, float | None]] = [(d.key, d.label, d.cadence_hours) for d in registry.descriptors()]
+PSEUDO = registry.PSEUDO_PROVIDERS
+SYNTHETIC_LABEL = "SYNTHETIC"
 FINISHED = ("ok", "partial", "error", "skipped")
 SUCCESS = ("ok", "partial")
 _TOKEN_TTL = 600.0
@@ -112,21 +112,19 @@ def _provider_status(key: str, label: str, cadence: float | None, runs: list[Ing
         elif cadence and last_ok is None:
             state = "degraded"
             reasons.append("no successful run yet")
-    if key == "x" and not settings.x_bearer_token:
+    av = registry.availability(key, settings, github_authenticated=_github_authenticated() if key == "github" else None)
+    if av.state == "disabled":
         state = "disabled"
-        reasons.insert(0, "X_BEARER_TOKEN required — official X API v2")
-        if finished:
-            reasons.append("manual post ingest still available")
-    if key == "github" and state in ("healthy", "degraded", "never_run") and not _github_authenticated():
+        reasons.insert(0, av.reason or "disabled")
+        desc = registry.get(key)
+        if finished and desc.note:
+            reasons.append(desc.note)
+    elif av.state == "degraded" and state in ("healthy", "degraded", "never_run"):
         if state != "never_run":
             state = "degraded"
-        reasons.insert(0, "unauthenticated — 60 req/h")
-    if snapshot and key not in EXTRA_PROVIDERS:
+        reasons.insert(0, av.reason or "degraded")
+    if snapshot:
         reasons.append(f"Snapshot replay — captured {clock.as_of():%Y-%m-%d}")
-    if key in EXTRA_PROVIDERS and last is not None and last.status in SUCCESS:
-        state = "healthy"
-        reasons = [EXTRA_PROVIDERS[key]] + ([f"as of {last.params.get('as_of')}"]
-                                            if key == "snapshot" and (last.params or {}).get("as_of") else [])
 
     return ProviderStatus(
         provider=key, label=label, state=state, reason="; ".join(reasons) or None,
@@ -173,7 +171,26 @@ def _llm(session: Session) -> dict[str, Any]:
     }
 
 
-def _database(session: Session) -> dict[str, Any]:
+def _db_size(session: Session) -> int | None:
+    try:
+        return int(session.scalar(select(func.pg_database_size(func.current_database()))) or 0)
+    except Exception:  # noqa: BLE001 — permissions / non-Postgres
+        session.rollback()
+        return None
+
+
+def _pretty_bytes(n: int | None) -> str | None:
+    if n is None:
+        return None
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return None
+
+
+def _database(session: Session, runs: list[IngestionRun], snapshot: bool) -> dict[str, Any]:
     tables = {"companies": Company, "people": Person, "repositories": Repository, "papers": ResearchPaper,
               "signals": Signal, "metric_snapshots": MetricSnapshot, "score_snapshots": ScoreSnapshot, "jobs": Job}
     row = session.execute(select(*[select(func.count()).select_from(m).scalar_subquery().label(k)
@@ -186,40 +203,73 @@ def _database(session: Session) -> dict[str, Any]:
                                       MetricSnapshot.is_demo.is_(False))) or 0
     history_from = session.scalar(select(func.min(MetricSnapshot.day)))
     first_sig, last_sig = session.execute(select(func.min(Signal.event_at), func.max(Signal.event_at))).one()
-    demo = session.scalar(select(func.count()).select_from(Company).where(Company.is_demo.is_(True))) or 0
-    return {
+    size = _db_size(session)
+
+    snap_run = next((r for r in runs if r.provider == "snapshot"), None)
+    snap_info = None
+    if snap_run is not None:
+        snap_info = {"as_of": (snap_run.params or {}).get("as_of"),
+                     "loaded_at": snap_run.started_at.isoformat() if snap_run.started_at else None}
+    live = [r.finished_at or r.started_at for r in runs
+            if r.provider not in PSEUDO and r.status in SUCCESS and clock.is_live_run(r.provider, r.params)
+            and (r.finished_at or r.started_at)]
+    if snapshot and clock.as_of() is not None:
+        data_as_of = clock.as_of().isoformat()
+    elif live:
+        data_as_of = max(live).isoformat()
+    else:
+        data_as_of = (snap_info or {}).get("as_of")
+
+    out: dict[str, Any] = {
         **counts, "snapshot_days": int(snap_days), "observed_days": int(snap_days),
         "history_from": history_from.isoformat() if history_from else None,
         "first_signal_at": first_sig.isoformat() if first_sig else None,
         "last_signal_at": last_sig.isoformat() if last_sig else None,
-        "demo_companies": int(demo),
+        "size_bytes": size, "size_pretty": _pretty_bytes(size),
+        "data_as_of": data_as_of, "snapshot": snap_info,
     }
+    if get_settings().demo_synthetic:
+        demo_companies = session.scalar(select(func.count()).select_from(Company).where(Company.is_demo.is_(True))) or 0
+        demo_people = session.scalar(select(func.count()).select_from(Person).where(Person.is_demo.is_(True))) or 0
+        out["demo_companies"] = int(demo_companies)
+        out["synthetic"] = {"label": SYNTHETIC_LABEL, "enabled": True, "companies": int(demo_companies),
+                            "people": int(demo_people),
+                            "note": "Fictional example entities (.example domains); never real companies."}
+    else:
+        out["demo_companies"] = 0
+        out["synthetic"] = None
+    return out
 
 
 def system_status(session: Session) -> SystemStatus:
     from radar.scoring.anti_score import SCORE_VERSION
 
     ref, snapshot = _reference_now()
-    keys = [p[0] for p in PROVIDERS] + list(EXTRA_PROVIDERS)
+    run_to_key = {rp: d.key for d in registry.descriptors() for rp in d.run_providers}
+    keys = list(run_to_key) + list(PSEUDO)
     # newest 50 runs per provider (one windowed query)
     rn = func.row_number().over(partition_by=IngestionRun.provider, order_by=IngestionRun.started_at.desc()).label("rn")
     sub = select(IngestionRun.id, rn).where(IngestionRun.provider.in_(keys)).subquery()
     runs = list(session.scalars(select(IngestionRun).join(sub, sub.c.id == IngestionRun.id).where(sub.c.rn <= 50)
                                 .order_by(IngestionRun.started_at.desc())))
-    by_provider: dict[str, list[IngestionRun]] = {k: [] for k in keys}
+    by_provider: dict[str, list[IngestionRun]] = {d.key: [] for d in registry.descriptors()}
     for r in runs:
-        by_provider[r.provider].append(r)
+        if r.provider in run_to_key:
+            by_provider[run_to_key[r.provider]].append(r)
     if snapshot:
         # freshness relative to the capture itself: the last provider run recorded in the snapshot
         captured = [r.finished_at or r.started_at for r in runs
-                    if r.provider not in EXTRA_PROVIDERS and (r.finished_at or r.started_at)]
+                    if r.provider not in PSEUDO and (r.finished_at or r.started_at)]
         if captured:
             ref = max(captured)
     providers = [_provider_status(k, label, cadence, by_provider[k], ref, snapshot) for k, label, cadence in PROVIDERS]
-    for k, label in EXTRA_PROVIDERS.items():
-        if by_provider[k]:
-            providers.append(_provider_status(k, label, None, by_provider[k], ref, snapshot))
+    llm = _llm(session)
+    llm_av = registry.llm_availability()
+    llm["state"] = llm_av.state
+    llm["reason"] = llm_av.reason
+    llm["daily_usd_cap"] = get_settings().llm_daily_usd_cap
     return SystemStatus(
-        providers=providers, llm=_llm(session), database=_database(session), demo_mode=get_settings().demo_mode,
+        providers=providers, llm=llm, database=_database(session, runs, snapshot),
+        demo_mode=get_settings().demo_synthetic,
         score_version=SCORE_VERSION, last_scored_at=session.scalar(select(func.max(ScoreSnapshot.created_at))),
     )

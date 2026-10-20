@@ -19,6 +19,7 @@ only orchestrates HTTP calls.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import math
 import re
@@ -260,6 +261,8 @@ def parse_user(data: Mapping[str, Any]) -> PersonRecord:
         company = re.sub(r"(^|\s)@", r"\1", company).strip() or None
     x_handle = _clean(data.get("twitter_username"))
     alt = [EntityRef(type="person", key=f"x:{x_handle.lower()}")] if x_handle else []
+    # Profile fields are typed by the user themselves: label them so the UI never presents them as verified.
+    reported = [f for f in ("company", "bio", "blog", "twitter_username", "location") if _clean(data.get(f))]
     return PersonRecord(
         ref=gh_user_ref(login),
         name=_clean(data.get("name")) or login,
@@ -276,6 +279,8 @@ def parse_user(data: Mapping[str, Any]) -> PersonRecord:
             "gh_created_at": data.get("created_at"),
             "avatar_url": data.get("avatar_url"),
             "hireable": data.get("hireable"),
+            "self_reported": True,
+            "self_reported_fields": reported,
         },
         source_url=data.get("html_url") or f"{WEB}/{login}",
     )
@@ -598,6 +603,153 @@ def _last_page_from_link(link: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def readme_sha(raw: str | None) -> str | None:
+    """sha256 of the raw README text (before markup stripping): changes whenever the file changes."""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest() if raw else None
+
+
+def release_points(
+    releases: Sequence[Mapping[str, Any]], total: int, entity: EntityRef, today: date, *, complete: bool,
+) -> list[MetricPoint]:
+    """Cumulative published releases per day (backfill, days before ``today``), from release dates.
+
+    Anchored on the current ``total`` and walked backwards like the star history, so it is exact
+    for every day on or after the oldest fetched release even when only the newest page was read.
+    Drafts are not public releases and are not counted. With ``complete`` (every release fetched)
+    the boundary point before the first release is 0."""
+    days: dict[date, int] = {}
+    for r in releases:
+        at = _dt(r.get("published_at"))
+        if r.get("draft") or at is None:
+            continue
+        days[at.date()] = days.get(at.date(), 0) + 1
+    if not days:
+        return []
+    remaining = float(total)
+    rev: list[tuple[date, float]] = []
+    for d in sorted(days, reverse=True):
+        if d < today:
+            rev.append((d, remaining))
+        remaining -= days[d]
+    # The day before the oldest fetched release is exact too (0 when every release was fetched).
+    rev.append((min(days) - timedelta(days=1), 0.0 if complete else max(remaining, 0.0)))
+    return [MetricPoint(entity=entity, metric="releases_total", day=d, value=v, source="backfill")
+            for d, v in reversed(rev)]
+
+
+# ── young-organization discovery (pure helpers) ──────────────────────────────
+
+YOUNG_ORG_SEARCH_BUDGET = 20
+YOUNG_ORG_SCREEN_CALLS = 6  # core calls budgeted per screened org
+YOUNG_ORG_TOP_REPOS = 2  # repos whose contributors are screened
+YOUNG_ORG_STAR_PAGES = 3  # 90 weeks of star history covers any young repo
+SEARCH_RESULT_CAP = 1000  # GitHub search never returns more than this per query
+
+# Orgs that are coursework, events or curated lists — not companies in formation. Logins/names are
+# matched on whole words; descriptions only on unambiguous phrases ("world-class", "teaching robots"
+# and "of course" must not trip the filter).
+NOISE_NAME_RE = re.compile(
+    r"\b(awesome|curated|course|courses|coursework|classroom|lecture|lectures|homework|assignments?|students?|"
+    r"syllabus|bootcamp|hackathons?|hackweek|game ?jam|workshops?|tutorials?|university|univ|college|school|"
+    r"faculty|department|cs ?\d{3}|\d{4} ?(?:spring|fall|summer|winter)|(?:spring|fall|summer|winter) ?\d{2,4})\b",
+    re.IGNORECASE,
+)
+NOISE_DESC_RE = re.compile(
+    r"\b(awesome list|curated list|course materials?|coursework|homework|assignments? for|lecture notes|"
+    r"class projects?|student projects?|students? of|hackathon|bootcamp|university|universit[äa]t|"
+    r"teaching materials?|tutorials? for)\b",
+    re.IGNORECASE,
+)
+LIST_REPO_RE = re.compile(
+    r"(^|[-_.])awesome($|[-_.])|curated list|reading list|paper list|list of (papers|resources|tools)|"
+    r"interview", re.IGNORECASE,
+)
+
+
+def build_young_org_query(term: str, start: date, end: date | None = None, *, min_stars: int = 3) -> str:
+    """search/repositories query for repos created in [start, end] (open-ended when ``end`` is None)."""
+    t = term.replace('"', "").strip()
+    t = f'"{t}"' if " " in t else t
+    created = f"created:{start.isoformat()}..{end.isoformat()}" if end else f"created:>={start.isoformat()}"
+    return f"{t} {created} stars:>={min_stars} fork:false"
+
+
+def _words(*parts: str | None) -> str:
+    # Split camelCase / kebab / snake so word boundaries work on logins like "ml-course-2026".
+    text = " ".join(p for p in parts if p)
+    return re.sub(r"[-_./]+", " ", re.sub(r"([a-z])([A-Z])", r"\1 \2", text))
+
+
+def noise_org_reason(login: str, name: str | None = None, description: str | None = None,
+                     blog: str | None = None) -> str | None:
+    """Why an org is not a company in formation (None = keep). Uses only public org fields."""
+    if is_bot(login):
+        return "bot"
+    if (reg := registrable_domain(blog)) and is_academic_domain(reg):
+        return "academic"
+    m = NOISE_NAME_RE.search(_words(login, name)) or NOISE_DESC_RE.search(description or "")
+    if m:
+        word = m.group(0).lower()
+        return "list" if ("awesome" in word or "curated" in word) else "course_or_event"
+    return None
+
+
+def is_list_repo(item: Mapping[str, Any]) -> bool:
+    """awesome-lists, reading lists and interview prep: popular, but not products."""
+    return bool(LIST_REPO_RE.search(item.get("name") or "") or LIST_REPO_RE.search(item.get("description") or ""))
+
+
+def qualifying_members(contributors: Mapping[str, Sequence[Mapping[str, Any]]], *, min_commits: int,
+                       ) -> dict[str, dict[str, Any]]:
+    """{repo full_name: /contributors list} -> non-bot logins with >= ``min_commits`` across the repos.
+
+    ``contributions`` is GitHub's commit count on the default branch."""
+    totals: dict[str, dict[str, Any]] = {}
+    for full, rows in contributors.items():
+        for c in rows:
+            login = c.get("login")
+            if is_bot(login, c.get("type")):
+                continue
+            m = totals.setdefault(login.lower(), {"login": login, "commits": 0, "repos": {}})
+            n = int(c.get("contributions") or 0)
+            m["commits"] += n
+            m["repos"][full] = n
+    return {k: v for k, v in sorted(totals.items(), key=lambda kv: -kv[1]["commits"])
+            if v["commits"] >= min_commits}
+
+
+def build_young_org_team_signal(
+    company: CompanyRecord, members: Sequence[Mapping[str, Any]], *, age_days: int, age_basis: str,
+    created_on: date, min_commits: int, window_days: int, repos: Sequence[str],
+    related_logins: Sequence[str] | None = None,
+) -> NormalizedSignal:
+    """A young GitHub organization with a working team (counted from public commit counts).
+
+    ``related_logins`` limits the person links to members whose profiles are in the batch."""
+    n = len(members)
+    login = company.github_org or company.name
+    youth = max(0.0, 1 - age_days / max(window_days, 1))
+    return NormalizedSignal(
+        entity=company.ref, signal_type="young_org_team", source_type="github",
+        source_url=company.source_url or f"{WEB}/{login}",
+        title=f"{login}: {n} contributors with >={min_commits} commits in a {age_days}-day-old organization",
+        description=(f"{n} non-bot contributors with at least {min_commits} commits each across "
+                     f"{', '.join(repos)}; " + ("organization" if age_basis == "org_created_at"
+                                                else "first public repository") +
+                     f" created {created_on.isoformat()}. Members: " +
+                     ", ".join(f"{m['login']} ({m['commits']})" for m in members[:10]) +
+                     ("…" if n > 10 else "") + "."),
+        raw_value=float(n), normalized_value=round(0.5 * log_scale(n, 8) + 0.5 * youth, 4),
+        event_at=_event_now(),
+        related=[gh_user_ref(lg) for lg in (related_logins if related_logins is not None
+                                             else [m["login"] for m in members])] + [repo_ref(r) for r in repos],
+        metadata={"members": [{"login": m["login"], "commits": m["commits"], "repos": dict(m["repos"])}
+                              for m in members],
+                  "age_days": age_days, "age_basis": age_basis, "created_on": created_on.isoformat(),
+                  "min_commits": min_commits, "repos": list(repos), "basis": "github /contributors commit counts"},
+    )
+
+
 # ── provider ─────────────────────────────────────────────────────────────────
 
 
@@ -626,6 +778,7 @@ class GitHubProvider:
         self.rate_limits: dict[str, int] = {}  # resource (core/search) -> remaining
         self._orgs: dict[str, dict[str, Any] | None] = {}
         self._users: dict[str, dict[str, Any] | None] = {}
+        self.young_org_report: dict[str, list[str]] = {}  # rejection reason -> org logins (last discovery)
         # Anonymous access (60 req/h) cannot afford deep history; degrade instead of failing.
         self.max_star_pages = 40 if self.token else 3
         self.max_contributors_cap = 30 if self.token else 3
@@ -747,15 +900,34 @@ class GitHubProvider:
         return self._search(build_search_query(query, pushed_after=after, min_stars=min_stars), "updated", limit)
 
     # ── fetch ──
-    def _readme(self, full: str) -> str | None:
+    def _readme(self, full: str) -> tuple[str | None, str | None]:
+        """(plain-text excerpt, sha256 of the raw README)."""
         r = self._get(f"/repos/{full}/readme", accept=ACCEPT_RAW)
-        return strip_markup(r.text) if r.status_code == 200 else None
+        if r.status_code != 200:
+            return None, None
+        return strip_markup(r.text), readme_sha(r.text)
 
-    def _star_history(self, full: str, stars: int, errors: list[str]) -> StarHistory | None:
+    def _count_via_link(self, path: str, params: dict[str, Any]) -> int | None:
+        """Item count of a list endpoint in one call: per_page=1 and the Link rel=last page number."""
+        r = self._get(path, params={**params, "per_page": 1})
+        if r.status_code != 200:
+            return None
+        last = _last_page_from_link(r.headers.get("link"))
+        if last is not None:
+            return last
+        try:
+            data = r.json() if r.content else []
+        except ValueError:
+            return None
+        return len(data) if isinstance(data, list) else None
+
+    def _star_history(self, full: str, stars: int, errors: list[str], max_pages: int | None = None,
+                      ) -> StarHistory | None:
         """Walk /stargazers/history (newest week first) via Link rel=next."""
         if stars <= 0:
             return None
-        max_pages = STAR_HISTORY_MAX_PAGES if self.token else 1
+        cap = STAR_HISTORY_MAX_PAGES if self.token else 1
+        max_pages = min(max_pages, cap) if max_pages else cap
         url: str | None = f"/repos/{full}/stargazers/history"
         weeks: list[dict[str, Any]] = []
         complete = False
@@ -776,15 +948,26 @@ class GitHubProvider:
             return None
         return star_history_to_series(weeks, stars, complete=complete, today=clock.today())
 
-    def fetch_repo(self, full_name: str, *, deep: bool = True, max_contributors: int = 12) -> ProviderBatch:
-        """Repository + owner + (deep) contributors, real history series and change signals."""
+    def fetch_repo(self, full_name: str, *, deep: bool = True, max_contributors: int = 12,
+                   star_pages: int | None = None) -> ProviderBatch:
+        """Repository + owner + (deep) contributors, real history series and change signals.
+
+        ``star_pages`` caps the star-history walk (young repos need few pages)."""
         batch = ProviderBatch(provider=self.name)
         today = clock.today()
         data = self._json(f"/repos/{full_name}")
         repo = parse_repo(data)
         full = repo.full_name
         html_url = repo.attrs["html_url"]
-        repo.readme_excerpt = self._readme(full)
+        repo.readme_excerpt, sha = self._readme(full)
+        if sha:
+            repo.attrs["readme_sha"] = sha  # raw-content hash: the pipeline diffs it to detect README changes
+        # open_issues_count includes pull requests; split them with one Link-header count call.
+        open_prs = self._count_via_link(f"/repos/{full}/pulls", {"state": "open"})
+        if open_prs is not None:
+            repo.attrs["open_prs"] = open_prs
+            repo.attrs["open_issues_basis"] = "issues_only"
+            repo.open_issues = max(0, repo.open_issues - open_prs)
 
         company: CompanyRecord | None = None
         owner_person: PersonRecord | None = None
@@ -802,14 +985,16 @@ class GitHubProvider:
         batch.sources.append({"url": html_url, "source_type": "github", "title": full,
                               "snippet": repo.description,
                               "content_hash": content_hash((repo.description or "") + (repo.readme_excerpt or ""))})
-        for metric, value in (("stars", repo.stars), ("forks", repo.forks), ("open_issues", repo.open_issues),
-                              ("watchers", repo.watchers)):
+        observed: list[tuple[str, int]] = [("stars", repo.stars), ("forks", repo.forks), ("watchers", repo.watchers)]
+        if open_prs is not None:  # without the PR count, open_issues_count would mix issues and PRs
+            observed += [("open_issues", repo.open_issues), ("open_prs", open_prs)]
+        for metric, value in observed:
             batch.metrics.append(MetricPoint(entity=repo.ref, metric=metric, day=today, value=float(value)))
         batch.signals.extend(build_creation_signals(repo, company, today))
         related_owner = [company.ref] if company else []
 
         if deep:
-            self._deep(batch, repo, owner_person, related_owner, today, max_contributors)
+            self._deep(batch, repo, owner_person, related_owner, today, max_contributors, star_pages)
         elif owner_person:
             batch.people.append(owner_person)
             batch.relations.append(Relation(kind="contributor", src=owner_person.ref, dst=repo.ref,
@@ -818,7 +1003,8 @@ class GitHubProvider:
         return batch
 
     def _deep(self, batch: ProviderBatch, repo: RepoRecord, owner_person: PersonRecord | None,
-              related_owner: list[EntityRef], today: date, max_contributors: int) -> None:
+              related_owner: list[EntityRef], today: date, max_contributors: int,
+              star_pages: int | None = None) -> None:
         full = repo.full_name
         html_url = repo.attrs["html_url"]
         # Prime both stats computations first; GitHub computes them in the background meanwhile.
@@ -854,7 +1040,7 @@ class GitHubProvider:
             rel.attrs["owner"] = True
 
         # Star history (exact daily counts).
-        history = self._star_history(full, repo.stars, batch.errors)
+        history = self._star_history(full, repo.stars, batch.errors, star_pages)
         if history:
             repo.attrs["star_history"] = "complete" if history.complete else "recent"
             for d, v in compact_series([p for p in history.points if p[0] < today]):
@@ -911,7 +1097,16 @@ class GitHubProvider:
         # Releases.
         rr = self._get(f"/repos/{full}/releases", params={"per_page": 20})
         if rr.status_code == 200:
-            batch.signals.extend(build_release_signals(repo, rr.json() or [], today))
+            releases = rr.json() or []
+            batch.signals.extend(build_release_signals(repo, releases, today))
+            complete = _link_rel(rr.headers.get("link"), "next") is None
+            total = len(releases) if complete else self._count_via_link(f"/repos/{full}/releases", {})
+            if total is not None:
+                total -= sum(1 for r in releases if r.get("draft"))  # drafts are not public releases
+                repo.attrs["releases_total"] = total
+                batch.metrics.append(MetricPoint(entity=repo.ref, metric="releases_total", day=today,
+                                                 value=float(total)))
+                batch.metrics.extend(release_points(releases, total, repo.ref, today, complete=complete))
 
         batch.people.extend(people.values())
         # A contributor edge is only emitted when its person record is in the batch.
@@ -995,3 +1190,188 @@ class GitHubProvider:
             seen_companies.update(c.ref.key for c in sub.companies)
             batch.extend(sub)
         return batch
+
+    # ── young organizations (formation discovery) ──
+    def _search_young_repos(self, terms: list[str], since: date, today: date, *, min_stars: int,
+                            max_searches: int, errors: list[str]) -> list[dict[str, Any]]:
+        """Repos created since ``since`` matching each term, sorted by recent update.
+
+        A window whose total_count exceeds GitHub's 1,000-result cap is split in halves (the page
+        already fetched is kept); windows under the cap read further pages while budget allows."""
+        items: dict[str, dict[str, Any]] = {}
+        per_term = max(1, max_searches // max(len(terms), 1))
+        used = 0
+        for term in terms:
+            term_used = 0
+            windows: list[tuple[date, date | None, int]] = [(since, None, 1)]
+            while windows and term_used < per_term and used < max_searches:
+                start, end, page = windows.pop(0)
+                q = build_young_org_query(term, start, end, min_stars=min_stars)
+                try:
+                    data = self._json("/search/repositories", params={"q": q, "sort": "updated", "order": "desc",
+                                                                      "per_page": 100, "page": page}, search=True)
+                except GitHubRateLimitError as e:
+                    errors.append(f"search {term!r}: {e}; stopping")
+                    return list(items.values())
+                except (GitHubAPIError, httpx.HTTPError) as e:
+                    errors.append(f"search {term!r}: {e}")
+                    break
+                used += 1
+                term_used += 1
+                data = data or {}
+                for it in data.get("items") or []:
+                    items.setdefault(str(it.get("full_name", "")).lower(), it)
+                total = int(data.get("total_count") or 0)
+                span_end = end or today
+                if page == 1 and total > SEARCH_RESULT_CAP and (span_end - start).days >= 2:
+                    mid = start + (span_end - start) // 2
+                    windows += [(mid + timedelta(days=1), span_end, 1), (start, mid, 1)]
+                elif total > page * 100 and page < SEARCH_RESULT_CAP // 100 and len(data.get("items") or []) == 100:
+                    windows.insert(0, (start, end, page + 1))
+        return list(items.values())
+
+    def discover_young_orgs(
+        self, terms: list[str], *, created_within_days: int = 150, min_stars: int = 3, max_orgs: int = 40,
+        min_contributors: int = 2, min_commits: int = 3, max_searches: int = YOUNG_ORG_SEARCH_BUDGET,
+    ) -> ProviderBatch:
+        """Young GitHub organizations with a real working team, found through thesis terms.
+
+        1. search/repositories for recently created, starred, non-fork repos per term (≈20 searches);
+           keep Organization-owned repos, dropping awesome/reading lists.
+        2. Screen each org (≤6 core calls): /orgs/{o} must be created inside the window, or else its
+           first public repository must be; academic (.edu-style blog), course/hackathon/list and bot
+           orgs are dropped; the top repos' /contributors must show ≥ ``min_contributors`` non-bot
+           people with ≥ ``min_commits`` commits each.
+        3. Survivors get a deep fetch of the top repo (star history capped for young repos), shallow
+           fetches of the other matches, self-reported member profiles and a ``young_org_team`` signal
+           (plus the existing ``org_created``/``repo_created`` signals).
+        Rejections are counted in ``batch.rejected``; reasons are kept in ``self.young_org_report``."""
+        batch = ProviderBatch(provider=self.name)
+        today = clock.today()
+        since = today - timedelta(days=created_within_days)
+        report: dict[str, list[str]] = {}
+        self.young_org_report = report
+
+        def reject(reason: str, login: str) -> None:
+            report.setdefault(reason, []).append(login)
+            batch.rejected += 1
+
+        found = self._search_young_repos(terms, since, today, min_stars=min_stars, max_searches=max_searches,
+                                         errors=batch.errors)
+        by_org: dict[str, list[dict[str, Any]]] = {}
+        logins: dict[str, str] = {}
+        for it in found:
+            owner = it.get("owner") or {}
+            if owner.get("type") != "Organization" or it.get("fork") or it.get("archived"):
+                continue
+            if is_list_repo(it):
+                continue
+            login = owner.get("login")
+            if not login:
+                continue
+            by_org.setdefault(login.lower(), []).append(it)
+            logins[login.lower()] = login
+        ranked = sorted(by_org, key=lambda k: -sum(int(r.get("stargazers_count") or 0) for r in by_org[k]))
+
+        candidates: list[tuple[dict[str, Any], list[dict[str, Any]], dict[str, dict[str, Any]], int, str, date]] = []
+        screened = 0
+        for key in ranked:
+            if screened >= max_orgs:
+                break
+            login = logins[key]
+            if reason := noise_org_reason(login):
+                reject(reason, login)
+                continue
+            if not self._budget_ok(YOUNG_ORG_SCREEN_CALLS):
+                batch.errors.append("young orgs: core rate-limit budget reached; stopping screening")
+                break
+            screened += 1
+            try:
+                screened_org = self._screen_young_org(login, by_org[key], since, today, min_contributors=min_contributors,
+                                                      min_commits=min_commits, reject=reject)
+            except GitHubRateLimitError as e:
+                batch.errors.append(f"{login}: {e}; stopping")
+                break
+            except (GitHubAPIError, httpx.HTTPError, ValueError, KeyError) as e:
+                batch.errors.append(f"{login}: {e}")
+                continue
+            if screened_org is not None:
+                candidates.append(screened_org)
+
+        for org, repos, members, age, basis, created_on in candidates:
+            try:
+                self._enrich_young_org(batch, org, repos, members, age_days=age, age_basis=basis,
+                                       created_on=created_on, min_commits=min_commits,
+                                       window_days=created_within_days)
+            except GitHubRateLimitError as e:
+                batch.errors.append(f"{org['login']}: {e}; stopping")
+                break
+            except (GitHubAPIError, httpx.HTTPError, ValueError, KeyError) as e:
+                batch.errors.append(f"{org['login']}: {e}")
+        return batch
+
+    def _screen_young_org(self, login: str, repos: list[dict[str, Any]], since: date, today: date, *,
+                          min_contributors: int, min_commits: int, reject: Callable[[str, str], None]):
+        org = self._org(login)
+        if not org:
+            reject("not_an_org", login)
+            return None
+        if reason := noise_org_reason(org["login"], org.get("name"), org.get("description"), org.get("blog")):
+            reject(reason, org["login"])
+            return None
+        created = _dt(org.get("created_at"))
+        if created is not None and created.date() >= since:
+            created_on, basis = created.date(), "org_created_at"
+        else:
+            # An older (renamed / repurposed) org still qualifies if its public history starts in the window.
+            first = self._json(f"/orgs/{org['login']}/repos", params={"type": "public", "sort": "created",
+                                                                      "direction": "asc", "per_page": 1}) or []
+            first_at = _dt(first[0].get("created_at")) if first else None
+            if first_at is None or first_at.date() < since:
+                reject("org_too_old", org["login"])
+                return None
+            created_on, basis = first_at.date(), "first_public_repo_created_at"
+        top = sorted(repos, key=lambda r: -int(r.get("stargazers_count") or 0))[:YOUNG_ORG_TOP_REPOS]
+        contributors: dict[str, list[dict[str, Any]]] = {}
+        for r in top:
+            resp = self._get(f"/repos/{r['full_name']}/contributors", params={"per_page": 30})
+            contributors[r["full_name"]] = resp.json() if resp.status_code == 200 and resp.content else []
+        members = qualifying_members(contributors, min_commits=min_commits)
+        if len(members) < min_contributors:
+            reject("too_few_contributors", org["login"])
+            return None
+        return org, top, members, (today - created_on).days, basis, created_on
+
+    def _enrich_young_org(self, batch: ProviderBatch, org: dict[str, Any], repos: list[dict[str, Any]],
+                          members: dict[str, dict[str, Any]], *, age_days: int, age_basis: str, created_on: date,
+                          min_commits: int, window_days: int) -> None:
+        company = parse_org(org)
+        company.attrs["young_org_basis"] = age_basis
+        sub = ProviderBatch(provider=self.name)
+        for i, r in enumerate(repos):
+            part = self.fetch_repo(r["full_name"], deep=i == 0, star_pages=YOUNG_ORG_STAR_PAGES)
+            sub.extend(part)
+        if not any(c.ref == company.ref for c in sub.companies):
+            sub.companies.append(company)
+        # The org record is identical in every per-repo batch: keep one (with the screening basis).
+        sub.companies = [c for c in sub.companies if c.ref != company.ref] + [company]
+        have_people = {p.github_handle.lower() for p in sub.people if p.github_handle}
+        have_edges = {(r.src.key, r.dst.key) for r in sub.relations if r.kind == "contributor"}
+        for key, m in members.items():
+            if key not in have_people and self._budget_ok(1) and (u := self._user(m["login"])):
+                sub.people.append(parse_user(u))
+                have_people.add(key)
+            if key not in have_people:
+                continue
+            for full, n in m["repos"].items():
+                edge = (gh_user_ref(m["login"]).key, repo_ref(full).key)
+                if n > 0 and edge not in have_edges:
+                    sub.relations.append(Relation(kind="contributor", src=gh_user_ref(m["login"]), dst=repo_ref(full),
+                                                  attrs={"contributions": n},
+                                                  source_url=f"{WEB}/{full}/graphs/contributors"))
+                    have_edges.add(edge)
+        sub.signals.append(build_young_org_team_signal(
+            company, list(members.values()), age_days=age_days, age_basis=age_basis, created_on=created_on,
+            min_commits=min_commits, window_days=window_days, repos=[r["full_name"] for r in repos],
+            related_logins=[m["login"] for k, m in members.items() if k in have_people]))
+        batch.extend(sub)

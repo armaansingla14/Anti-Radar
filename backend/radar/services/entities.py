@@ -10,6 +10,10 @@ Provenance rules for displayed facts (``FactField.status``):
   present on the record without field-level provenance.
 * ``UNKNOWN`` — we have no value.
 
+Self-described profile fields (GitHub ``company`` / ``bio`` and the prior affiliations derived
+from them) are never VERIFIED: they are shown INFERRED with the note "Self-reported on GitHub
+profile", even though the profile itself was observed.
+
 Narratives (why now / why Anti / risks) come from ``radar.llm.narratives``,
 which always labels its generator and falls back to deterministic templates.
 """
@@ -69,6 +73,7 @@ from radar.schemas.api import (
 from radar.scoring.extract import weekly_sum, window_delta
 from radar.scoring.features import FORMATION_SIGNAL_TYPES
 from radar.services import presenters as P
+from radar.services.freshness import data_age
 from radar.thesis.loader import get_thesis
 
 TIMELINE_LIMIT = 40
@@ -441,6 +446,16 @@ def _provenance(session: Session, entity_id: uuid.UUID) -> list[FieldProvenance]
                                 .order_by(FieldProvenance.confidence.desc(), FieldProvenance.last_updated.desc())))
 
 
+# Profile fields a person writes about themselves: observing the profile verifies what it says,
+# not that it is true.
+SELF_REPORTED_FIELDS = frozenset({"current_company", "bio", "prior_affiliations"})
+SELF_REPORTED_SOURCES = frozenset({"github"})
+
+
+def is_self_reported(row: FieldProvenance | None) -> bool:
+    return row is not None and row.field in SELF_REPORTED_FIELDS and row.source_type in SELF_REPORTED_SOURCES
+
+
 def _fact(label: str, value: Any, prov: dict[str, FieldProvenance], *fields: str,
           missing_note: str | None = None, unverified_note: str = "On record; no field-level source captured"
           ) -> FactField:
@@ -449,6 +464,9 @@ def _fact(label: str, value: Any, prov: dict[str, FieldProvenance], *fields: str
     for f in fields:
         row = prov.get(f)
         if row is not None:
+            if is_self_reported(row):
+                return FactField(label=label, value=value, status="INFERRED", source_url=row.source_url or None,
+                                 source_type=row.source_type, note=P.SELF_REPORTED_NOTE)
             status: Verification = "VERIFIED" if row.epistemic == "FACT" else "INFERRED"
             return FactField(label=label, value=value, status=status, source_url=row.source_url or None,
                              source_type=row.source_type)
@@ -683,7 +701,8 @@ def company_detail(session: Session, id_or_slug: str) -> CompanyDetail | None:
                "ats": j.ats, "is_demo": j.is_demo} for j in jobs],
         hiring=hiring, series=series, sources=_sources(prov_rows, tl_signals, job_sources), reports=reports,
         match_candidates=match_candidates(session, "company", c.id), watched=summary.watched,
-        data_note=P.data_note(c.is_demo),
+        data_note=P.data_note(c.is_demo), data_age=data_age(session, "company", [c.id]).get(c.id),
+        velocity=P.velocity_metrics(P.company_metrics(session, [c.id]).get(c.id)),
     )
 
 
@@ -777,13 +796,17 @@ def _person_facts(session: Session, p: Person, prov_rows: Sequence[FieldProvenan
     prov: dict[str, FieldProvenance] = {}
     for r in prov_rows:
         prov.setdefault(r.field, r)
+    prior = [a for a in map(P.clean_label, p.prior_affiliations or []) if a]
+    # Prior affiliations are earlier values of the profile's company field when GitHub supplied it.
+    prior_note = (f"{P.SELF_REPORTED_NOTE}; earlier values of the listed company"
+                  if is_self_reported(prov.get("current_company")) and "prior_affiliations" not in prov
+                  else "Derived from profile, publications and affiliation-change signals")
     facts = [
-        _fact("Current company", p.current_company, prov, "current_company",
+        _fact("Current company", P.clean_label(p.current_company), prov, "current_company",
               missing_note="No current company listed"),
         _fact("Current role", p.current_role, prov, "current_role", missing_note="Role not disclosed"),
-        _fact("Prior affiliations", list(p.prior_affiliations or []) or None, prov, "prior_affiliations",
-              unverified_note="Derived from profile, publications and affiliation-change signals",
-              missing_note="No prior affiliations found"),
+        _fact("Prior affiliations", prior or None, prov, "prior_affiliations",
+              unverified_note=prior_note, missing_note="No prior affiliations found"),
     ]
     gh = _fact("GitHub", p.github_handle, prov, "github_handle", missing_note="No GitHub account linked")
     if gh.status != "UNKNOWN" and not gh.source_url:
@@ -853,14 +876,16 @@ def person_detail(session: Session, id_or_slug: str) -> PersonDetail | None:
     prov_rows = _provenance(session, p.id)
     tl = _timeline_signals(session, [p.id])
     extra = [(gh_url(p.github_handle, p.is_demo), "GitHub profile", "github")] if p.github_handle else []
+    bio_prov = next((r for r in prov_rows if r.field == "bio"), None)
     return PersonDetail(
-        card=card, bio=p.bio, facts=_person_facts(session, p, prov_rows), founder_score=P.anti_score(session, snap),
+        card=card, bio=p.bio, bio_note=P.SELF_REPORTED_NOTE if p.bio and is_self_reported(bio_prov) else None,
+        facts=_person_facts(session, p, prov_rows), founder_score=P.anti_score(session, snap),
         score_history=[ScorePoint(day=r["day"], score=r["score"]) for r in P.score_history(session, p.id)],
         why_now=_narr(narratives.why_now(session, p)), timeline=timeline_events(tl),
         companies=P.company_summaries(session, companies), repositories=repo_cards(session, repos),
         papers=paper_cards(session, papers), collaborators=_collaborators(session, p),
         sources=_sources(prov_rows, tl, extra), watched=p.id in P.watched_ids(session),
-        data_note=P.data_note(p.is_demo),
+        data_note=P.data_note(p.is_demo), data_age=data_age(session, "person", [p.id]).get(p.id),
     )
 
 

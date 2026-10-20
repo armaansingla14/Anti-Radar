@@ -1,8 +1,12 @@
-"""Demo seeding: replay the committed real-data snapshot, add the labeled
+"""Demo seeding: replay the committed real-data snapshot, optionally add the labeled
 fictional set, import pre-generated LLM outputs, then classify + score.
 
-    radar seed-demo            # idempotent; skips steps already done
-    radar seed-demo --reset    # wipe everything first
+    radar seed-demo                          # verified snapshot only (fictional per DEMO_SYNTHETIC)
+    radar seed-demo --if-empty --no-fictional  # demo backend startup: seed once, never synthetic
+    radar seed-demo --fictional              # add the clearly-labeled fictional dataset
+    radar seed-demo --reset                  # wipe everything first
+
+The fictional dataset is OFF by default (``settings.demo_synthetic``, env DEMO_SYNTHETIC).
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from radar import clock
 from radar.db import engine, session_scope
 from radar.demo.fictional import build_fictional_batch
 from radar.models import Base, Company, CompanyPerson, IngestionRun, Person, Signal
+from radar.pipeline.aliases import normalized_affiliations
 from radar.pipeline.ingest import ingest_batch
 from radar.pipeline.runner import run_provider
 from radar.providers.base import ProviderBatch
@@ -152,7 +157,8 @@ def seed_fictional() -> dict[str, Any]:
             person.prior_affiliations = p["prior"]
             person.domains = p["domains"]
             person.current_role = p.get("role")
-            person.attrs = {**(person.attrs or {}), "headline": p.get("headline"), "demo": True}
+            person.attrs = {**(person.attrs or {}), "headline": p.get("headline"), "demo": True,
+                            "affiliations_normalized": normalized_affiliations(person.current_company, p["prior"])}
             person.demo_label = "Fictional example"
             person.first_seen_at = _days_ago_dt(p.get("first_seen_days_ago") or _person_first_seen(key))
             if p.get("left_days_ago") is not None:
@@ -252,18 +258,29 @@ def score_history(days: tuple[int, ...] = (30, 21, 14, 10, 7, 5, 3, 2, 1)) -> in
     return n + 1
 
 
-def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = True, fictional: bool = True,
+def synthetic_default() -> bool:
+    """Whether the fictional dataset is included when the caller does not say (DEMO_SYNTHETIC, default False)."""
+    from radar.settings import get_settings
+
+    return bool(getattr(get_settings(), "demo_synthetic", False))
+
+
+def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = True, fictional: bool | None = None,
               history: bool = True, llm_outputs: bool = True) -> dict[str, Any]:
+    """Seed the database. ``if_empty`` skips everything (and only re-pins the clock) when any
+    company row already exists, so it is safe to call on every container start."""
     from radar.pipeline.stage import apply_stage_estimates
     from radar.thesis.classifier import classify_entities, ensure_topics
     from radar.thesis.loader import get_thesis
 
+    if fictional is None:
+        fictional = synthetic_default()
     if if_empty and not is_empty():
         clock.init_from_db()
         return {"skipped": "database not empty"}
     if reset:
         reset_database()
-    out: dict[str, Any] = {}
+    out: dict[str, Any] = {"fictional_included": fictional}
     if snapshot:
         out["snapshot"] = load_snapshot()
         backfill_first_seen()

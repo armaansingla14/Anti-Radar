@@ -312,3 +312,38 @@ def test_second_github_org_sharing_a_blog_domain_is_not_merged(db):
     mc = db.scalars(select(MatchCandidate)).one()
     assert mc.method == "shared_domain" and mc.status == "pending"
     assert {mc.a_id, mc.b_id} == {parent.id, rows["acme-labs"].id}
+
+
+# ── org alias normalization (config/org_aliases.yaml) ───────────────────────
+
+
+def test_org_alias_normalization():
+    from radar.pipeline.aliases import normalize_org, normalized_affiliations, same_org
+
+    for raw in ("@google-deepmind", "google deepmind", "DeepMind", "Google DeepMind, London",
+                "Research Scientist at Google DeepMind"):
+        assert normalize_org(raw) == "Google DeepMind", raw
+    assert normalize_org("OpenAI Inc.") == normalize_org("@openai") == "OpenAI"
+    assert normalize_org("FAIR") == normalize_org("Meta AI") == "Meta AI"
+    assert normalize_org("NVIDIA Research") == "NVIDIA" and normalize_org("@nvidia") == "NVIDIA"
+    assert normalize_org("Tesla, Inc.") == "Tesla" and normalize_org("SpaceX") == "SpaceX"
+    assert normalize_org("Anduril Industries") == "Anduril" and normalize_org("palantir") == "Palantir"
+    # ordinary words only match as the whole string
+    assert normalize_org("fair lending co-op") == "fair lending co-op"
+    assert normalize_org("Metadata Labs") == "Metadata Labs"
+    assert normalize_org("  Acme   Robotics ") == "Acme Robotics"  # unknown orgs: cleaned, unchanged
+    assert normalize_org("✖️") is None and normalize_org("") is None
+    assert same_org("@google-deepmind", "DeepMind") and not same_org("OpenAI", "Anthropic")
+    assert normalized_affiliations("@openai", ["deepmind", "Google DeepMind", "Acme"]) == {
+        "current_company": "OpenAI", "prior_affiliations": ["Google DeepMind", "Acme"]}
+
+
+def test_github_org_stub_kind_rule():
+    from radar.pipeline.resolve import _initial_company_kind
+
+    assert _initial_company_kind("github_org", None) == "project"
+    assert _initial_company_kind("domain", None) == "company"
+    assert _initial_company_kind("github_org", CompanyRecord(ref=gh_org_ref("a"), name="A")) == "project"
+    assert _initial_company_kind("github_org", CompanyRecord(ref=gh_org_ref("a"), name="A",
+                                                             website="https://a.ai")) == "company"
+    assert _initial_company_kind("github_org", CompanyRecord(ref=gh_org_ref("a"), name="A", kind="lab")) == "lab"

@@ -1,0 +1,78 @@
+{
+ "search": {
+  "total_count": 7,
+  "incomplete_results": false,
+  "items": [
+   {"full_name": "newbot-ai/core", "name": "core", "description": "Open-source dexterous manipulation stack",
+    "owner": {"login": "newbot-ai", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 120, "created_at": "2026-08-03T10:00:00Z"},
+   {"full_name": "newbot-ai/sim", "name": "sim", "description": "Simulator for core",
+    "owner": {"login": "newbot-ai", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 15, "created_at": "2026-08-20T10:00:00Z"},
+   {"full_name": "xyz-grasp/thing", "name": "thing", "description": "Grasp planning",
+    "owner": {"login": "xyz-grasp", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 90, "created_at": "2026-07-01T10:00:00Z"},
+   {"full_name": "robo-curators/awesome-robot-learning", "name": "awesome-robot-learning",
+    "description": "A curated list of robot learning papers",
+    "owner": {"login": "robo-curators", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 900, "created_at": "2026-06-01T10:00:00Z"},
+   {"full_name": "cs287-course-2026/hw1", "name": "hw1", "description": "Homework 1",
+    "owner": {"login": "cs287-course-2026", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 70, "created_at": "2026-09-01T10:00:00Z"},
+   {"full_name": "solo-org/proto", "name": "proto", "description": "Prototype",
+    "owner": {"login": "solo-org", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 50, "created_at": "2026-07-02T10:00:00Z"},
+   {"full_name": "oldcorp/newthing", "name": "newthing", "description": "New thing",
+    "owner": {"login": "oldcorp", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 40, "created_at": "2026-07-03T10:00:00Z"},
+   {"full_name": "repurposed/agent", "name": "agent", "description": "Robot agent",
+    "owner": {"login": "repurposed", "type": "Organization"}, "fork": false, "archived": false,
+    "stargazers_count": 30, "created_at": "2026-06-10T10:00:00Z"},
+   {"full_name": "jdoe/personal", "name": "personal", "description": "A user repo",
+    "owner": {"login": "jdoe", "type": "User"}, "fork": false, "archived": false,
+    "stargazers_count": 500, "created_at": "2026-06-10T10:00:00Z"}
+  ]
+ },
+ "orgs": {
+  "newbot-ai": {"login": "newbot-ai", "html_url": "https://github.com/newbot-ai", "name": "NewBot",
+                "blog": "https://newbot.example", "description": "Robot hands", "public_repos": 3,
+                "followers": 12, "created_at": "2026-08-01T08:00:00Z", "type": "Organization"},
+  "xyz-grasp": {"login": "xyz-grasp", "html_url": "https://github.com/xyz-grasp", "name": "XYZ Grasp",
+                "blog": "https://xyz.stanford.edu", "description": null, "public_repos": 2,
+                "followers": 3, "created_at": "2026-06-20T08:00:00Z", "type": "Organization"},
+  "solo-org": {"login": "solo-org", "html_url": "https://github.com/solo-org", "name": "Solo",
+               "blog": "", "description": null, "public_repos": 1, "followers": 0,
+               "created_at": "2026-07-01T08:00:00Z", "type": "Organization"},
+  "oldcorp": {"login": "oldcorp", "html_url": "https://github.com/oldcorp", "name": "Old Corp",
+              "blog": "", "description": null, "public_repos": 80, "followers": 900,
+              "created_at": "2015-01-01T08:00:00Z", "type": "Organization"},
+  "repurposed": {"login": "repurposed", "html_url": "https://github.com/repurposed", "name": "Repurposed",
+                 "blog": "", "description": "Agents for robots", "public_repos": 1, "followers": 4,
+                 "created_at": "2019-03-01T08:00:00Z", "type": "Organization"}
+ },
+ "first_repo": {
+  "oldcorp": [{"full_name": "oldcorp/legacy", "created_at": "2015-02-01T00:00:00Z"}],
+  "repurposed": [{"full_name": "repurposed/agent", "created_at": "2026-06-10T10:00:00Z"}]
+ },
+ "contributors": {
+  "newbot-ai/core": [
+   {"login": "dependabot[bot]", "type": "Bot", "contributions": 50},
+   {"login": "alice", "type": "User", "contributions": 40},
+   {"login": "bob", "type": "User", "contributions": 12},
+   {"login": "carol", "type": "User", "contributions": 2}
+  ],
+  "newbot-ai/sim": [
+   {"login": "carol", "type": "User", "contributions": 2},
+   {"login": "alice", "type": "User", "contributions": 1}
+  ],
+  "solo-org/proto": [
+   {"login": "dave", "type": "User", "contributions": 100},
+   {"login": "eve", "type": "User", "contributions": 1},
+   {"login": "renovate[bot]", "type": "Bot", "contributions": 30}
+  ],
+  "repurposed/agent": [
+   {"login": "frank", "type": "User", "contributions": 5},
+   {"login": "gina", "type": "User", "contributions": 3}
+  ]
+ }
+}

@@ -352,3 +352,67 @@ def test_measurement_signals_do_not_feed_acceleration(db):
     snap = db.scalars(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == c.id)).one()
     assert snap.collision["score"] == 0 and snap.collision["signal_count"] == 0
     assert snap.components["acceleration"]["raw"]["collision"] == 0
+
+
+def test_score_all_persists_company_velocity(db):
+    """Per-day velocities (sum over repos) with a provenance basis, under CompanyMetric.metrics['velocity']."""
+    w = build_world(db)
+    score_all(db, DAY)
+    vel = db.get(CompanyMetric, w["hot"].id).metrics["velocity"]
+    assert vel["computed_on"] == DAY.isoformat() and vel["repos"] == 1
+    assert vel["star_velocity_7d"] == 20 and vel["star_velocity_7d_basis"] == "observed"
+    assert vel["star_velocity_30d"] == 20 and vel["star_acceleration"] == 0
+    assert vel["star_acceleration_text"] == "20 → 20 stars/day"
+    # commits_week = 20 per sampled week: the last complete week gives 20/7 commits/day.
+    assert abs(vel["commit_velocity_7d"] - 20 / 7) < 1e-3 and vel["commit_velocity_7d_basis"] == "observed"
+    # Never measured -> None with an explicit basis, not 0.
+    assert vel["release_velocity_90d"] is None and vel["release_velocity_90d_basis"] == "insufficient_history"
+    assert vel["issue_velocity_30d"] is None
+    # Reconstructed runs leave the denormalized metrics (and velocity) untouched.
+    score_all(db, DAY - timedelta(days=3), reconstruct=True)
+    assert db.get(CompanyMetric, w["hot"].id).metrics["velocity"]["computed_on"] == DAY.isoformat()
+
+
+def test_company_velocity_sums_repos_and_never_mixes_contributor_definitions(db):
+    from radar.scoring.extract import build_company_velocity
+
+    c = company(db, "twinrepo")
+    a = repo(db, c, "a", 10)
+    b = repo(db, c, "b", 4)
+    # Star backfill change points for a third repo with sparse history (step series) + observed today.
+    r3 = Repository(full_name="twinrepo/c", owner="twinrepo", company_id=c.id, gh_created_at=at(300),
+                    first_seen_at=at(1))
+    db.add(r3)
+    db.flush()
+    for d, v in ((50, 100), (20, 130), (3, 160)):
+        _metric(db, r3, "stars", d, v, source="backfill")
+    _metric(db, r3, "stars", 0, 170)
+    # Contributors: backfill first-commit series + a legacy observed /contributors count (other measure).
+    for d, v in ((60, 3), (40, 5), (10, 8)):
+        _metric(db, a, "contributors", d, v, source="backfill")
+    _metric(db, a, "contributors", 0, 4)  # legacy, no contributors_total that day: ignored
+    _metric(db, a, "releases_total", 120, 0, source="backfill")
+    _metric(db, a, "releases_total", 30, 2, source="backfill")
+    _metric(db, a, "releases_total", 0, 3)
+    for d, v in ((30, 20), (0, 11)):
+        _metric(db, b, "open_issues", d, v)
+    db.flush()
+    vel = build_company_velocity(db, DAY, [c.id])[c.id]
+    assert vel["repos"] == 3
+    # a: 10/day observed, b: 4/day observed, c: (170-130)/7 from backfill -> basis backfill.
+    assert abs(vel["star_velocity_7d"] - (14 + 40 / 7)) < 1e-3
+    assert vel["star_velocity_7d_basis"] == "backfill" and vel["coverage"]["star_velocity_7d"] == 3
+    assert abs(vel["release_velocity_90d"] - 3 / 90) < 1e-3
+    assert abs(vel["issue_velocity_30d"] - (-9 / 30)) < 1e-3 and vel["issue_velocity_30d_basis"] == "observed"
+    # Legacy observed point dropped: end of window unknown -> insufficient, never 4 - 5.
+    assert vel["contributor_velocity_30d"] is None
+
+    # A deep fetch writes 'contributors' (same definition as backfill) together with 'contributors_total'.
+    db.execute(MetricSnapshot.__table__.update().where(
+        MetricSnapshot.entity_id == a.id, MetricSnapshot.metric == "contributors", MetricSnapshot.day == DAY,
+    ).values(value=9.0))
+    _metric(db, a, "contributors_total", 0, 12)
+    db.flush()
+    vel = build_company_velocity(db, DAY, [c.id])[c.id]
+    assert abs(vel["contributor_velocity_30d"] - (9 - 5) / 30) < 1e-3
+    assert vel["contributor_velocity_30d_basis"] == "backfill"

@@ -106,7 +106,7 @@ def run_provider(
     if run.status in ("ok", "partial") and not is_demo and clock.is_live_run(provider_name, params):
         # Fresh data has arrived: stop reasoning "as of" the committed snapshot day, so this
         # (possibly long-running) process scores, windows and dates on the real calendar from now on.
-        clock.set_as_of(None)
+        clock.release_pin_for_live_data()
     level = logging.INFO if run.status == "ok" else logging.WARNING
     log.log(level, "provider %s: %s fetched=%d accepted=%d rejected=%d signals=%d errors=%d",
             provider_name, run.status, run.records_fetched, run.records_accepted, run.records_rejected,

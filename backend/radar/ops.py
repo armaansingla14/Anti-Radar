@@ -290,24 +290,211 @@ def refine_topics_with_llm(limit: int = 60) -> int:
                 continue
             for key, score in refined:
                 if key == topic.key:
-                    s.add(EntityTopic(entity_type=et.entity_type, entity_id=et.entity_id, topic_id=topic.id,
-                                      score=float(score), method="llm", evidence=["llm-adjudicated"]))
+                    # (entity, topic) is unique: upgrade the keyword row in place instead of adding a second one.
+                    # method='llm' rows survive the next keyword reclassification.
+                    et.score = float(score)
+                    et.method = "llm"
+                    et.evidence = list(dict.fromkeys([*(et.evidence or []), "llm-adjudicated"]))[:20]
                     n += 1
+                    break
     return n
 
 
-def sweep(*, github: bool = True, arxiv: bool = True, hn: bool = True, websites: bool = True) -> dict[str, Any]:
-    """One full live sweep across sources, then recompute."""
+# ── Sweep (one-shot; used by `radar sweep`, the worker and scheduled Actions) ──────────
+
+
+SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "web", "probe", "score", "brief")
+ALL_STEPS: tuple[str, ...] = (*SWEEP_STEPS, "retention")
+ORGS_QUERIES_PER_RUN = 10
+
+
+def rotating_subset(items: list[str], n: int, day: date) -> list[str]:
+    """A deterministic window of ``n`` items that rotates daily, so all terms are covered over time."""
+    if len(items) <= n:
+        return list(items)
+    start = (day.toordinal() * n) % len(items)
+    return [items[(start + i) % len(items)] for i in range(n)]
+
+
+def ingest_young_orgs(*, terms: list[str] | None = None, created_within_days: int = 150, max_orgs: int = 40,
+                      n_terms: int = ORGS_QUERIES_PER_RUN):
+    """Formation discovery: young GitHub organizations around thesis terms (pre-company projects).
+
+    Uses ``GitHubProvider.discover_young_orgs`` (search repos created recently, keep org owners,
+    filter academic/hackathon/bot orgs, require >=2 non-bot contributors with >=3 commits)."""
+    from radar.providers.github import GitHubProvider
+
+    gh = GitHubProvider()
+    qs = terms or rotating_subset(list(get_thesis().discovery_queries), n_terms, clock.today())
+    params = {"discovery": "young_orgs", "terms": qs, "created_within_days": created_within_days,
+              "max_orgs": max_orgs}
+    if not hasattr(gh, "discover_young_orgs"):
+        def missing() -> ProviderBatch:
+            return ProviderBatch(provider="github", errors=["discover_young_orgs not available in this build"])
+
+        return _run("github", missing, params, gh.client.stats)
+    return _run(
+        "github",
+        lambda: gh.discover_young_orgs(qs, created_within_days=created_within_days, max_orgs=max_orgs),
+        params,
+        gh.client.stats,
+    )
+
+
+def run_job(name: str, fn: Callable[[], Any], params: dict[str, Any] | None = None) -> tuple[Any, Any]:
+    """Run a non-fetching sweep step (score / brief / retention) recorded as IngestionRun ``job:<name>``.
+
+    These runs never count as live data (see ``clock.is_live_run``). Returns (run, result)."""
+    import time
+
+    from radar.models import IngestionRun
+
+    with session_scope() as s:
+        run = IngestionRun(provider=f"{clock.JOB_PREFIX}{name}", status="running", params=dict(params or {}),
+                           started_at=clock.wall_now())
+        s.add(run)
+        s.flush()
+        run_id = run.id
+    t0 = time.monotonic()
+    result: Any = None
+    error: str | None = None
+    try:
+        result = fn()
+    except Exception as e:  # noqa: BLE001 — recorded on the run; the sweep keeps going
+        error = f"{type(e).__name__}: {e}"[:500]
+        log.exception("job %s failed", name)
+    with session_scope() as s:
+        run = s.get(IngestionRun, run_id)
+        run.status = "error" if error else "ok"
+        run.errors = [error] if error else []
+        run.finished_at = clock.wall_now()
+        run.params = {**(params or {}), "duration_s": round(time.monotonic() - t0, 3),
+                      "result": _jsonable_summary(result)}
+        s.flush()
+        s.expunge(run)
+    return run, result
+
+
+def _jsonable_summary(v: Any) -> Any:
+    try:
+        return json.loads(json.dumps(v, default=str))
+    except (TypeError, ValueError):
+        return str(v)[:500]
+
+
+def persist_morning_brief(day: date | None = None) -> dict[str, Any]:
+    """Build today's Morning Brief and store it as ResearchReport(kind='morning_brief').
+
+    Exactly one per day: an existing brief for the same date is replaced in place (same id)."""
+    from sqlalchemy import select
+
+    from radar.models import ResearchReport
+    from radar.services.brief import morning_brief
+
+    with session_scope() as s:
+        b = morning_brief(s)
+        d = day or b.date
+        body = b.model_dump(mode="json")
+        body["date"] = d.isoformat()
+        demo = any(c.is_demo for c in [*b.founders_to_know, *b.companies_to_watch]) or any(
+            p.is_demo for p in b.research) or bool(b.strange_signal and b.strange_signal.is_demo)
+        existing = list(s.scalars(
+            select(ResearchReport).where(ResearchReport.kind == "morning_brief",
+                                         ResearchReport.body["date"].as_string() == d.isoformat())
+            .order_by(ResearchReport.created_at)
+        ))
+        report = existing[0] if existing else ResearchReport(kind="morning_brief")
+        for dup in existing[1:]:
+            s.delete(dup)
+        report.title = f"Morning Brief — {d:%A, %B} {d.day}, {d.year}"
+        report.body = body
+        report.markdown = b.markdown
+        report.generator = b.generator or "template"
+        report.model = None
+        report.status = "complete"
+        report.is_demo = demo
+        report.sources = []
+        if not existing:
+            s.add(report)
+        s.flush()
+        return {"id": str(report.id), "date": d.isoformat(), "replaced": bool(existing),
+                "items": len(b.what_changed), "generator": report.generator}
+
+
+def run_retention() -> dict[str, Any]:
+    from radar import retention
+
+    return retention.run()
+
+
+def _step_ingest(step: str) -> Any:
+    if step == "hn":
+        return ingest_hn()
+    if step == "arxiv":
+        return ingest_arxiv()
+    if step == "github":
+        return ingest_github()
+    if step == "orgs":
+        return ingest_young_orgs()
+    if step == "probe":
+        return probe_attention()
+    if step == "web":
+        return crawl_company_sites(limit=15)
+    raise ValueError(step)
+
+
+def run_step(step: str) -> dict[str, Any]:
+    """Run one sweep step and summarise it. Never raises: failures are recorded and reported."""
+    if step not in ALL_STEPS:
+        raise ValueError(f"unknown sweep step {step!r}; expected one of {', '.join(ALL_STEPS)}")
+    if step == "score":
+        run, res = run_job("score", recompute)
+        return _job_status(run, res)
+    if step == "brief":
+        run, res = run_job("brief", persist_morning_brief)
+        return _job_status(run, res)
+    if step == "retention":
+        run, res = run_job("retention", run_retention)
+        return _job_status(run, res)
+    try:
+        res = _step_ingest(step)
+    except Exception as e:  # noqa: BLE001 — provider construction failures etc.; keep sweeping
+        log.exception("sweep step %s failed", step)
+        return {"status": "error", "errors": 1, "error": f"{type(e).__name__}: {e}"[:500]}
+    if step == "web":
+        runs = [r[0] for r in res]
+        bad = sum(1 for r in runs if r.status == "error")
+        return {"status": "ok" if not bad else ("error" if bad == len(runs) else "partial"), "sites": len(runs),
+                "signals": sum(r.signals_created for r in runs), "errors": bad}
+    return _status(res)
+
+
+def sweep(steps: list[str] | tuple[str, ...] | None = None, *, github: bool = True, arxiv: bool = True,
+          hn: bool = True, websites: bool = True) -> dict[str, Any]:
+    """One full sweep in order (hn, arxiv, github, orgs, web, probe, score, brief) or the given steps.
+
+    Steps always run in canonical order; each is recorded in ``ingestion_runs``. The legacy
+    keyword flags remove steps from the default list."""
+    if steps is None:
+        skip = {k for k, on in (("github", github), ("arxiv", arxiv), ("hn", hn), ("web", websites)) if not on}
+        steps = [s for s in SWEEP_STEPS if s not in skip]
+    wanted = list(dict.fromkeys(steps))
+    for st in wanted:
+        if st not in ALL_STEPS:
+            raise ValueError(f"unknown sweep step {st!r}; expected one of {', '.join(ALL_STEPS)}")
     out: dict[str, Any] = {}
-    if hn:
-        out["hackernews"] = _status(ingest_hn())
-    if arxiv:
-        out["arxiv"] = _status(ingest_arxiv())
-    if github:
-        out["github"] = _status(ingest_github())
-    if websites:
-        out["website"] = len(crawl_company_sites(limit=15))
-    out["recompute"] = recompute()
+    for st in ALL_STEPS:
+        if st in wanted:
+            out[st] = run_step(st)
+    return out
+
+
+def _job_status(run, result) -> dict[str, Any]:
+    out: dict[str, Any] = {"status": run.status, "errors": len(run.errors or [])}
+    if run.errors:
+        out["error"] = run.errors[0]
+    if isinstance(result, dict):
+        out["result"] = _jsonable_summary(result)
     return out
 
 

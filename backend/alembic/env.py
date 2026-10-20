@@ -1,8 +1,8 @@
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import create_engine, pool
 
+from alembic import context
 from radar.models import Base
 from radar.settings import get_settings
 
@@ -13,7 +13,8 @@ target_metadata = Base.metadata
 
 
 def url() -> str:
-    return config.get_main_option("sqlalchemy.url") or get_settings().database_url
+    """Explicit sqlalchemy.url (tests) > DATABASE_URL_DIRECT (bypasses the pooler) > DATABASE_URL."""
+    return config.get_main_option("sqlalchemy.url") or get_settings().migration_url
 
 
 def run_migrations_offline() -> None:
@@ -23,7 +24,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = create_engine(url(), poolclass=pool.NullPool)
+    connectable = create_engine(url(), poolclass=pool.NullPool, connect_args={"prepare_threshold": None})
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():

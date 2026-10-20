@@ -76,8 +76,9 @@ def test_radar_ranks_halcyon_first_with_evidence_and_demo_labels(seeded, client)
     assert counts["new_entities_7d"] >= 2  # Halcyon + demo-sq-propulsion (+ people)
     assert counts["emerging_companies"] >= 2
     assert counts["founders"] >= 1  # Elias Brandt scores >= 50
-    assert "demo" in feed["data_freshness"]
-    assert isinstance(feed["demo_mode"], bool)
+    # The fictional seeder and snapshot loader are not data providers: never listed as freshness.
+    assert "demo" not in feed["data_freshness"] and "snapshot" not in feed["data_freshness"]
+    assert feed["demo_mode"] is True  # labeled synthetic entities were included in this response
 
 
 def test_radar_updates_last_visit_for_default_user(seeded, client):
@@ -362,3 +363,33 @@ def test_daily_since_last_visit_survives_loading_the_radar(seeded, client):
     assert client.post("/api/watchlist/seen").status_code == 200
     d = client.get("/api/daily", params=DEMO).json()
     assert abs((clock.now() - timedelta(hours=24) - _ts(d["since"])).total_seconds()) < 120
+
+
+# ── synthetic data is opt-in ─────────────────────────────────────────────────
+
+
+def test_default_radar_has_no_synthetic_rows_when_demo_synthetic_off(seeded, client, monkeypatch):
+    from radar.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "demo_synthetic", False)
+    feed = client.get("/api/radar").json()
+    rows = feed["cards"] + feed["founders"] + feed["strange_signals"]
+    assert not [r for r in rows if r["is_demo"]]
+    assert not any("DEMO" in s["label"] for s in feed["thesis_shifts"])
+    assert feed["demo_mode"] is False
+    assert feed["counts"]["signals_24h"] == 0 and feed["counts"]["emerging_companies"] == 0  # fictional only
+    # Same dataset, explicitly opted in: the fictional rows are there (and labeled).
+    opted = client.get("/api/radar", params=DEMO).json()
+    assert opted["cards"] and all(c["is_demo"] for c in opted["cards"]) and opted["demo_mode"] is True
+    # The list endpoints and the daily radar follow the same default.
+    assert not [r for r in client.get("/api/companies").json() if r["is_demo"]]
+    assert not [r for r in client.get("/api/founders").json() if r["is_demo"]]
+    daily = client.get("/api/daily").json()
+    assert not [r for r in daily["companies"] + daily["founders"] if r["is_demo"]]
+
+
+def test_radar_feed_live_as_of_fields(seeded, client):
+    feed = client.get("/api/radar", params=DEMO).json()
+    assert feed["data_as_of"] == "2026-10-06" and feed["is_snapshot"] is False
+    assert feed["snapshot_age_days"] is None
+    assert all(c["data_age"] and "updated_at" in c["data_age"] for c in feed["cards"] + feed["founders"])

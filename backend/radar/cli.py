@@ -5,13 +5,16 @@
     radar ingest hn
     radar ingest url https://acme.ai
     radar ingest x https://x.com/someone/status/123 [--text "..."]
-    radar ingest all
+    radar ingest orgs                # young GitHub orgs around thesis terms (formation discovery)
+    radar ingest all                 # = radar sweep
+    radar sweep [--only hn|arxiv|github|orgs|web|probe|score|brief|retention ...]
     radar score                      # classify → stage → score
-    radar brief                      # print today's morning brief
+    radar brief [--save]             # print (and optionally persist) today's morning brief
+    radar retention                  # prune old evidence/history, then VACUUM
     radar investigate "Halcyon"      # RADAR ANALYST → Anti Brief
     radar memo "Halcyon"
     radar status
-    radar seed-demo [--reset] [--if-empty]
+    radar seed-demo [--reset] [--if-empty] [--fictional/--no-fictional]
     radar demo capture               # re-capture the real-data snapshot
     radar worker                     # scheduled ingestion loop
 """
@@ -47,8 +50,9 @@ def _main(verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False) -> 
         format="%(message)s",
         handlers=[RichHandler(console=console, show_path=False, markup=False)],
     )
-    from radar import clock
+    from radar import clock, config_check
 
+    config_check.validate_or_exit(role="cli", quiet=True)
     clock.init_from_db()
 
 
@@ -130,19 +134,81 @@ def ingest_x(url: str, text: Annotated[str | None, typer.Option(help="Pasted pos
         console.print(f"  [dim]{json.dumps(info, default=str)[:300]}[/dim]")
 
 
-@ingest_app.command("all")
-def ingest_all(websites: bool = True) -> None:
-    """Full sweep: HN → arXiv → GitHub → websites, then recompute scores."""
+@ingest_app.command("orgs")
+def ingest_orgs(
+    term: Annotated[list[str] | None, typer.Option("--term", "-t", help="Search term (repeatable)")] = None,
+    created_within_days: int = 150,
+    max_orgs: int = 40,
+) -> None:
+    """Formation discovery: young GitHub organizations around thesis terms."""
     from radar import ops
 
-    _banner("Full sweep")
-    _report(ops.ingest_hn())
-    _report(ops.ingest_arxiv())
-    _report(ops.ingest_github())
-    if websites:
-        for r in ops.crawl_company_sites(limit=15):
-            _report(r)
-    _score()
+    _banner("GitHub young orgs")
+    _report(ops.ingest_young_orgs(terms=term, created_within_days=created_within_days, max_orgs=max_orgs))
+
+
+@ingest_app.command("all")
+def ingest_all(websites: bool = True) -> None:
+    """Full sweep (same as `radar sweep`)."""
+    from radar import ops
+
+    _sweep([s for s in ops.SWEEP_STEPS if websites or s != "web"])
+
+
+def _sweep(steps: list[str]) -> dict:
+    from radar import ops
+
+    _banner("Sweep · " + " → ".join(s for s in ops.ALL_STEPS if s in steps))
+    out = {}
+    for st in ops.ALL_STEPS:
+        if st not in steps:
+            continue
+        res = ops.run_step(st)
+        out[st] = res
+        color = {"ok": "green", "partial": "yellow"}.get(res.get("status"), "red")
+        detail = " · ".join(f"{k}={v}" for k, v in res.items() if k not in ("status", "result", "error"))
+        console.print(f"  [{color}]{str(res.get('status', '?')).upper():<7}[/] {st:<9} [dim]{detail}[/dim]")
+        if res.get("error"):
+            console.print(f"    [dim]! {res['error']}[/dim]")
+        if isinstance(res.get("result"), dict):
+            console.print(f"    [dim]{json.dumps(res['result'], default=str)[:300]}[/dim]")
+    return out
+
+
+@app.command()
+def sweep(
+    only: Annotated[list[str] | None, typer.Option(
+        "--only", help="Step to run (repeatable): hn, arxiv, github, orgs, web, probe, score, brief, retention")] = None,
+    strict: Annotated[bool, typer.Option(help="Exit 1 if any step ends in error")] = False,
+) -> None:
+    """One-shot sweep: hn → arxiv → github → orgs → web → probe → score → brief (each recorded in ingestion_runs)."""
+    from radar import ops
+
+    steps = list(only) if only else list(ops.SWEEP_STEPS)
+    bad = [s for s in steps if s not in ops.ALL_STEPS]
+    if bad:
+        raise typer.BadParameter(f"unknown step(s) {', '.join(bad)}; expected {', '.join(ops.ALL_STEPS)}")
+    out = _sweep(steps)
+    errors = [k for k, v in out.items() if v.get("status") == "error"]
+    if errors and (strict or len(errors) == len(out)):
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def retention(vacuum: bool = True) -> None:
+    """Prune old score evidence / history and bulky metadata, then VACUUM (ANALYZE)."""
+    from radar import ops
+    from radar import retention as ret
+
+    _banner("Retention")
+    if vacuum:
+        run, res = ops.run_job("retention", ops.run_retention)
+    else:
+        run, res = ops.run_job("retention", lambda: ret.run(do_vacuum=False))
+    if run.status != "ok":
+        console.print(f"  [red]ERROR[/] {run.errors}")
+        raise typer.Exit(code=1)
+    console.print_json(json.dumps(res, default=str))
 
 
 # ── derive ───────────────────────────────────────────────────────────────────
@@ -167,11 +233,21 @@ def score() -> None:
 
 
 @app.command()
-def brief(markdown: bool = False) -> None:
+def brief(markdown: bool = False, save: Annotated[bool, typer.Option(
+        "--save", help="Persist as today's ResearchReport(kind='morning_brief'), replacing an existing one")] = False
+          ) -> None:
     """Print the ANTI RADAR Morning Brief."""
     from radar.db import session_scope
     from radar.services.brief import morning_brief
 
+    if save:
+        from radar import ops
+
+        run, res = ops.run_job("brief", ops.persist_morning_brief)
+        if run.status != "ok":
+            console.print(f"  [red]ERROR[/] {run.errors}")
+            raise typer.Exit(code=1)
+        console.print(f"  [dim]saved morning brief {res['date']} ({'replaced' if res['replaced'] else 'new'})[/dim]")
     with session_scope() as s:
         b = morning_brief(s)
     if markdown:
@@ -276,11 +352,13 @@ def _ago(dt: datetime | None) -> str:
 @app.command("seed-demo")
 def seed_demo(
     reset: bool = False,
-    if_empty: Annotated[bool, typer.Option("--if-empty")] = False,
+    if_empty: Annotated[bool, typer.Option("--if-empty", help="Do nothing if any company exists")] = False,
     snapshot: bool = True,
-    fictional: bool = True,
+    fictional: Annotated[bool | None, typer.Option(
+        "--fictional/--no-fictional",
+        help="Include the labeled fictional dataset (default: DEMO_SYNTHETIC, off)")] = None,
 ) -> None:
-    """Load the committed real-data snapshot + labeled fictional set, then score."""
+    """Load the committed real-data snapshot (+ the labeled fictional set only if asked), then score."""
     from radar.demo.seed import seed_demo as run
 
     _banner("Seeding demo")
@@ -364,7 +442,7 @@ def export_llm_cache(path: Path | None = None) -> None:
 
 @app.command()
 def worker() -> None:
-    """Scheduled ingestion: HN hourly, GitHub every 6h, arXiv daily, websites daily, scoring after each."""
+    """Long-running local scheduler running the same steps as `radar sweep` (production uses Actions cron)."""
     from radar.worker import run_forever
 
     _banner("Worker")

@@ -132,9 +132,15 @@ def record_provenance(
     source_url: str | None,
     confidence: float = 1.0,
     epistemic: str = Epistemic.FACT.value,
+    note: str | None = None,
 ) -> None:
-    """Upsert one FieldProvenance row (unique per entity/field/source_url)."""
-    stmt = pg_insert(FieldProvenance).values(
+    """Upsert one FieldProvenance row (unique per entity/field/source_url).
+
+    ``note`` (e.g. "self-reported on GitHub profile") is stored when the table has a ``note``
+    column; callers also encode self-reported values in ``source_type``/``epistemic`` so the
+    distinction survives without it.
+    """
+    values: dict[str, Any] = dict(
         id=uuid.uuid4(),
         entity_type=entity_type,
         entity_id=entity_id,
@@ -146,16 +152,20 @@ def record_provenance(
         epistemic=epistemic,
         last_updated=clock.now(),
     )
-    stmt = stmt.on_conflict_do_update(
-        constraint="uq_field_prov",
-        set_={
-            "value": stmt.excluded.value,
-            "source_type": stmt.excluded.source_type,
-            "confidence": stmt.excluded.confidence,
-            "epistemic": stmt.excluded.epistemic,
-            "last_updated": stmt.excluded.last_updated,
-        },
-    )
+    has_note = "note" in FieldProvenance.__table__.c
+    if has_note:
+        values["note"] = note
+    stmt = pg_insert(FieldProvenance).values(**values)
+    updates = {
+        "value": stmt.excluded.value,
+        "source_type": stmt.excluded.source_type,
+        "confidence": stmt.excluded.confidence,
+        "epistemic": stmt.excluded.epistemic,
+        "last_updated": stmt.excluded.last_updated,
+    }
+    if has_note:
+        updates["note"] = stmt.excluded.note
+    stmt = stmt.on_conflict_do_update(constraint="uq_field_prov", set_=updates)
     session.execute(stmt)
 
 
@@ -536,7 +546,7 @@ class Resolver:
         if ref.type == "company":
             name = record.name if isinstance(record, CompanyRecord) else (name_hint or value)
             ent: Entity = Company(
-                **common, slug=self._unique_slug(Company, name), name=name, kind="company",
+                **common, slug=self._unique_slug(Company, name), name=name, kind=_initial_company_kind(kind, record),
                 thesis_tags=[], attrs=attrs,
             )
             if self._company_names is not None:
@@ -675,6 +685,19 @@ class Resolver:
             source_type=self.provider, source_url=source_url or canonical_url(person),
             confidence=CODE_FOR_LINK_CONFIDENCE, epistemic=Epistemic.INFERENCE.value,
         )
+
+
+def _initial_company_kind(key_kind: str, record: AnyRecord | None) -> str:
+    """Kind for a newly created company row.
+
+    A GitHub organization with no company domain is a pre-company *project* until a domain
+    (or an explicit record kind) says otherwise; everything else defaults to 'company'.
+    """
+    if isinstance(record, CompanyRecord):
+        if record.kind == "company" and key_kind == "github_org" and not company_domain(record.website):
+            return "project"
+        return record.kind or "company"
+    return "project" if key_kind == "github_org" else "company"
 
 
 def _affiliation_norm(name: str) -> str:

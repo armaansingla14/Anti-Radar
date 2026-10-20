@@ -39,7 +39,6 @@ from radar.llm import narratives
 from radar.models import (
     Company,
     EntityTopic,
-    IngestionRun,
     Job,
     Person,
     ResearchPaper,
@@ -62,6 +61,7 @@ from radar.schemas.api import (
     ThesisShift,
     WatchChange,
 )
+from radar.services import freshness
 from radar.services import presenters as P
 from radar.services.entities import (
     latest_score_subq,
@@ -398,8 +398,11 @@ def _select_shifts(shifts: list[ThesisShift], moves: list[TopicMove]) -> list[Th
 
 
 def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: int, n_founders: int,
-            theme: str | None = None, new_only: bool = False) -> RadarCounts:
+            theme: str | None = None, new_only: bool = False, as_of: freshness.AsOf | None = None) -> RadarCounts:
     today, now = clock.today(), clock.now()
+    # "Signals in the last 24h" is relative to the data's as-of time: on a snapshot that is the
+    # snapshot day, never the wall clock (which would read 0 — or worse, mix in live rows).
+    anchor = (as_of or freshness.feed_as_of(session)).anchor
     cur = latest_score_subq("company", today, min_day=today - timedelta(days=14))
     early = Company.stage.not_in(("growth", "public", "series_a"))
     q = (select(func.count()).select_from(Company).join(cur, cur.c.entity_id == Company.id)
@@ -408,8 +411,8 @@ def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: i
         q = q.where(Company.id.in_(theme_entity_ids(theme)))
     if new_only:
         q = q.where(Company.first_seen_at >= now - timedelta(days=NEW_DAYS))
-    sq = select(func.count()).select_from(Signal).where(Signal.event_at >= now - timedelta(hours=24),
-                                                        Signal.event_at <= now)
+    sq = select(func.count()).select_from(Signal).where(Signal.event_at >= anchor - timedelta(hours=24),
+                                                        Signal.event_at <= anchor)
     if not include_demo:
         q, sq = q.where(Company.is_demo.is_(False)), sq.where(Signal.is_demo.is_(False))
     ne = new_entities(session, today, days=NEW_DAYS)
@@ -422,17 +425,22 @@ def _counts(session: Session, *, include_demo: bool, n_strange: int, n_shifts: i
 
 
 def data_freshness(session: Session) -> dict[str, Any]:
-    rows = session.execute(
-        select(IngestionRun.provider, func.max(IngestionRun.finished_at))
-        .where(IngestionRun.status.in_(("ok", "partial")), IngestionRun.finished_at.is_not(None))
-        .group_by(IngestionRun.provider)
-    )
-    return {p: d.isoformat() for p, d in rows if d}
+    """{provider: last successful ingestion ISO time} — real providers only (see freshness)."""
+    return {p: d.isoformat() for p, d in freshness.provider_freshness(session).items()}
 
 
-def snapshot_note() -> str | None:
-    a = clock.as_of()
-    return f"Real public data captured {a:%b %-d, %Y} · fictional examples labeled DEMO" if a else None
+def snapshot_note(as_of: freshness.AsOf | None = None, *, include_demo: bool = False) -> str | None:
+    """'Snapshot collected Oct 6, 2026 · 14 days old' (+ the DEMO label note when fictional
+    examples are included); None on live data."""
+    if as_of is None:
+        a = clock.as_of()
+        if a is None:
+            return None
+        as_of = freshness.AsOf(a, True, max((clock.wall_now().date() - a).days, 0))
+    label = freshness.snapshot_label(as_of)
+    if label is None:
+        return None
+    return f"{label} · fictional examples labeled DEMO" if include_demo else label
 
 
 # ── /api/radar ───────────────────────────────────────────────────────────────
@@ -440,9 +448,9 @@ def snapshot_note() -> str | None:
 
 def radar_feed(session: Session, *, include_demo: bool | None = None, new_only: bool = False,
                theme: str | None = None) -> RadarFeed:
-    settings = get_settings()
-    include_demo = settings.demo_mode if include_demo is None else include_demo
+    include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
     theme = validate_theme(theme)
+    as_of = freshness.feed_as_of(session)
     cards = top_company_cards(session, include_demo=include_demo, theme=theme, new_only=new_only)
     founders = top_founder_cards(session, include_demo=include_demo, theme=theme, new_only=new_only)
     strange_all = strange_signals(session, include_demo=include_demo, limit=None)
@@ -460,10 +468,11 @@ def radar_feed(session: Session, *, include_demo: bool | None = None, new_only: 
     return RadarFeed(
         date=clock.today(), generated_at=clock.now(),
         counts=_counts(session, include_demo=include_demo, n_strange=len(strange_all), n_shifts=len(shifts),
-                       n_founders=len(founders), theme=theme, new_only=new_only),
+                       n_founders=len(founders), theme=theme, new_only=new_only, as_of=as_of),
         cards=cards, founders=founders, strange_signals=strange_all[:STRANGE_LIMIT],
         thesis_shifts=shifts[:SHIFT_LIMIT], data_freshness=data_freshness(session),
-        demo_mode=settings.demo_mode, snapshot_note=snapshot_note(),
+        demo_mode=include_demo, snapshot_note=snapshot_note(as_of, include_demo=include_demo),
+        data_as_of=as_of.data_as_of, is_snapshot=as_of.is_snapshot, snapshot_age_days=as_of.snapshot_age_days,
     )
 
 
@@ -601,7 +610,7 @@ def new_entity_summaries(session: Session, *, include_demo: bool, limit: int = 1
 
 
 def daily_radar(session: Session, *, since: datetime | None = None, include_demo: bool | None = None) -> DailyRadar:
-    include_demo = get_settings().demo_mode if include_demo is None else include_demo
+    include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
     since = resolve_since(session, since)
     people = candidate_people(session, include_demo=include_demo, floor=0)
     companies = candidate_companies(session, include_demo=include_demo)

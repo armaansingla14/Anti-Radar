@@ -1,5 +1,5 @@
 # ANTI RADAR — developer commands
-.PHONY: up down dev api web db migrate seed demo capture ingest score brief test test-unit lint screenshots
+.PHONY: up down dev api web db migrate seed demo capture ingest score brief test test-unit lint screenshots check-config ready docker-backend
 
 up:            ## Full stack in Docker (db, api, worker, web) → http://localhost:3000
 	docker compose up --build -d db api worker web
@@ -38,6 +38,15 @@ score:
 brief:
 	cd backend && uv run radar brief
 
+check-config:  ## Validate the current environment's configuration (as the API would at startup)
+	cd backend && uv run python -m radar.config_check
+
+ready:         ## Liveness + readiness of a running API (API_URL, default http://localhost:8000)
+	curl -fsS $${API_URL:-http://localhost:8000}/api/health && echo && curl -fsS $${API_URL:-http://localhost:8000}/api/ready && echo
+
+docker-backend: ## Build the deployable backend image (repo-root context, same as Render)
+	docker build -f backend/Dockerfile -t anti-radar-backend .
+
 test:          ## Backend unit + integration tests (needs `make db`)
 	cd backend && uv run pytest -q
 
@@ -46,7 +55,7 @@ test-unit:
 
 lint:
 	cd backend && uv run ruff check radar tests
-	cd frontend && npm run lint
+	cd frontend && npx tsc --noEmit && npm run lint
 
 screenshots:   ## Playwright screenshots for the README (stack must be running)
 	cd e2e && npx playwright test

@@ -324,6 +324,7 @@ class FieldProvenance(Base):
     source_type: Mapped[str] = mapped_column(String(40))
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
     epistemic: Mapped[str] = mapped_column(String(20), default=Epistemic.FACT.value)
+    note: Mapped[str | None] = mapped_column(Text)  # e.g. "Self-reported on GitHub profile"
     last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -59,7 +59,7 @@ def test_watchlist_add_list_idempotent(seeded, client):
     assert len(wl["items"]) == 3
     assert {i["entity_type"] for i in wl["items"]} == {"company", "person", "topic"}
     # the shared presenters see the watch state
-    radar_cards = client.get("/api/companies").json()
+    radar_cards = client.get("/api/companies", params={"include_demo": "true"}).json()
     assert next(c for c in radar_cards if c["slug"] == "halcyon-dynamics")["watched"] is True
     with session_scope() as s:
         assert s.scalar(select(UserAction).where(UserAction.action == "watch").limit(1)) is not None
@@ -146,14 +146,14 @@ def test_feedback_useful_adjusts_weights(seeded, client):
 
 
 def test_feedback_dismiss_hides_entity(seeded, client):
-    slugs = [c["slug"] for c in client.get("/api/companies").json()]
+    slugs = [c["slug"] for c in client.get("/api/companies", params={"include_demo": "true"}).json()]
     assert "loomwork" in slugs
     r = client.post("/api/feedback", json={"entity_type": "company", "entity_id": "loomwork", "label": "dismiss"})
     assert r.status_code == 200 and r.json()["dismissed"] is True
     with session_scope() as s:
         assert s.scalar(select(Company.dismissed).where(Company.slug == "loomwork")) is True
         assert s.scalar(select(UserAction).where(UserAction.action == "dismiss")) is not None
-    assert "loomwork" not in [c["slug"] for c in client.get("/api/companies").json()]
+    assert "loomwork" not in [c["slug"] for c in client.get("/api/companies", params={"include_demo": "true"}).json()]
     # not_interesting lowers weights but does not dismiss
     r = client.post("/api/feedback", json={"entity_type": "person", "entity_id": "sana-qureshi",
                                            "label": "not_interesting"})
