@@ -176,3 +176,15 @@ The M7 ranking work was partially committed in `c8bae5e` and completed in this p
   under-count maintainers.
 - **Verified commits ≠ employment.** All wording says "contributed N commits to …", never "worked at".
 - **No job postings** were ingested for any formation anchor, so the hiring family is empty.
+
+## 9. The public demo (verified snapshot) vs. this evaluation
+
+The public site serves the **verified snapshot** in `backend/radar/demo/snapshot/` (Oct 20, 2026, captured in two passes). Replayed into an empty database with `radar seed-demo --reset --no-fictional`, it holds a subset of what the dev database above had accumulated over several sweeps that day: one capture per source and fewer repeated observations. Thresholds were **not** lowered for the demo, so the result is smaller:
+
+| | Dev DB (sections 3–5) | Snapshot replay (public demo) |
+|---|---|---|
+| Formation candidates | 10 EARLY (6 team, 4 person) | 6 EARLY, all person: Sameh Khamis 44, Kevin Zakka 40, Simon Mo 39, Zhengyi Luo 34, Jun Penn 32, Daoyuan Li 30 |
+| Teams | DeepLethe 35.5, Maker's Pet 33.1, … | none. DeepLethe 29.7 and Maker's Pet 28.4 fall just under EARLY (30): no member relationship predates the org, and member Founder Scores are low |
+| Who to meet (2026-W43) | see section 4 | 5 people: Kevin Zakka, Zhengyi Luo, Simon Mo (self-reported: inferact), Simo Lin (sgl-project/sglang) and Misha Goin (vllm-project, self-reported) |
+
+Reproduce with `python -m radar.scoring.formation --explain DeepLethe` against the demo database.

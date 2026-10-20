@@ -166,11 +166,11 @@ flowchart LR
 - **No fabricated history**: velocities say *insufficient history* when Radar hasn't observed enough; past scores are only compared like-for-like.
 - **Automation is not people**: CI bots and AI coding agents (Claude, Copilot, Devin, Cursor…) are excluded from teams and rankings.
 - **Prompt-injection defense**: scraped pages, READMEs and posts are wrapped as untrusted sources; citations are validated against what the agent actually saw.
-- **Read-only public deployment**: anything that writes or spends (ingest, investigate, briefs, watchlist, feedback) requires an admin token.
+- **Public deployments can't be polluted or run up a bill**: the snapshot backend refuses ingestion and runs with no LLM; on a live backend anything that writes or spends (ingest, investigate, briefs, watchlist, feedback) requires an admin token.
 
 ## Live demo
 
-The public site runs on a **verified snapshot** — real public data collected by Radar on a stated date, with every source URL and timestamp kept — so the demo is stable. The live backend updates on a schedule. `/demo` walks through the product in ten scenes.
+The public site runs on a **verified snapshot**: real public data collected by Radar on Oct 20, 2026, with every source URL and timestamp kept, so the demo is stable and every claim can be checked. `/demo` walks through the product in ten scenes. (An optional live backend, refreshed by scheduled jobs, deploys with `deploy.py --live`.)
 
 Live URL: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#production-url).
 
@@ -206,7 +206,7 @@ radar demo capture              # collect a new verified snapshot
 
 ## Deployment
 
-Free-tier production: **Vercel** (frontend) · **Render** (two API services: live + verified snapshot) · **Neon** (Postgres) · **GitHub Actions** (scheduled ingestion and scoring). Full instructions and the exact commands: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+$0/month on free tiers: **Vercel** (frontend) · **Render** (API serving the verified snapshot) · **Neon** (Postgres). One command, three tokens: `cd backend && uv run python ../scripts/deploy.py`. Adding `--live` deploys a second API on live data with **GitHub Actions** running scheduled ingestion and scoring. Full instructions: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Limitations
 

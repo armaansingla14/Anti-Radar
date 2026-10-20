@@ -8,6 +8,7 @@ import { FormationFilters } from "@/components/formation/FormationFilters";
 import { emptyTierLine, formationDeck, parseFormationQuery, tierLayout, TIERS } from "@/components/formation/logic";
 import { ApiError, getFormation } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
+import { getSession } from "@/lib/session";
 import type { FormationCard, FormationFeed } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Formation Radar" };
@@ -29,6 +30,7 @@ function AsOf({ feed }: { feed: FormationFeed }) {
 
 export default async function FormationPage({ searchParams }: PageProps<"/formation">) {
   const q = parseFormationQuery(await searchParams);
+  const sessionP = getSession(); // in parallel with the feed
 
   let feed: FormationFeed | null = null;
   let rejected: string | null = null;
@@ -39,6 +41,8 @@ export default async function FormationPage({ searchParams }: PageProps<"/format
     rejected = e.detail;
   }
 
+  // The demo-data filter only means something when the backend holds the fictional dataset.
+  const showDemoToggle = (await sessionP).demo_synthetic || q.demo === true;
   const filterName = [q.theme && `in ${themeLabel(q.theme)}`, q.demo === true && "including demo data"].filter(Boolean).join(", ");
   const c = feed?.counts ?? null;
   const layout = c ? tierLayout(c, q.tier) : { sections: [], empty: [] };
@@ -84,7 +88,7 @@ export default async function FormationPage({ searchParams }: PageProps<"/format
         )}
       </header>
 
-      <FormationFilters q={q} counts={c} />
+      <FormationFilters q={q} counts={c} showDemoToggle={showDemoToggle} />
 
       <p className="mt-3 max-w-[100ch] text-[12.5px] leading-relaxed text-ink-3">
         <span className="text-ink-2">Formation Score</span> (0–100) = founder quality 25 · team convergence 25 · technical activity 20 ·

@@ -9,6 +9,7 @@ import { themeOptions } from "@/components/entity/themes";
 import { FilterNotice } from "@/components/entity/FilterNotice";
 import { ApiError, getFounders, type QueryParams } from "@/lib/api";
 import { resolveFilter } from "@/lib/filters";
+import { getSession } from "@/lib/session";
 import type { PersonCard } from "@/lib/types";
 import { NO_COMPANY_LABEL } from "@/lib/format";
 
@@ -20,6 +21,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 
 export default async function FoundersPage({ searchParams }: PageProps<"/founders">) {
   const sp = await searchParams;
+  const sessionP = getSession(); // in parallel with the list
   const sort = SORTS.find((s) => s === one(sp.sort)) ?? "score";
   const q = one(sp.q)?.slice(0, 200);
   const pre = one(sp.pre) === "1";
@@ -55,6 +57,8 @@ export default async function FoundersPage({ searchParams }: PageProps<"/founder
       { value: "followers", label: "Followers" },
     ],
   };
+  // The demo-data toggle only means something when the backend holds the fictional dataset.
+  const showDemoToggle = (await sessionP).demo_synthetic || sp.demo === "0";
   const filters: FilterDef[] = [{ key: "theme", label: "Domain / thesis", allValue: "", options: [{ value: "", label: "All domains" }, ...themes] }];
 
   return (
@@ -86,7 +90,7 @@ export default async function FoundersPage({ searchParams }: PageProps<"/founder
           filters={filters}
           toggles={[
             { key: "pre", label: "Pre-company only", onValue: "1", defaultOn: false, accent: true, hint: "Only people with no current company on record" },
-            { key: "demo", label: "Include demo data", onValue: "1", offValue: "0", defaultOn: true, hint: "Fictional people are labelled DEMO DATA" },
+            ...(showDemoToggle ? [{ key: "demo", label: "Include demo data", onValue: "1", offValue: "0", defaultOn: true, hint: "Fictional people are labelled DEMO DATA" }] : []),
           ]}
           right={<span className="label text-ink-3">J / K to move · Enter to open</span>}
         />

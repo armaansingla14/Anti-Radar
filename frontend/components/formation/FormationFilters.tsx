@@ -9,7 +9,7 @@ const on = "text-ink underline decoration-accent decoration-[1.5px] underline-of
 const off = "text-ink-2 hover:text-ink";
 
 /** Plain-link filters (work without JS): tier | theme | demo. */
-export function FormationFilters({ q, counts }: { q: FormationQuery; counts: FormationCounts | null }) {
+export function FormationFilters({ q, counts, showDemoToggle = true }: { q: FormationQuery; counts: FormationCounts | null; showDemoToggle?: boolean }) {
   const allTiers = !q.tier;
   return (
     <nav aria-label="Formation filters" className="flex flex-wrap items-baseline gap-x-5 gap-y-3 border-b border-rule pb-3">
@@ -47,14 +47,14 @@ export function FormationFilters({ q, counts }: { q: FormationQuery; counts: For
           </Link>
         );
       })}
-      <Link
+      {showDemoToggle && <Link
         href={formationListHref({ ...q, demo: q.demo === true ? null : true })}
         className={clsx(base, "ml-auto", q.demo === true ? on : off)}
         aria-current={q.demo === true ? "true" : undefined}
         title="Fictional teams are labelled DEMO DATA"
       >
         Include demo data
-      </Link>
+      </Link>}
     </nav>
   );
 }

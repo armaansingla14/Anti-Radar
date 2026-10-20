@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { FilterNotice } from "@/components/entity/FilterNotice";
 import { ApiError, getCompanies, type QueryParams } from "@/lib/api";
 import { resolveFilter } from "@/lib/filters";
+import { getSession } from "@/lib/session";
 import type { CompanySummary } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Companies" };
@@ -21,6 +22,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 
 export default async function CompaniesPage({ searchParams }: PageProps<"/companies">) {
   const sp = await searchParams;
+  const sessionP = getSession(); // in parallel with the list
   const sort = SORTS.find((s) => s === one(sp.sort)) ?? "score";
   const stage = STAGES.find((s) => s === one(sp.stage));
   const kind = KINDS.find((s) => s === one(sp.kind));
@@ -53,6 +55,8 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
       { value: "stars", label: "Stars · 30d" },
     ],
   };
+  // The demo-data toggle only means something when the backend holds the fictional dataset.
+  const showDemoToggle = (await sessionP).demo_synthetic || sp.demo === "0";
   const filters: FilterDef[] = [
     { key: "theme", label: "Thesis", allValue: "", options: [{ value: "", label: "All themes" }, ...themes] },
     {
@@ -106,14 +110,14 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
           sort={sortDef}
           filters={filters}
           toggles={[
-            {
+            ...(showDemoToggle ? [{
               key: "demo",
               label: "Include demo data",
               onValue: "1",
               offValue: "0",
               defaultOn: true,
               hint: "Fictional demo entities are always labelled DEMO DATA",
-            },
+            }] : []),
           ]}
           right={<span className="label text-ink-3">J / K to move · Enter to open</span>}
         />
