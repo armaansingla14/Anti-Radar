@@ -538,6 +538,61 @@ def _current(points: list[tuple[date, float]], day: date, fallback: float | None
 # ── People ───────────────────────────────────────────────────────────────────
 
 
+@dataclass
+class AffiliationTier:
+    """A person's affiliations (self-reported/listed strings + public GitHub orgs) and the best tier match.
+
+    ``basis`` is "public_github_org" when the best match comes from a public GitHub organization membership
+    (observed via GitHub's API — a fact about membership, not employment dates), else "affiliation"."""
+
+    affiliations: list[str]
+    tier: float = 0.0
+    tier_match: str | None = None
+    basis: str | None = None
+    org_login: str | None = None
+    public_orgs: list[str] = field(default_factory=list)  # canonical names of public org memberships
+
+
+def public_org_canonical(o: dict) -> str | None:
+    """Canonical organization for a public GitHub org, only on a whole-login alias match (see
+    ``pipeline.relationships.public_org_alias``)."""
+    from radar.pipeline.relationships import public_org_alias
+
+    return public_org_alias(o)
+
+
+def person_affiliation_tier(p: Person, thesis: Thesis) -> AffiliationTier:
+    """Affiliation strings plus public GitHub org memberships (``Person.attrs['github_orgs']``), and the best
+    thesis tier. On equal tiers a public membership wins (observed, not typed by the person)."""
+    affs = list(dict.fromkeys(a.strip() for a in [p.current_company, *(p.prior_affiliations or [])]
+                              if a and a.strip()))
+    out = AffiliationTier(affiliations=affs)
+    for a in affs:
+        t = thesis.affiliation_tier(a)
+        if t > out.tier:
+            out.tier, out.tier_match, out.basis = t, thesis.matched_affiliation(a), "affiliation"
+    for o in (p.attrs or {}).get("github_orgs") or []:
+        if not isinstance(o, dict) or not o.get("login"):
+            continue
+        canon = public_org_canonical(o)
+        if canon is None:
+            continue
+        out.public_orgs.append(canon)
+        t = thesis.affiliation_tier(canon)
+        if t > out.tier or (t > 0 and t == out.tier and out.basis != "public_github_org"):
+            out.tier, out.tier_match = t, thesis.matched_affiliation(canon)
+            out.basis, out.org_login = "public_github_org", str(o["login"])
+    out.public_orgs = list(dict.fromkeys(out.public_orgs))
+    return out
+
+
+def tier_phrase(t: AffiliationTier) -> str | None:
+    """'public GitHub member of openai (OpenAI)' / None for non-public-org matches."""
+    if t.basis != "public_github_org" or not t.org_login:
+        return None
+    return f"public GitHub member of {t.org_login}" + (f" ({t.tier_match})" if t.tier_match else "")
+
+
 def build_person_features(
     session: Session,
     day: date,
@@ -548,13 +603,16 @@ def build_person_features(
 ) -> list[PersonFeatures]:
     thesis = thesis or get_thesis()
     index = index or load_signal_index(session, day)
-    people = list(
-        session.scalars(
+    from radar.providers.github import is_bot
+
+    people = [
+        p for p in session.scalars(
             select(Person).where(
                 Person.dismissed.is_(False), true() if reconstruct else Person.first_seen_at <= day_end(day)
             )
         )
-    )
+        if not (p.github_handle and is_bot(p.github_handle))  # automation / AI coding agents are not people
+    ]
     if not people:
         return []
     pids = [p.id for p in people]
@@ -636,16 +694,8 @@ def build_person_features(
             if s.signal_type not in FORMATION_SIGNAL_TYPES or s.entity_id == p.id
         ]
         transition = [s.id for s in own if s.signal_type in FORMATION_SIGNAL_TYPES]
-        affiliations = list(
-            dict.fromkeys(
-                a.strip() for a in [p.current_company, *(p.prior_affiliations or [])] if a and a.strip()
-            )
-        )
-        best_tier, best_match = 0.0, None
-        for a in affiliations:
-            t = thesis.affiliation_tier(a)
-            if t > best_tier:
-                best_tier, best_match = t, thesis.matched_affiliation(a)
+        aff = person_affiliation_tier(p, thesis)
+        affiliations, best_tier, best_match = aff.affiliations, aff.tier, aff.tier_match
         young = sorted(
             {
                 org_info[o][1]
@@ -703,21 +753,25 @@ def build_person_features(
                 is_demo=bool(p.is_demo),
             )
         )
+        # Not (yet) PersonFeatures fields: where the tier came from, for honest explanations (founder.pedigree).
+        out[-1].tier_basis = aff.basis  # type: ignore[attr-defined]
+        out[-1].tier_org_login = aff.org_login  # type: ignore[attr-defined]
+        out[-1].public_orgs = aff.public_orgs  # type: ignore[attr-defined]
     return out
 
 
 def _org_created(session: Session, org_ids: set[uuid.UUID]) -> dict[uuid.UUID, tuple[date | None, str]]:
     if not org_ids:
         return {}
-    repo_dates: dict[uuid.UUID, list[datetime | None]] = defaultdict(list)
-    for cid, created in session.execute(
-        select(Repository.company_id, Repository.gh_created_at).where(
-            Repository.company_id.in_(list(org_ids))
-        )
-    ).all():
-        repo_dates[cid].append(created)
+    from radar.scoring.formation import curated_list_anchor
+
+    repos: dict[uuid.UUID, list[Repository]] = defaultdict(list)
+    for r in session.scalars(select(Repository).where(Repository.company_id.in_(list(org_ids)))):
+        repos[r.company_id].append(r)
+    # A link collection (awesome-list org) is not a young organization anyone "joined": no creation date.
     return {
-        c.id: (org_created_date(c.founded_date, repo_dates.get(c.id, [])), c.name)
+        c.id: (None if curated_list_anchor(c, repos.get(c.id, [])) is not None
+               else org_created_date(c.founded_date, [r.gh_created_at for r in repos.get(c.id, [])]), c.name)
         for c in session.scalars(select(Company).where(Company.id.in_(list(org_ids))))
     }
 

@@ -365,3 +365,77 @@ def test_person_candidate_cites_only_own_evidence(db):
     sc = considered(db)[p.id]
     cited = json.dumps([sc.why_now, sc.components, [x.title for x in sc.inp.signals]])
     assert "famous/project" not in cited and "builder/new-thing" in cited
+
+
+# ── people quality: curated lists, automation accounts, public org memberships ───
+
+
+def test_curated_list_anchor_is_not_a_candidate(db):
+    c, _ = young_org(db, "listy")
+    r = db.scalar(select(Repository).where(Repository.company_id == c.id))
+    r.full_name, r.description, r.topics = "listy/awesome-jev-tools", "A curated list of tools for Jev", ["awesome-list"]
+    side, _ = young_org(db, "realco")  # a real product on top, a curated catalog on the side: still a team
+    db.add(Repository(full_name="realco/catalog", owner="realco", company_id=side.id, stars=5,
+                      description="A curated catalog of VLA benchmarks", gh_created_at=at(50)))
+    db.flush()
+    run_all(db)
+    assert cand(db, c.id) is None
+    assert cand(db, side.id) is not None
+
+
+def test_ai_agent_accounts_are_not_members_founders_or_feed_people(db):
+    from radar.models.core import ScoreSnapshot
+    from radar.services.entities import list_founders
+    from radar.services.feed import candidate_people
+
+    c, people = young_org(db)
+    r = db.scalar(select(Repository).where(Repository.company_id == c.id))
+    bots = []
+    for handle in ("claude", "devin-ai-integration", "renovate[bot]"):
+        b = Person(slug=f"bot-{len(bots)}", name=handle.title(), github_handle=handle, first_seen_at=at(8))
+        db.add(b)
+        db.flush()
+        db.add(RepoContributor(repository_id=r.id, person_id=b.id, contributions=80, first_commit_at=at(58)))
+        bots.append(b)
+    db.flush()
+    run_all(db)
+    bot_ids = {b.id for b in bots}
+    fc = cand(db, c.id)
+    assert fc is not None and not (bot_ids & set(fc.member_ids))
+    assert db.scalar(select(ScoreSnapshot).where(ScoreSnapshot.entity_id.in_(bot_ids))) is None
+    assert not (bot_ids & {p.id for p in candidate_people(db, include_demo=True, floor=0)})
+    names = {card.name for card in list_founders(db, limit=100)}
+    assert not names & {"Claude", "Devin-Ai-Integration", "Renovate[Bot]"}
+    assert {p.name for p in people} <= names
+
+
+def test_public_org_membership_counts_for_founder_quality(db):
+    c, people = young_org(db, prior_paper=False)
+    for p in people:
+        p.prior_affiliations = []
+    people[2].attrs = {**people[2].attrs, "github_orgs": [{"login": "openai", "name": "openai",
+                                                           "observed_at": "2026-10-05T00:00:00+00:00"}]}
+    db.flush()
+    run_all(db)
+    fc = cand(db, c.id)
+    fq = fc.components["founder_quality"]
+    assert fq["raw"]["tier_basis"] == "public_github_org" and fq["raw"]["tier_match"] == "OpenAI"
+    assert f"{people[2].name} is a public GitHub member of openai (OpenAI, tier-1)" in fq["explanation"]
+    from radar.models.core import ScoreSnapshot
+
+    snap = db.scalar(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == people[2].id))
+    ped = snap.components["pedigree"]
+    assert ped["explanation"] == "Public GitHub member of openai (OpenAI, tier-1)."
+
+
+def test_contributing_to_a_curated_list_org_is_not_joining_a_young_org(db):
+    from radar.scoring.extract import build_person_features
+
+    c, people = young_org(db, "listy")
+    real, others = young_org(db, "realco")
+    r = db.scalar(select(Repository).where(Repository.company_id == c.id))
+    r.full_name, r.description = "listy/awesome-plugins", "A curated list of plugins"
+    db.flush()
+    feats = {f.person_id: f for f in build_person_features(db, DAY)}
+    assert not feats[people[0].id].joined_young_org and feats[people[0].id].young_org_names == []
+    assert feats[others[0].id].joined_young_org and feats[others[0].id].young_org_names == ["Realco"]

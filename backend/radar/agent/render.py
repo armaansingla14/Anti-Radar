@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from radar.agent.brief_schema import AntiBrief, AntiMemo, Claim
+from radar.agent.brief_schema import AntiBrief, AntiMemo, Claim, MeetingBrief
 
 UNKNOWN = "Unknown — no evidence collected."
 
@@ -95,5 +95,28 @@ def memo_to_markdown(
     for key, title in _MEMO_SECTIONS:
         lines += _claims(title, getattr(memo, key))
     lines += _bullets("Questions to answer", memo.questions_to_answer, "No questions generated.")
+    lines += sources_markdown(sources)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+_MEETING_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("context_30s", "30-second context"),
+    ("why_on_radar", "Why they are on our radar"),
+    ("what_they_built", "What they built"),
+    ("technical_background", "Technical background"),
+    ("what_changed", "What changed"),
+    ("why_anti_fund", "Why Anti Fund might care"),
+)
+
+
+def meeting_brief_to_markdown(
+    brief: MeetingBrief, sources: list[dict[str, Any]], *, generator: str = "template", model: str | None = None,
+) -> str:
+    lines = [f"# Meeting Brief — {brief.name}", "", f"_{brief.date}_ · {_legend(generator, model)}", ""]
+    for key, title in _MEETING_SECTIONS:
+        lines += _claims(title, getattr(brief, key))
+    lines += _bullets("Questions to ask", brief.questions, "No questions generated.")
+    lines += _bullets("Things to verify", brief.things_to_verify, "Nothing flagged.")
+    lines += _bullets("Unknowns", brief.unknowns, "None recorded.")
     lines += sources_markdown(sources)
     return "\n".join(lines).rstrip() + "\n"

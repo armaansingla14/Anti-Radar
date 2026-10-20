@@ -114,14 +114,22 @@ def research(p: PersonFeatures) -> Component:
 
 def pedigree(p: PersonFeatures) -> Component:
     mx = FOUNDER_MAX["pedigree"]
+    basis = getattr(p, "tier_basis", None)
+    login = getattr(p, "tier_org_login", None)
+    public = list(getattr(p, "public_orgs", None) or [])
     if p.tier > 0 and p.tier_match:
         tier = "tier-1" if p.tier >= 1.0 else "tier-2"
-        expl = f"Affiliation with {p.tier_match} ({tier})."
-    elif p.affiliations:
+        if basis == "public_github_org" and login:
+            # Observed membership (GitHub API), not a claim of employment or its dates.
+            expl = f"Public GitHub member of {login} ({p.tier_match}, {tier})."
+        else:
+            expl = f"Affiliation with {p.tier_match} ({tier})."
+    elif p.affiliations or public:
         expl = "Known affiliations are not on the thesis tier lists."
     else:
         expl = "No affiliations known."
-    raw = {"affiliations": p.affiliations, "tier": p.tier, "matched": p.tier_match}
+    raw = {"affiliations": p.affiliations, "tier": p.tier, "matched": p.tier_match,
+           "basis": basis, "public_github_orgs": public, "org_login": login}
     return Component("pedigree", "Pedigree", mx * p.tier, mx, expl, raw)
 
 

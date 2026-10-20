@@ -34,8 +34,8 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 # Same as ops.ALL_STEPS (asserted in tests); duplicated so `--help` does not import the pipeline.
-_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "formation", "brief",
-              "retention")
+_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "formation", "meet",
+              "brief", "retention")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ANTI RADAR — Conviction Before Consensus.")
 ingest_app = typer.Typer(no_args_is_help=True, help="Pull signals from a source.")

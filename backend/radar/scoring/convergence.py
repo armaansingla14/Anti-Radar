@@ -87,6 +87,7 @@ class PriorTie:
     at: datetime | None
     detail: str  # paper title / repo / org
     evidence: list[dict[str, Any]]
+    verified: bool = False  # e.g. shared public GitHub org membership vs self-reported employer
 
 
 @dataclass
@@ -172,7 +173,7 @@ def prior_ties(
             both_prior = all(e.get("prior") for e in items) if items else False
             w = BASE_WEIGHT[WORKED_WITH] * (1.0 if both_prior else CURRENT_EMPLOYER_FACTOR)
             org = next((e.get("org") for e in items if e.get("org")), okey)
-            ties.append(PriorTie(r.id, r.kind, r.a, r.b, w, None, org, items))
+            ties.append(PriorTie(r.id, r.kind, r.a, r.b, w, None, org, items, verified=r.epistemic == "VERIFIED"))
             continue
         for ev in r.evidence or []:
             at = _dt(ev.get("event_at"))
@@ -252,12 +253,16 @@ def explain(ties: list[PriorTie], members: dict[uuid.UUID, Member], n: int, anch
     if by_kind.get(WORKED_WITH):
         orgs: dict[str, set[uuid.UUID]] = defaultdict(set)
         prior_only: dict[str, bool] = {}
+        verified_orgs: set[str] = set()
         for t in by_kind[WORKED_WITH]:
             orgs[t.detail] |= {t.a, t.b}
+            if t.verified:
+                verified_orgs.add(t.detail)
             prior_only[t.detail] = prior_only.get(t.detail, True) and t.weight >= BASE_WEIGHT[WORKED_WITH]
         org, ppl = max(orgs.items(), key=lambda kv: (len(kv[1]), kv[0]))
         rel = "a prior employer" if prior_only[org] else "an affiliation"
-        sentence = f"{_share(len(ppl), n)} list {org} as {rel} (self-reported)"
+        sentence = (f"{_share(len(ppl), n)} are public GitHub members of {org}" if org in verified_orgs
+                    else f"{_share(len(ppl), n)} list {org} as {rel} (self-reported)")
         if len(orgs) > 1:
             sentence += f"; {len(orgs) - 1} other shared affiliation{'s' if len(orgs) > 2 else ''}"
         parts.append(sentence)

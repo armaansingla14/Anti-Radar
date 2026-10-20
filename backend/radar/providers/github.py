@@ -746,7 +746,45 @@ def noise_org_reason(login: str, name: str | None = None, description: str | Non
 
 def is_list_repo(item: Mapping[str, Any]) -> bool:
     """awesome-lists, reading lists and interview prep: popular, but not products."""
-    return bool(LIST_REPO_RE.search(item.get("name") or "") or LIST_REPO_RE.search(item.get("description") or ""))
+    return bool(LIST_REPO_RE.search(item.get("name") or "") or LIST_REPO_RE.search(item.get("description") or "")
+                or is_curated_list_repo(item.get("name"), item.get("description"), item.get("topics")))
+
+
+PUBLIC_ORGS_ATTR = "public_orgs"  # Relation attrs key: a user's public org memberships (see fetch_public_orgs)
+
+# A curated list / resource collection: a repository of links, not software a team is building.
+CURATED_NAME_RE = re.compile(r"(^|[-_. ])(awesome|resources|curated)($|[-_. ])|(^|[-_.])list-of-", re.IGNORECASE)
+CURATED_DESC_RE = re.compile(
+    r"\b(awesome[- ]list|curated (list|collection|catalog(ue)?)|list of|collection of|"
+    r"(learning|useful|curated|awesome|free) resources|resources (for|on|about|to learn)|"
+    r"(papers?|reading|resource) list)\b", re.IGNORECASE)
+CURATED_TOPICS = frozenset({"awesome", "awesome-list", "awesome-lists", "curated-list", "curated", "list",
+                            "resources", "resource-list", "lists", "paper-list", "reading-list"})
+
+
+def is_curated_list_repo(name: str | None, description: str | None = None,
+                         topics: Sequence[str] | None = None) -> bool:
+    """awesome-* / "curated list" / "list of" / "collection of" / resources repositories (name, description
+    or topics). Used to keep link collections from becoming formation anchors."""
+    if name and CURATED_NAME_RE.search(name.rsplit("/", 1)[-1]):
+        return True
+    if description and CURATED_DESC_RE.search(description):
+        return True
+    return any((t or "").lower() in CURATED_TOPICS or (t or "").lower().startswith("awesome-") for t in topics or ())
+
+
+def parse_user_orgs(data: Any) -> list[dict[str, Any]]:
+    """GET /users/{u}/orgs -> [{login, name}] (public memberships only; the endpoint has no display name,
+    so ``name`` is the org's name when present, else its login). Bot-named orgs are dropped."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for o in data if isinstance(data, list) else []:
+        login = _clean((o or {}).get("login"))
+        if not login or login.lower() in seen:
+            continue
+        seen.add(login.lower())
+        out.append({"login": login, "name": _clean(o.get("name")) or login})
+    return sorted(out, key=lambda o: o["login"].lower())
 
 
 def qualifying_members(contributors: Mapping[str, Sequence[Mapping[str, Any]]], *, min_commits: int,
@@ -843,6 +881,7 @@ class GitHubProvider:
         self.rate_limits: dict[str, int] = {}  # resource (core/search) -> remaining
         self._orgs: dict[str, dict[str, Any] | None] = {}
         self._users: dict[str, dict[str, Any] | None] = {}
+        self._user_orgs: dict[str, list[dict[str, Any]] | None] = {}  # login -> public org memberships
         self.young_org_report: dict[str, list[str]] = {}  # rejection reason -> org logins (last discovery)
         # (repo full_name, stats endpoint) pairs that were still 202 "computing" when given up on; a later
         # fetch_pending_stats() / retry_stats() in the same process fills them in.
@@ -939,6 +978,56 @@ class GitHubProvider:
                     raise
                 self._orgs[key] = None
         return self._orgs[key]
+
+    def user_orgs(self, login: str) -> list[dict[str, Any]] | None:
+        """Public organization memberships of a user: one GET /users/{u}/orgs (per_page=100), cached per
+        provider instance. Only *public* memberships are visible; None when the user does not exist.
+        A membership is a fact about membership today, not about employment or its dates."""
+        key = login.lower()
+        if key not in self._user_orgs:
+            try:
+                self._user_orgs[key] = parse_user_orgs(self._json(f"/users/{login}/orgs", params={"per_page": 100}))
+            except GitHubRateLimitError:
+                raise
+            except GitHubAPIError as e:
+                if e.status != 404:
+                    raise
+                self._user_orgs[key] = None
+        return self._user_orgs[key]
+
+    def fetch_public_orgs(self, logins: Sequence[str], *, max_calls: int = 120) -> ProviderBatch:
+        """Public org memberships for ``logins`` (bots skipped, deduplicated, at most ``max_calls`` requests).
+
+        Each checked user yields one ``member`` relation with src = dst = the user whose attrs carry
+        ``public_orgs`` (possibly empty: "checked, no public memberships") and ``observed_at``; ingest
+        stores it as ``Person.attrs['github_orgs']`` (no company rows are created for these orgs)."""
+        batch = ProviderBatch(provider=self.name)
+        observed = clock.now().isoformat()
+        calls = 0
+        for login in dict.fromkeys(lg for lg in logins if lg and not is_bot(lg)):
+            if login.lower() not in self._user_orgs:
+                if calls >= max_calls:
+                    batch.errors.append(f"public orgs: call budget ({max_calls}) reached; remaining users skipped")
+                    break
+                if not self._budget_ok(1):
+                    batch.errors.append("public orgs: core rate-limit budget reached; stopping")
+                    break
+                calls += 1
+            try:
+                orgs = self.user_orgs(login)
+            except GitHubRateLimitError as e:
+                batch.errors.append(f"{login}: {e}; stopping")
+                break
+            except (GitHubAPIError, httpx.HTTPError, ValueError) as e:
+                batch.errors.append(f"{login}: {e}")
+                continue
+            if orgs is None:
+                continue
+            ref = gh_user_ref(login)
+            batch.relations.append(Relation(kind="member", src=ref, dst=ref,
+                                            attrs={PUBLIC_ORGS_ATTR: orgs, "observed_at": observed},
+                                            source_url=f"{WEB}/{login}"))
+        return batch
 
     def _user(self, login: str) -> dict[str, Any] | None:
         key = login.lower()

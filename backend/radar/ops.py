@@ -331,11 +331,12 @@ def refine_topics_with_llm(limit: int = 60) -> int:
 
 
 SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score",
-                                 "brief")
+                                 "meet", "brief")
 # 'formation' (relationships + formation candidates) runs after 'score'. The default sweep does not list it
 # separately because 'score' (= recompute) already ends with it; `--only formation` refreshes just that part.
+# 'meet' stores the current ISO week's Who-Should-We-Meet ranking if it is missing (never reshuffles a stored week).
 ALL_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score",
-                              "formation", "brief", "retention")
+                              "formation", "meet", "brief", "retention")
 ORGS_QUERIES_PER_RUN = 10
 ORGS_MAX_PER_RUN = 60
 ORGS_CREATED_WITHIN_DAYS = 180
@@ -483,6 +484,14 @@ def persist_morning_brief(day: date | None = None) -> dict[str, Any]:
                 "items": len(b.what_changed), "generator": report.generator}
 
 
+def ensure_meet_week() -> dict[str, Any]:
+    """Who Should We Meet: store the current ISO week's ranking if missing (idempotent)."""
+    from radar.services import meet
+
+    with session_scope() as s:
+        return meet.ensure_current_week(s)
+
+
 def run_retention() -> dict[str, Any]:
     from radar import retention
 
@@ -518,6 +527,9 @@ def run_step(step: str) -> dict[str, Any]:
         return _job_status(run, res)
     if step == "formation":
         run, res = run_job("formation", compute_formation)
+        return _job_status(run, res)
+    if step == "meet":
+        run, res = run_job("meet", ensure_meet_week)
         return _job_status(run, res)
     if step == "brief":
         run, res = run_job("brief", persist_morning_brief)
@@ -604,7 +616,7 @@ def enrichment_targets(limit: int = ENRICH_MAX_ANCHORS, day: date | None = None)
 
     from radar.models import Company, FormationCandidate, Repository
     from radar.providers.domains import company_domain, is_academic_domain
-    from radar.scoring.formation import YOUNG_DAYS, _company_created
+    from radar.scoring.formation import YOUNG_DAYS, _company_created, curated_list_anchor
 
     day = day or clock.today()
     with session_scope() as s:
@@ -628,7 +640,8 @@ def enrichment_targets(limit: int = ENRICH_MAX_ANCHORS, day: date | None = None)
             if created is not None and 0 <= (day - created).days <= YOUNG_DAYS:
                 young.append((created, c))
         young.sort(key=lambda x: (x[0], x[1].name), reverse=True)  # youngest first
-        ordered = [companies[i] for i in cand_ids if i in companies] + [c for _, c in young]
+        ordered = [c for c in [companies[i] for i in cand_ids if i in companies] + [c for _, c in young]
+                   if curated_list_anchor(c, repos_by.get(c.id, [])) is None]  # link collections are not teams
         out: list[dict[str, Any]] = []
         for c in ordered[:limit]:
             repos = sorted(repos_by.get(c.id, []), key=lambda r: (-(r.stars or 0), r.full_name))
@@ -670,8 +683,75 @@ def _recently_crawled(company_id: Any, days: int) -> bool:
         ).limit(1)) is not None
 
 
+ORGS_TOP_ANCHORS = 30  # members of this many top formation anchors get their public org memberships checked
+ORGS_MAX_CALLS = 150  # GET /users/{u}/orgs budget per enrich run (1 call per person)
+ORGS_RECHECK_DAYS = 7  # people checked more recently than this are not re-requested
+ORGS_MIN_COMMITS = 3  # contributors below this many commits are not team members
+
+
+def public_org_targets(targets: list[dict[str, Any]], *, top: int = ORGS_TOP_ANCHORS,
+                       recheck_days: int = ORGS_RECHECK_DAYS) -> list[str]:
+    """GitHub logins of the people on formation anchors (listed members + contributors with >= 3 commits to
+    the anchor's repositories): the top ``top`` candidate anchors first, then the other young orgs.
+    Bots, dismissed people and people checked within ``recheck_days`` are skipped."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from radar.models import CompanyPerson, Person, RepoContributor, Repository
+    from radar.providers.github import is_bot
+
+    cands = [t for t in targets if t["candidate"]][:top]
+    ordered = cands + [t for t in targets if not t["candidate"]]
+    if not ordered:
+        return []
+    cut = clock.now() - timedelta(days=recheck_days)
+    cids = [t["id"] for t in ordered]
+    with session_scope() as s:
+        by_company: dict[Any, list[Any]] = {}
+        for cp in s.scalars(select(CompanyPerson).where(CompanyPerson.company_id.in_(cids))):
+            by_company.setdefault(cp.company_id, []).append(cp.person_id)
+        for rc, cid in s.execute(select(RepoContributor, Repository.company_id)
+                                 .join(Repository, Repository.id == RepoContributor.repository_id)
+                                 .where(Repository.company_id.in_(cids),
+                                        RepoContributor.contributions >= ORGS_MIN_COMMITS)):
+            by_company.setdefault(cid, []).append(rc.person_id)
+        pids = {pid for v in by_company.values() for pid in v}
+        people = {p.id: p for p in s.scalars(select(Person).where(Person.id.in_(list(pids))))} if pids else {}
+        out: list[str] = []
+        for cid in cids:
+            for pid in dict.fromkeys(by_company.get(cid, [])):
+                p = people.get(pid)
+                if p is None or not p.github_handle or p.dismissed or p.is_demo or is_bot(p.github_handle):
+                    continue
+                checked = (p.attrs or {}).get("github_orgs_checked_at")
+                if checked and recheck_days:
+                    try:
+                        at = datetime.fromisoformat(str(checked))
+                        if (at if at.tzinfo else at.replace(tzinfo=clock.now().tzinfo)) >= cut:
+                            continue
+                    except ValueError:
+                        pass
+                out.append(p.github_handle)
+    return list(dict.fromkeys(out))
+
+
+def enrich_public_orgs(targets: list[dict[str, Any]], *, max_calls: int = ORGS_MAX_CALLS) -> Any:
+    """Public GitHub org memberships of formation-anchor members (one GET /users/{u}/orgs each, budget-capped);
+    stored as ``Person.attrs['github_orgs']`` with FACT provenance. Returns (run, stats) or None."""
+    from radar.providers.github import GitHubProvider
+
+    logins = public_org_targets(targets)
+    if not logins:
+        return None
+    gh = GitHubProvider()
+    params = {"enrich": "public_orgs", "users": len(logins), "max_calls": max_calls}
+    return _run("github", lambda: gh.fetch_public_orgs(logins, max_calls=max_calls), params, gh.client.stats)
+
+
 def enrich_formation_anchors(limit: int = ENRICH_MAX_ANCHORS, *, web: bool = True, hn: bool = True,
-                             arxiv: bool = True, recrawl_days: int = ENRICH_RECRAWL_DAYS) -> dict[str, Any]:
+                             arxiv: bool = True, orgs: bool = True,
+                             recrawl_days: int = ENRICH_RECRAWL_DAYS) -> dict[str, Any]:
     """Multi-source evidence for formation anchors (young orgs), each source recorded via ``run_provider``.
 
     (a) WEB/HIRING — the org's own (non-platform, non-academic) website is crawled (robots.txt respected;
@@ -680,7 +760,9 @@ def enrich_formation_anchors(limit: int = ENRICH_MAX_ANCHORS, *, web: bool = Tru
         ``hn_show``/``hn_launch``/``hn_discussion`` signal per story that actually links to the org.
     (c) RESEARCH — arXiv phrase search for ``github.com/<login>`` / the top repo name; only papers whose code
         URLs point into the org are kept (``code_for`` relations + ``paper_with_code`` on the repo, and the
-        repo is attached to the org that owns it on GitHub)."""
+        repo is attached to the org that owns it on GitHub).
+    (d) PEOPLE — public GitHub org memberships of the anchors' members (``enrich_public_orgs``), which feed
+        VERIFIED shared-org relationships and founder pedigree."""
     from radar.providers.base import ProviderBatch as _PB
 
     targets = enrichment_targets(limit)
@@ -758,6 +840,16 @@ def enrich_formation_anchors(limit: int = ENRICH_MAX_ANCHORS, *, web: bool = Tru
             run, _ = _run("arxiv", ax_fn, {"enrich": "formation_anchors", "targets": len(ax_targets)},
                           ax.client.stats)
             out["runs"].append((run, None))
+
+    if orgs:
+        try:
+            res = enrich_public_orgs(targets)
+        except Exception as e:  # noqa: BLE001 — provider construction etc.; the other sources already ran
+            log.warning("public org enrichment failed: %s", e)
+            res = None
+        if res is not None:
+            out["runs"].append((res[0], None))
+            out["people_orgs_checked"] = res[0].records_accepted
     return out
 
 

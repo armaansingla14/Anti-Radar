@@ -20,6 +20,7 @@ from radar.providers.github import (
     APPROX_FIRST_COMMIT_BASIS,
     CONTRIBUTOR_DATES_BASIS,
     LAST_COMMIT_BASIS,
+    PUBLIC_ORGS_ATTR,
     GitHubProvider,
     GitHubRateLimitError,
     StarHistory,
@@ -36,6 +37,7 @@ from radar.providers.github import (
     contributor_stats_to_spans,
     contributors_cumulative_points,
     is_bot,
+    is_curated_list_repo,
     is_list_repo,
     last_commit_from_commits,
     new_contributors,
@@ -43,6 +45,7 @@ from radar.providers.github import (
     parse_org,
     parse_repo,
     parse_user,
+    parse_user_orgs,
     qualifying_members,
     readme_sha,
     release_points,
@@ -683,3 +686,62 @@ def test_ai_coding_agents_are_not_people():
     for login in ("claude", "Copilot", "devin-ai-integration", "cursoragent", "google-labs-jules", "coderabbitai"):
         assert is_bot(login), login
     assert not is_bot("claudia") and not is_bot("torvalds")
+
+
+# ── curated lists and public org memberships ─────────────────────────────────
+
+
+@pytest.mark.parametrize("name,desc,topics,expected", [
+    ("v-modal/awesome-jev-tools", "A curated list of tools built for Jev", ["awesome-list"], True),
+    ("acme/awesome-robotics", None, [], True),
+    ("acme/ml-resources", "Notes", [], True),
+    ("acme/papers", "A collection of papers on VLA", [], True),
+    ("acme/links", "List of tools for robot learning", [], True),
+    ("acme/links", None, ["awesome"], True),
+    ("acme/links", None, ["awesome-robotics"], True),
+    ("acme/catalog", "A curated catalog of VLA benchmarks", [], True),
+    ("acme/fieldcraft", "One open-source modeler for structures, heat and fluids", ["cfd", "fem"], False),
+    ("acme/sched", "Scheduler that frees GPU resources when idle", ["llm"], False),
+    ("acme/awesomeness", "Engine", [], False),
+])
+def test_is_curated_list_repo(name, desc, topics, expected):
+    assert is_curated_list_repo(name, desc, topics) is expected
+
+
+def test_is_list_repo_uses_topics():
+    assert is_list_repo({"name": "tools", "description": "x", "topics": ["awesome-list"]})
+
+
+def test_ai_coding_agents_are_bots():
+    for login in ("claude", "Claude", "copilot", "devin-ai-integration", "cursoragent", "coderabbitai[bot]"):
+        assert is_bot(login), login
+    assert not is_bot("claudia-dev")
+
+
+def test_parse_user_orgs_dedupes_and_sorts():
+    data = [{"login": "openai", "description": "x"}, {"login": "Acme", "name": "Acme Robotics"},
+            {"login": "OPENAI"}, {"login": ""}, {}]
+    assert parse_user_orgs(data) == [{"login": "Acme", "name": "Acme Robotics"},
+                                     {"login": "openai", "name": "openai"}]
+    assert parse_user_orgs({"message": "x"}) == []
+
+
+def test_user_orgs_one_call_per_user_and_fetch_public_orgs(provider):
+    with respx.mock(assert_all_called=False) as router:
+        ada = router.get(f"{API}/users/ada/orgs").respond(json=[{"login": "openai"}, {"login": "acme"}])
+        router.get(f"{API}/users/ben/orgs").respond(json=[])
+        router.get(f"{API}/users/gone/orgs").respond(404, json={"message": "Not Found"})
+        bot = router.get(f"{API}/users/claude/orgs").respond(json=[{"login": "anthropics"}])
+        cy = router.get(f"{API}/users/cy/orgs").respond(json=[{"login": "x"}])
+        assert provider.user_orgs("ada") == [{"login": "acme", "name": "acme"}, {"login": "openai", "name": "openai"}]
+        batch = provider.fetch_public_orgs(["ada", "ben", "gone", "claude", "ada", "cy"], max_calls=2)
+    assert ada.call_count == 1  # cached per provider instance (per run)
+    assert ada.calls.last.request.url.params["per_page"] == "100"
+    assert not bot.called  # automation / AI-agent accounts are never looked up
+    assert not cy.called and any("budget" in e for e in batch.errors)
+    rels = {r.src.key: r for r in batch.relations}
+    assert set(rels) == {"github_user:ada", "github_user:ben"}  # 404 user skipped, no relation
+    r = rels["github_user:ada"]
+    assert r.kind == "member" and r.dst == r.src and r.source_url == "https://github.com/ada"
+    assert [o["login"] for o in r.attrs[PUBLIC_ORGS_ATTR]] == ["acme", "openai"] and r.attrs["observed_at"]
+    assert rels["github_user:ben"].attrs[PUBLIC_ORGS_ATTR] == []  # checked, no public memberships

@@ -7,7 +7,9 @@ import { GeneratorLabel } from "@/components/entity/primitives";
 import { ReportActions } from "@/components/entity/ReportActions";
 import { isStructuredBody, ReportBody, sectionsFor } from "@/components/entity/ReportBody";
 import { Sources } from "@/components/entity/Sources";
-import { fmtDateTime, humanize } from "@/lib/format";
+import { citedSourceIds, isMeetingBrief } from "@/components/meet/logic";
+import { meetingSections, MeetingBriefView } from "@/components/meet/MeetingBriefView";
+import { fmtDate, fmtDateTime, humanize } from "@/lib/format";
 
 export async function generateMetadata({ params }: PageProps<"/reports/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -15,7 +17,7 @@ export async function generateMetadata({ params }: PageProps<"/reports/[id]">): 
   return { title: r ? r.title : "Report" };
 }
 
-const KIND: Record<string, string> = { brief: "Anti Brief", memo: "Anti Memo", morning_brief: "Morning Brief" };
+const KIND: Record<string, string> = { brief: "Anti Brief", memo: "Anti Memo", morning_brief: "Morning Brief", meeting_brief: "Meeting Brief" };
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
@@ -34,9 +36,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
       : report.entity_slug && report.entity_type === "person"
         ? `/founders/${report.entity_slug}`
         : null;
-  const subject = str(body.company) ?? str(body.subject) ?? str(body.person) ?? report.title.replace(/^Anti (Brief|Memo)\s+—\s+/, "");
+  const meeting = isMeetingBrief(report.kind, body);
+  const subject =
+    str(body.company) ?? str(body.subject) ?? str(body.person) ?? str(body.name) ?? report.title.replace(/^(Anti (Brief|Memo)|Meeting Brief)\s+—\s+/, "");
   const oneLiner = str(body.one_liner);
-  const structured = isStructuredBody(body);
+  const structured = meeting || isStructuredBody(body);
+  const contents = meeting ? meetingSections(body) : structured ? sectionsFor(report.kind, body) : [];
+  const briefDate = meeting ? str(body.date) : null;
+  const cited = meeting ? citedSourceIds(body).length : null;
   const filename = `${report.kind}-${report.entity_slug ?? report.id}.md`;
 
   return (
@@ -64,6 +71,11 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             subject
           )}
         </h1>
+        {meeting && (
+          <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
+            Meeting brief{briefDate ? ` · ${fmtDate(briefDate)}` : ""} · for a first conversation — not diligence
+          </p>
+        )}
         {oneLiner && <p className="mt-4 max-w-[60ch] font-serif text-[21px] italic leading-snug text-ink-2">{oneLiner}</p>}
 
         <dl className="mt-7 grid grid-cols-2 gap-x-8 gap-y-3 border-t border-rule pt-4 md:grid-cols-5">
@@ -113,14 +125,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
 
       <div className="mt-10 grid gap-x-12 gap-y-12 lg:grid-cols-[minmax(0,1fr)_260px] print:block">
         <div className="min-w-0">
-          <ReportBody kind={report.kind} body={body} markdown={report.markdown} />
+          {meeting ? <MeetingBriefView body={body} /> : <ReportBody kind={report.kind} body={body} markdown={report.markdown} />}
         </div>
         {structured && (
           <aside className="hidden lg:block print:hidden">
             <nav aria-label="Report contents" className="sticky top-6 border-t border-ink pt-3">
               <p className="label mb-3 text-ink">Contents</p>
               <ol className="space-y-1.5">
-                {sectionsFor(report.kind, body).map((def, i) => (
+                {contents.map((def, i) => (
                   <li key={def.key}>
                     <a href={`#r-sec-${def.key}`} className="grid grid-cols-[22px_1fr] text-[12.5px] text-ink-2 transition-colors hover:text-accent">
                       <span className="tnum font-mono text-[10px] text-ink-3">{String(i + 1).padStart(2, "0")}</span>
@@ -142,7 +154,9 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
       <section id="sources" className="mt-6 scroll-mt-24 border-t-[3px] border-double border-ink pt-4">
         <h2 className="mb-4 flex items-baseline justify-between">
           <span className="font-serif text-[24px] text-ink">Sources</span>
-          <span className="label tnum">{report.sources.length} cited</span>
+          <span className="label tnum">
+            {cited !== null && cited < report.sources.length ? `${cited} cited · ${report.sources.length} registered` : `${report.sources.length} cited`}
+          </span>
         </h2>
         <Sources sources={report.sources} demo={report.is_demo} />
       </section>

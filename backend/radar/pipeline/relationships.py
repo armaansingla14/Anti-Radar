@@ -12,6 +12,8 @@ CONTRIBUTED_WITH    person <-> person      both >= 3 commits to the same reposit
 MEMBER_OF/FOUNDED   person -> company      company_people (FOUNDED when is_founder)     VERIFIED only with a
                                                                                         non-self-reported source
 WORKED_WITH         person <-> person      same normalized current/prior affiliation    INFERRED
+WORKED_WITH         person <-> person      both public members of the same GitHub org   VERIFIED
+                                           (``Person.attrs['github_orgs']``)
 ==================  =====================  ===========================================  =========
 
 Dates are evidence dates (paper date, first/last commit), never ingestion time; a shared
@@ -20,6 +22,14 @@ Person-person edges are stored once with ``str(src_id) < str(dst_id)``.
 
 WORKED_WITH is skipped for very common organizations (> ``GIANT_ORG_PEOPLE`` tracked people
 list it — "both list Google" says little) unless the pair also co-contributed somewhere.
+
+A shared *public* GitHub organization membership (as returned by GitHub's API) is an observed fact
+about membership, so that WORKED_WITH evidence is VERIFIED; it says nothing about when either person
+joined, so it carries no date. It is skipped for the young organizations that are formation anchors
+themselves (sharing the anchor is not prior history) and for orgs with > ``GIANT_ORG_PEOPLE`` tracked
+public members. A pair with both kinds of evidence keeps one WORKED_WITH edge, VERIFIED.
+
+Automation and AI coding-agent accounts (``providers.github.is_bot``) get no edges at all.
 
 The build is idempotent: rows are upserted on (src_id, dst_id, kind) and rows of the kinds
 built here that are no longer supported by the data are deleted.
@@ -192,8 +202,12 @@ def _profile_url(p: Person) -> str | None:
 
 def build(session: Session) -> dict[str, Any]:
     """Rebuild all relationships from stored facts. Returns per-kind counts."""
+    from radar.providers.github import is_bot
+
     b = _Builder()
-    people: dict[uuid.UUID, Person] = {p.id: p for p in session.scalars(select(Person))}
+    all_people = list(session.scalars(select(Person)))
+    bots = {p.id for p in all_people if p.github_handle and is_bot(p.github_handle)}
+    people: dict[uuid.UUID, Person] = {p.id: p for p in all_people if p.id not in bots}
 
     # ── papers ──────────────────────────────────────────────────────────────
     papers: dict[uuid.UUID, ResearchPaper] = {}
@@ -209,6 +223,7 @@ def build(session: Session) -> dict[str, Any]:
         url = paper.url or f"https://arxiv.org/abs/{paper.arxiv_id}"
         ev = {"title": paper.title, "detail": f"arXiv:{paper.arxiv_id}", "source_url": url,
               "source_type": "arxiv", "event_at": _iso(at), "paper_id": str(paper.id)}
+        rows = [(pos, pid) for pos, pid in rows if pid not in bots]
         for pos, person_id in rows:
             e = b.edge("person", person_id, "paper", paper.id, AUTHORED,
                        is_demo=bool(paper.is_demo or getattr(people.get(person_id), "is_demo", False)))
@@ -232,7 +247,8 @@ def build(session: Session) -> dict[str, Any]:
         select(RepoContributor, Repository).join(Repository, Repository.id == RepoContributor.repository_id)
     ).all():
         repos[repo.id] = repo
-        repo_rows[repo.id].append(rc)
+        if rc.person_id not in bots:
+            repo_rows[repo.id].append(rc)
     co_contrib: set[tuple[uuid.UUID, uuid.UUID]] = set()
     for rid, rows in repo_rows.items():
         repo = repos[rid]
@@ -285,7 +301,7 @@ def build(session: Session) -> dict[str, Any]:
             )
     for cp in session.scalars(select(CompanyPerson)):
         c = companies.get(cp.company_id)
-        if c is None:
+        if c is None or cp.person_id in bots:
             continue
         kind = FOUNDED if cp.is_founder else MEMBER_OF
         epi = membership_epistemic(cp.source_url, cp.role)
@@ -341,7 +357,89 @@ def build(session: Session) -> dict[str, Any]:
             if both_prior:
                 e.weight = 1.5
 
+    _public_org_edges(b, people, companies, repos)
     return _persist(session, b)
+
+
+def public_orgs_of(p: Person) -> list[dict[str, Any]]:
+    """``Person.attrs['github_orgs']`` entries ({login, name, observed_at, ...}); [] when never checked."""
+    return [o for o in ((p.attrs or {}).get("github_orgs") or []) if isinstance(o, dict) and o.get("login")]
+
+
+def public_org_alias(o: dict[str, Any]) -> str | None:
+    """Canonical organization for a public GitHub org — only when its whole login (or name) is a known alias in
+    ``config/org_aliases.yaml`` (``openai`` -> OpenAI, ``google-deepmind`` -> Google DeepMind). Partial matches
+    ("tesla-fans-club") are not trusted."""
+    from radar.pipeline.aliases import alias_map
+
+    amap = alias_map()
+    for cand in (o.get("login"), o.get("name")):
+        k = org_key(str(cand)) if cand else ""
+        if k and k in amap:
+            return amap[k]
+    return None
+
+
+def public_org_display(o: dict[str, Any]) -> str:
+    """Display name for a public GitHub org: its canonical alias when known, else its name/login."""
+    return public_org_alias(o) or str(o.get("name") or o.get("login"))
+
+
+def anchor_org_logins(companies: dict[uuid.UUID, Company], repos: dict[uuid.UUID, Repository],
+                      young_days: int | None = None) -> set[str]:
+    """Lower-case logins of tracked young GitHub orgs (formation anchors): sharing one is not prior history."""
+    from radar.scoring.formation import YOUNG_DAYS, _company_created
+
+    by_company: dict[uuid.UUID, list[Repository]] = defaultdict(list)
+    for r in repos.values():
+        if r.company_id:
+            by_company[r.company_id].append(r)
+    today = clock.today()
+    out: set[str] = set()
+    for c in companies.values():
+        if not c.github_org:
+            continue
+        created = _company_created(c, by_company.get(c.id, []))
+        if created is not None and 0 <= (today - created).days <= (young_days or YOUNG_DAYS):
+            out.add(c.github_org.lower())
+    return out
+
+
+def _public_org_edges(b: _Builder, people: dict[uuid.UUID, Person], companies: dict[uuid.UUID, Company],
+                      repos: dict[uuid.UUID, Repository]) -> None:
+    members: dict[str, list[tuple[uuid.UUID, dict[str, Any]]]] = defaultdict(list)
+    for p in people.values():
+        if p.dismissed:
+            continue
+        for o in public_orgs_of(p):
+            members[str(o["login"]).lower()].append((p.id, o))
+    if not members:
+        return
+    anchors = anchor_org_logins(companies, repos)
+    for login, rows in members.items():
+        if len(rows) < 2 or login in anchors or len(rows) > GIANT_ORG_PEOPLE:
+            continue
+        rows.sort(key=lambda r: str(r[0]))
+        disp = public_org_display(rows[0][1])
+        okey = org_key(disp) or login
+        url = f"https://github.com/{rows[0][1]['login']}"
+        for (a, oa), (c, oc) in combinations(rows, 2):
+            if a == c:
+                continue
+            pa, pc = people[a], people[c]
+            e = b.edge("person", a, "person", c, WORKED_WITH, epistemic=VERIFIED,
+                       is_demo=bool(pa.is_demo or pc.is_demo))
+            e.epistemic = VERIFIED  # also upgrades a pair that only had shared self-reported affiliations
+            e.weight = max(e.weight, 1.0)
+            e.evidence = [{
+                "title": f"Both are public members of github.com/{rows[0][1]['login']}",
+                "detail": f"{pa.name} and {pc.name}: public GitHub organization membership ({disp}); "
+                          "membership dates are not public",
+                "source_url": url, "source_type": "github", "event_at": None,
+                "org": disp, "org_key": okey, "org_login": rows[0][1]["login"], "prior": False,
+                "basis": "public_github_org", "person_ids": [str(a), str(c)],
+                "observed_at": max(str(oa.get("observed_at") or ""), str(oc.get("observed_at") or "")) or None,
+            }, *e.evidence]
 
 
 def _persist(session: Session, b: _Builder) -> dict[str, Any]:
@@ -372,4 +470,5 @@ def _persist(session: Session, b: _Builder) -> dict[str, Any]:
     return out
 
 
-__all__ = ["KINDS", "PERSON_PAIR_KINDS", "build", "employer_key", "membership_epistemic", "ordered_pair"]
+__all__ = ["KINDS", "PERSON_PAIR_KINDS", "build", "employer_key", "membership_epistemic", "ordered_pair",
+           "public_org_alias", "public_org_display", "public_orgs_of"]

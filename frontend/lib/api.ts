@@ -21,6 +21,8 @@ import type {
   IngestXRequest,
   InvestigateEvent,
   InvestigateRequest,
+  MeetFeed,
+  MeetingBriefRequest,
   MemoRequest,
   MorningBrief,
   PersonCard,
@@ -178,6 +180,18 @@ export const getReport = (id: string) => get<ReportOut>(`/reports/${enc(id)}`);
 /** Browser-usable URL for the raw markdown download of a report. */
 export const reportMarkdownUrl = (id: string) => `/api/proxy/reports/${enc(id)}/markdown`;
 export const postMemo = (req: MemoRequest) => post<ReportOut>("/memo", req);
+/** Light report listing (no body/markdown/sources). */
+export const getReports = (params?: { entity_id?: string; kind?: string; limit?: number }) => get<ReportOut[]>("/reports", params);
+
+// ── Who should we meet this week ─────────────────────────────────────────────
+
+/** `week` is "current" (default) or an ISO week "YYYY-Www". */
+export const getMeet = (week: string = "current") => get<MeetFeed>("/meet", { week });
+/** Admin: recompute the current week's recommendations. */
+export const refreshMeet = () => post<MeetFeed>("/meet/refresh", {});
+/** Meeting brief for one person — returns the cached brief unless `force`. Never call on page load. */
+export const postMeetingBrief = (personId: string, force = false) =>
+  post<ReportOut>("/meeting-brief", force ? ({ person_id: personId, force: true } satisfies MeetingBriefRequest) : ({ person_id: personId } satisfies MeetingBriefRequest));
 
 // ── Workflow ─────────────────────────────────────────────────────────────────
 

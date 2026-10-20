@@ -105,3 +105,35 @@ MEMO_CLAIM_SECTIONS: tuple[str, ...] = (
     "evidence",
     "risks",
 )
+
+
+class MeetingBrief(BaseModel):
+    """Pre-meeting brief on one person (``ResearchReport.kind == 'meeting_brief'``).
+
+    Sources are restricted to the person's own evidence (their profile, signals, papers,
+    repositories, organizations and formation candidate); citations to anything else are removed
+    by the validator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="The person's display name.")
+    date: str = Field(description="ISO date of the brief.")
+    context_30s: list[Claim] = Field(description="Who this is in two or three sentences: the 30-second context.")
+    why_on_radar: list[Claim] = Field(description="Why ANTI RADAR surfaced this person.")
+    what_they_built: list[Claim] = Field(description="Concrete things they built: repositories, papers, projects.")
+    technical_background: list[Claim] = Field(description="Technical background and affiliations (label self-reported).")
+    what_changed: list[Claim] = Field(description="Recent changes: new orgs, repos, papers, activity.")
+    why_anti_fund: list[Claim] = Field(description="Why this could be relevant to Anti Fund's thesis.")
+    questions: list[str] = Field(description="Exactly five questions to ask in the meeting.")
+    things_to_verify: list[str] = Field(description="Claims to verify before or during the meeting.")
+    unknowns: list[str] = Field(description="Important things the evidence does not establish.")
+
+
+MEETING_CLAIM_SECTIONS: tuple[str, ...] = (
+    "context_30s",
+    "why_on_radar",
+    "what_they_built",
+    "technical_background",
+    "what_changed",
+    "why_anti_fund",
+)

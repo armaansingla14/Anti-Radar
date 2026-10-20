@@ -64,6 +64,7 @@ from radar.schemas.api import (
 from radar.services import freshness
 from radar.services import presenters as P
 from radar.services.entities import (
+    human_person_conditions,
     latest_score_subq,
     paper_cards,
     rank_papers,
@@ -211,7 +212,8 @@ def candidate_people(session: Session, *, include_demo: bool, theme: str | None 
     today = clock.today()
     cur = latest_score_subq("person", today, min_day=today - timedelta(days=14))
     q = (select(Person).join(cur, cur.c.entity_id == Person.id)
-         .where(Person.dismissed.is_(False), cur.c.score >= floor).order_by(cur.c.score.desc()).limit(pool))
+         .where(Person.dismissed.is_(False), cur.c.score >= floor, *human_person_conditions())
+         .order_by(cur.c.score.desc()).limit(pool))
     if not include_demo:
         q = q.where(Person.is_demo.is_(False))
     if theme:

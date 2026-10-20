@@ -22,7 +22,7 @@ router = APIRouter(tags=["reports"])
 def list_reports(
     session: SessionDep,
     entity_id: Annotated[str | None, Query(max_length=64)] = None,
-    kind: Annotated[str | None, Query(pattern=r"^(brief|memo|morning_brief)$")] = None,
+    kind: Annotated[str | None, Query(pattern=r"^(brief|memo|morning_brief|meeting_brief)$")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[ReportOut]:
     """Light listing: body / markdown / sources are omitted (fetch /reports/{id} for the full report)."""

@@ -73,6 +73,7 @@ from radar.providers.base import (
 )
 from radar.providers.domains import github_repos_in, registrable_domain
 from radar.providers.formation import _phrase_re, normalize_text
+from radar.providers.github import PUBLIC_ORGS_ATTR
 from radar.thesis.loader import Thesis, get_thesis
 
 log = logging.getLogger("radar.pipeline.ingest")
@@ -83,6 +84,7 @@ BIO_MATERIAL_CHANGE_RATIO = 0.9
 _METRIC_PRIORITY = {"observed": 3, "backfill": 2, "demo": 1}
 SELF_REPORTED_NOTE = "self-reported on GitHub profile"
 SELF_REPORTED_SOURCE = "github:self-reported"
+PUBLIC_ORG_NOTE = "Public GitHub organization membership"
 # Formation language looked for in a person's own profile (bio / company) on top of thesis.formation_phrases.
 # A current "founder" self-description stays a formation_language signal: it never becomes a FOUNDED relation.
 PROFILE_FORMATION_PHRASES = ("co-founder", "cofounder", "founder", "founding engineer", "stealth",
@@ -710,6 +712,9 @@ class _Ingestor:
             if repo.company_id and paper.company_id is None:  # type: ignore[union-attr]
                 paper.company_id = repo.company_id  # type: ignore[union-attr]
             return
+        if kind == "member" and PUBLIC_ORGS_ATTR in rel.attrs:
+            self._public_orgs(rel)
+            return
         person: Person = self._resolve(
             rel.src, name_hint=self.author_names.get(rel.src.key), code_repos=self._person_hint(rel.src) or None
         )  # type: ignore[assignment]
@@ -730,6 +735,42 @@ class _Ingestor:
             company = self._resolve(rel.dst)
             self._membership(company.id, person.id, role=rel.attrs.get("role") or (kind if kind == "founder" else None),
                              is_founder=kind == "founder", confidence=rel.confidence, source_url=rel.source_url)
+
+    def _public_orgs(self, rel: Relation) -> None:
+        """A tracked GitHub user's public organization memberships -> ``Person.attrs['github_orgs']``.
+
+        Public membership as returned by GitHub's API is an observed fact (FACT provenance, VERIFIED in the
+        relationship graph) about membership *now* — not about employment or when it started. Unknown users
+        are skipped (never created); no company rows are created for the orgs. Each org keeps the first and
+        latest time it was observed; ``github_orgs_checked_at`` records the check even when the list is empty."""
+        p = self.resolver.lookup(rel.src)
+        if not isinstance(p, Person):
+            return
+        observed = str(rel.attrs.get("observed_at") or self.now.isoformat())
+        before = {str(o.get("login") or "").lower(): o for o in ((p.attrs or {}).get("github_orgs") or [])
+                  if isinstance(o, dict)}
+        orgs = []
+        for o in rel.attrs.get(PUBLIC_ORGS_ATTR) or []:
+            login = str(o.get("login") or "").strip()
+            if not login:
+                continue
+            prev = before.get(login.lower()) or {}
+            orgs.append({"login": login, "name": o.get("name") or login,
+                         "first_observed_at": prev.get("first_observed_at") or observed, "observed_at": observed})
+        attrs = dict(p.attrs or {})
+        attrs["github_orgs"] = orgs
+        attrs["github_orgs_checked_at"] = observed
+        p.attrs = attrs
+        url = rel.source_url or (f"https://github.com/{p.github_handle}" if p.github_handle else canonical_url(p))
+        if orgs:
+            demo = self.is_demo or p.is_demo
+            record_provenance(
+                self.s, "person", p.id, "github_orgs", [o["login"] for o in orgs],
+                source_type=self.provider, source_url=url,
+                epistemic=Epistemic.INFERENCE.value if demo else Epistemic.FACT.value,
+                confidence=1.0, note=PUBLIC_ORG_NOTE,
+            )
+        self.stats.entities_updated += 1
 
     def _contributor(self, person: Person, repo: Repository, rel: Relation) -> None:
         vals: dict[str, Any] = {}

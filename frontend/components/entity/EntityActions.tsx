@@ -9,6 +9,7 @@ import { useToast } from "@/components/Toast";
 import { WatchButton } from "@/components/WatchButton";
 import { postFeedback, postMemo } from "@/lib/api";
 import type { FeedbackLabel } from "@/lib/types";
+import { MeetingBriefButton } from "@/components/meet/MeetingBriefButton";
 import { InvestigationPanel } from "./InvestigationPanel";
 
 export interface EntityActionsProps {
@@ -20,6 +21,10 @@ export interface EntityActionsProps {
   autoInvestigate?: boolean;
   /** False when the backend reports no LLM provider — outputs are templates. */
   llmEnabled?: boolean | null;
+  /** People only: latest cached meeting brief (opened, never regenerated on load). */
+  meetingBriefId?: string | null;
+  /** Session is read-only — write actions point to /unlock. */
+  readOnly?: boolean;
 }
 
 const act =
@@ -38,7 +43,7 @@ function setInvestigateParam(on: boolean) {
  * Entity action bar: Watch, Investigate (inline analyst panel),
  * Generate Anti Memo, feedback and dismiss. Registers palette commands.
  */
-export function EntityActions({ entityType, entityId, entityName, watched, autoInvestigate, llmEnabled }: EntityActionsProps) {
+export function EntityActions({ entityType, entityId, entityName, watched, autoInvestigate, llmEnabled, meetingBriefId = null, readOnly = false }: EntityActionsProps) {
   const router = useRouter();
   const toast = useToast();
   const [investigating, setInvestigating] = useState(!!autoInvestigate);
@@ -127,6 +132,7 @@ export function EntityActions({ entityType, entityId, entityName, watched, autoI
           <span aria-hidden>▤</span>
           {memoBusy ? "Drafting memo…" : "Generate Anti Memo"}
         </button>
+        {entityType === "person" && <MeetingBriefButton personId={entityId} briefId={meetingBriefId} readOnly={readOnly} allowRegenerate />}
         <FeedbackMenu onSelect={feedback} />
         {confirmDismiss ? (
           <span className="inline-flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.08em]">

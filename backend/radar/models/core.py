@@ -646,3 +646,32 @@ class FormationCandidate(Base):
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
     day: Mapped[date] = mapped_column(Date)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ── Who Should We Meet (M3) ──────────────────────────────────────────────────
+
+
+class MeetingRecommendation(Base):
+    """One person recommended for a meeting in an ISO week (America/New_York), ranked by ``services.meet``.
+
+    Rows are written once per week (idempotent) so the week view is stable; ``reasons`` keeps the
+    deterministic explanation as it was when ranked: {why_person: [str], why_now: [EvidenceItem dict],
+    what_changed: [str], thesis: [str], ...}."""
+
+    __tablename__ = "meeting_recommendations"
+    __table_args__ = (
+        UniqueConstraint("week", "person_id", name="uq_meeting_week_person"),
+        Index("ix_meeting_week_rank", "week", "rank"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    week: Mapped[str] = mapped_column(String(10))  # ISO week 'YYYY-Www'
+    person_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), index=True)
+    rank: Mapped[int] = mapped_column(Integer)
+    priority: Mapped[str] = mapped_column(String(10))  # HIGH | MEDIUM | WATCH
+    score: Mapped[float] = mapped_column(Float)
+    reasons: Mapped[dict] = mapped_column(JSONType, default=dict)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    confidence: Mapped[str] = mapped_column(String(20))  # HIGH CONFIDENCE | MEDIUM CONFIDENCE | EARLY SIGNAL
+    formation_candidate_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

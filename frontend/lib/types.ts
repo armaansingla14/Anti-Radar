@@ -806,6 +806,80 @@ export interface FormationDetail {
   sources: SourceRef[];
 }
 
+// ── Who should we meet this week (M3) ───────────────────────────────────────
+
+export type MeetPriority = "HIGH" | "MEDIUM" | "WATCH";
+export type MeetConfidence = "HIGH CONFIDENCE" | "MEDIUM CONFIDENCE" | "EARLY SIGNAL";
+
+export interface MeetFormationRef {
+  id: string;
+  slug: string;
+  label: FormationLabel | string;
+  tier: FormationTier | string;
+  score: number;
+}
+
+export interface MeetCard {
+  rank: number;
+  priority: MeetPriority | string;
+  confidence: MeetConfidence | string;
+  person: PersonCard;
+  /** Thesis area / domain, e.g. "AI infrastructure". */
+  area: string;
+  /** Current / prior affiliations; self-reported unless stated otherwise. */
+  affiliation_line: string;
+  why_person: string[];
+  why_now: EvidenceItem[];
+  what_changed: string[];
+  thesis_alignment: string[];
+  evidence_count: number;
+  formation: MeetFormationRef | null;
+  /** Latest meeting brief for this person, when one exists. */
+  brief_report_id: string | null;
+  /** Deterministic meet score 0..100 (secondary to the reasons). */
+  score?: number;
+  /** Independent source families behind the evidence. */
+  families?: string[];
+}
+
+export interface MeetFeed {
+  /** ISO week "YYYY-Www" (America/New_York). */
+  week: string;
+  generated_at: ISODateTime | null;
+  as_of: ISODate | ISODateTime | null;
+  people: MeetCard[];
+  /** Weeks with stored recommendations, newest first. */
+  history_weeks: string[];
+}
+
+export interface MeetingBriefRequest {
+  person_id: string;
+  /** Regenerate even if a cached brief exists. */
+  force?: boolean;
+}
+
+/** One claim of a structured report (agent.brief_schema.Claim). */
+export interface ReportClaim {
+  text: string;
+  epistemic: Epistemic;
+  source_ids: string[];
+}
+
+/** ResearchReport.body for kind "meeting_brief". */
+export interface MeetingBriefBody {
+  name: string;
+  date: string;
+  context_30s: ReportClaim[];
+  why_on_radar: ReportClaim[];
+  what_they_built: ReportClaim[];
+  technical_background: ReportClaim[];
+  what_changed: ReportClaim[];
+  why_anti_fund: ReportClaim[];
+  questions: string[];
+  things_to_verify: string[];
+  unknowns: string[];
+}
+
 // ── Not modelled in api.py (backend returns ad-hoc JSON) ─────────────────────
 
 /**

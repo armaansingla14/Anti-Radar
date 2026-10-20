@@ -31,6 +31,8 @@ const ALLOWED_SECTIONS = new Set([
   "companies",
   "founders",
   "formation",
+  "meet",
+  "meeting-brief",
   "signals",
   "thesis",
   "watchlist",

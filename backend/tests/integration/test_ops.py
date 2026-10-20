@@ -150,6 +150,8 @@ def test_sweep_runs_steps_in_canonical_order_and_records_jobs(db, monkeypatch):
     monkeypatch.setattr(ops, "_step_ingest", lambda st: order.append(st) or _fake_result(st))
     monkeypatch.setattr(ops, "recompute", lambda: order.append("score") or {"scored": 1})
     monkeypatch.setattr(ops, "persist_morning_brief", lambda: order.append("brief") or {"date": "2026-10-06"})
+    if hasattr(ops, "ensure_meet_week"):
+        monkeypatch.setattr(ops, "ensure_meet_week", lambda: order.append("meet") or {"week": "2026-W41"})
     out = ops.sweep(["brief", "hn", "score", "github"])
     assert order == ["hn", "github", "score", "brief"] and list(out) == order
     assert out["score"]["status"] == "ok" and out["score"]["result"] == {"scored": 1}
@@ -177,7 +179,8 @@ def test_failed_job_is_recorded_and_sweep_continues(db, monkeypatch):
 def test_sweep_step_order_and_cli_step_list_in_sync():
     from radar import cli
 
-    assert ops.SWEEP_STEPS == ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "brief")
+    assert ops.SWEEP_STEPS == ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "meet",
+                               "brief")
     assert cli._ALL_STEPS == ops.ALL_STEPS
     assert [s for s in ops.ALL_STEPS if s in ops.SWEEP_STEPS] == list(ops.SWEEP_STEPS)
 
@@ -428,3 +431,62 @@ def test_stats_step_retries_missing_stats_and_is_guarded(db, monkeypatch):
     monkeypatch.setattr(gh, "GitHubProvider", _OldGitHub)
     res = ops.run_step("stats")
     assert res["status"] == "error"
+
+
+# ── enrich: public GitHub org memberships of anchor members ──────────────────
+
+
+class _FakeGH:
+    calls: list = []
+
+    def __init__(self, *a, **kw) -> None:
+        self.client = _Stats()
+
+    def fetch_public_orgs(self, logins, *, max_calls=150):
+        from radar.providers.base import Relation, gh_user_ref
+        from radar.providers.github import PUBLIC_ORGS_ATTR
+
+        _FakeGH.calls.append(list(logins))
+        orgs = {"ada": [{"login": "openai", "name": "openai"}], "ben": []}
+        return ProviderBatch(provider="github", relations=[
+            Relation(kind="member", src=gh_user_ref(lg), dst=gh_user_ref(lg),
+                     attrs={PUBLIC_ORGS_ATTR: orgs[lg], "observed_at": "2026-10-06T09:00:00+00:00"},
+                     source_url=f"https://github.com/{lg}") for lg in logins if lg in orgs])
+
+
+def test_enrich_records_public_org_memberships_with_provenance(db, fake_sources, monkeypatch):
+    import radar.providers.github as gh
+    from radar.models import FieldProvenance, Person, RepoContributor, Repository
+
+    _FakeGH.calls = []
+    monkeypatch.setattr(gh, "GitHubProvider", _FakeGH)
+    _seed_young_org(db)
+    r = db.scalars(select(Repository).where(Repository.full_name == "formingco/engine")).one()
+    for handle, n in (("ada", 30), ("ben", 5), ("claude", 50), ("drive-by", 1)):
+        p = Person(slug=handle, name=handle.title(), github_handle=handle)
+        db.add(p)
+        db.flush()
+        db.add(RepoContributor(repository_id=r.id, person_id=p.id, contributions=n))
+    db.commit()
+    res = ops.run_step("enrich")
+    assert res["status"] == "ok", res
+    assert _FakeGH.calls == [["ada", "ben"]]  # bots and 1-commit drive-bys are not looked up
+    assert res["result"]["people_orgs_checked"] == 2
+    db.expire_all()
+    people = {p.github_handle: p for p in db.scalars(select(Person))}
+    ada = people["ada"].attrs
+    assert [o["login"] for o in ada["github_orgs"]] == ["openai"]
+    assert ada["github_orgs"][0]["observed_at"] == "2026-10-06T09:00:00+00:00"
+    assert ada["github_orgs_checked_at"] == "2026-10-06T09:00:00+00:00"
+    assert people["ben"].attrs["github_orgs"] == [] and people["ben"].attrs["github_orgs_checked_at"]
+    prov = db.scalars(select(FieldProvenance).where(FieldProvenance.field == "github_orgs")).all()
+    assert len(prov) == 1
+    pr = prov[0]
+    assert pr.entity_id == people["ada"].id and pr.value == ["openai"] and pr.epistemic == "FACT"
+    assert pr.source_url == "https://github.com/ada" and pr.note == "Public GitHub organization membership"
+    assert "github_orgs" not in {c.slug for c in db.scalars(select(Company))}  # no company rows for orgs
+    assert db.scalar(select(func.count()).select_from(Company)) == 1
+    # Checked people are not re-requested within the recheck window.
+    _FakeGH.calls = []
+    ops.run_step("enrich")
+    assert _FakeGH.calls == []

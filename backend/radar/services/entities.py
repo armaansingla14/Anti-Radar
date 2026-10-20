@@ -755,6 +755,15 @@ def formation_target_conditions() -> list:
     ]
 
 
+def human_person_conditions() -> list[Any]:
+    """SQL conditions excluding automation / AI coding-agent accounts (``providers.github.is_bot``)."""
+    from radar.providers.github import BOT_LOGINS
+
+    lg = func.lower(Person.github_handle)
+    return [or_(Person.github_handle.is_(None),
+                and_(lg.not_in(sorted(BOT_LOGINS)), not_(lg.like("%[bot]")), not_(lg.like("%-bot"))))]
+
+
 def list_founders(
     session: Session, *, q: str | None = None, theme: str | None = None, no_company: bool = False,
     include_demo: bool = True, sort: FounderSort = "score", limit: int = 50, offset: int = 0,
@@ -763,7 +772,8 @@ def list_founders(
     theme = validate_theme(theme)
     today = clock.today()
     cur = latest_score_subq("person", today)
-    stmt = select(Person).outerjoin(cur, cur.c.entity_id == Person.id).where(Person.dismissed.is_(False))
+    stmt = (select(Person).outerjoin(cur, cur.c.entity_id == Person.id)
+            .where(Person.dismissed.is_(False), *human_person_conditions()))
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(or_(Person.name.ilike(like), Person.bio.ilike(like), Person.slug.ilike(like),

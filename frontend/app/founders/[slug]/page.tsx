@@ -17,12 +17,25 @@ import { evidenceIndex, NarrativeBlock } from "@/components/entity/NarrativeBloc
 import { Contents, Quiet, Section } from "@/components/entity/primitives";
 import { Sources } from "@/components/entity/Sources";
 import { HandleLinks } from "@/components/HandleLinks";
+import { getReports } from "@/lib/api";
+import { getSession } from "@/lib/session";
 import { fmtDate, NO_COMPANY_LABEL, personKindLabel } from "@/lib/format";
 
 export async function generateMetadata({ params }: PageProps<"/founders/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const p = await loadFounder(decodeURIComponent(slug)).catch(() => null);
   return { title: p ? p.card.name : "Person" };
+}
+
+/** Latest cached meeting brief for this person (optional context — never fails the page, never generates). */
+async function latestMeetingBrief(personId: string): Promise<string | null> {
+  try {
+    const reports = await getReports({ entity_id: personId, limit: 50 });
+    const briefs = reports.filter((r) => r.kind === "meeting_brief").sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return briefs[0]?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export default async function FounderPage({ params, searchParams }: PageProps<"/founders/[slug]">) {
@@ -33,7 +46,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
 
   const p = detail.card;
   const score = detail.founder_score;
-  const [graph, llmEnabled] = await Promise.all([loadGraph(p.id), loadLlmEnabled()]);
+  const [graph, llmEnabled, session, meetingBriefId] = await Promise.all([loadGraph(p.id), loadLlmEnabled(), getSession(), latestMeetingBrief(p.id)]);
   const evidence = evidenceIndex(score);
   const currentCo = p.current_company ? detail.companies.find((c) => c.name === p.current_company) : undefined;
   const role = p.current_role ?? p.role;
@@ -193,6 +206,8 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
           watched={detail.watched}
           autoInvestigate={sp.investigate === "1"}
           llmEnabled={llmEnabled}
+          meetingBriefId={meetingBriefId}
+          readOnly={session.read_only}
         />
       </div>
 

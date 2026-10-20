@@ -77,7 +77,14 @@ from radar.scoring.convergence import (
     founding_members,
     load_pair_relationships,
 )
-from radar.scoring.extract import SignalIndex, _merge_topics, _topics, load_signal_index, org_created_date
+from radar.scoring.extract import (
+    SignalIndex,
+    _merge_topics,
+    _topics,
+    load_signal_index,
+    org_created_date,
+    person_affiliation_tier,
+)
 from radar.scoring.features import FORMATION_SIGNAL_TYPES, SignalLite
 from radar.thesis.loader import Thesis, get_thesis
 
@@ -166,6 +173,8 @@ class MemberInfo:
     self_reported: bool = False
     profile_url: str | None = None
     is_demo: bool = False
+    tier_basis: str | None = None  # "public_github_org" when the tier comes from a public org membership
+    tier_org_login: str | None = None
 
 
 @dataclass
@@ -271,14 +280,22 @@ def founder_quality(members: Sequence[MemberInfo], kind: str = "team") -> dict[s
         parts.append("No member Founder Scores computed yet")
     if tier_member is not None:
         tier = "tier-1" if tier_member.tier >= 1.0 else "tier-2"
-        sr = ", self-reported" if tier_member.self_reported else ""
-        parts.append(f"{tier_member.name} lists {tier_member.tier_match} ({tier}{sr})")
+        if tier_member.tier_basis == "public_github_org" and tier_member.tier_org_login:
+            parts.append(f"{tier_member.name} is a public GitHub member of {tier_member.tier_org_login} "
+                         f"({tier_member.tier_match}, {tier})")
+        else:
+            sr = ", self-reported" if tier_member.self_reported else ""
+            parts.append(f"{tier_member.name} lists {tier_member.tier_match} ({tier}{sr})")
     else:
         parts.append("no member affiliation on the thesis tier lists")
     evidence = []
     for m in (top or list(members)[:3]):
-        aff = f"; affiliation {m.tier_match} ({'self-reported' if m.self_reported else 'listed'})" \
-            if m.tier_match else ""
+        if m.tier_match and m.tier_basis == "public_github_org" and m.tier_org_login:
+            aff = f"; public GitHub member of {m.tier_org_login} ({m.tier_match})"
+        elif m.tier_match:
+            aff = f"; affiliation {m.tier_match} ({'self-reported' if m.self_reported else 'listed'})"
+        else:
+            aff = ""
         fs = f"Founder Score {round(m.founder_score)}" if m.founder_score is not None else "Founder Score n/a"
         evidence.append({"signal_id": None, "title": m.name, "detail": fs + aff,
                          "source_type": "github" if (m.profile_url or "").startswith("https://github.com") else None,
@@ -287,7 +304,9 @@ def founder_quality(members: Sequence[MemberInfo], kind: str = "team") -> dict[s
                               for m in top],  # type: ignore[arg-type]
            "weighted_mean": round(mean, 2), "best_tier": best_tier,
            "tier_match": tier_member.tier_match if tier_member else None,
-           "tier_self_reported": bool(tier_member and tier_member.self_reported)}
+           "tier_basis": tier_member.tier_basis if tier_member else None,
+           "tier_self_reported": bool(tier_member and tier_member.self_reported
+                                      and tier_member.tier_basis != "public_github_org")}
     return _component("founder_quality", value, "; ".join(parts) + ".", raw, evidence)
 
 
@@ -576,20 +595,15 @@ def _is_org_account(p: Person, own_keys: set[str]) -> bool:
 
 
 def _member_info(p: Person, snap: ScoreSnapshot | None, thesis: Thesis) -> MemberInfo:
-    affs = list(dict.fromkeys(a.strip() for a in [p.current_company, *(p.prior_affiliations or [])] if a and a.strip()))
-    tier, match = 0.0, None
-    for a in affs:
-        t = thesis.affiliation_tier(a)
-        if t > tier:
-            tier, match = t, thesis.matched_affiliation(a)
+    aff = person_affiliation_tier(p, thesis)
     attrs = p.attrs or {}
     return MemberInfo(
         id=p.id, name=_display(p), slug=p.slug,
         founder_score=float(snap.score) if snap is not None else None,
-        tier=tier, tier_match=match, affiliations=affs,
+        tier=aff.tier, tier_match=aff.tier_match, affiliations=aff.affiliations,
         self_reported=bool(attrs.get("self_reported")),
         profile_url=f"https://github.com/{p.github_handle}" if p.github_handle else (p.personal_site or p.linkedin_url),
-        is_demo=bool(p.is_demo),
+        is_demo=bool(p.is_demo), tier_basis=aff.basis, tier_org_login=aff.org_login,
     )
 
 
@@ -635,6 +649,23 @@ def _company_created(c: Company, repos: Sequence[Repository]) -> date | None:
     return org_created_date(founded, repo_dates)
 
 
+def curated_list_anchor(c: Company, repos: Sequence[Repository]) -> str | None:
+    """Why an anchor is a link collection rather than a team building something (None = keep): all of its
+    repositories are curated lists (awesome-*, "curated list", "list of", "collection of", resources — name,
+    description or topics), or its most-starred repository is one."""
+    from radar.providers.github import is_curated_list_repo
+
+    if not repos:
+        return None
+    lists = [r for r in repos if is_curated_list_repo(r.full_name, r.description, r.topics or [])]
+    if len(lists) == len(repos):
+        return "all repositories are curated lists"
+    top = max(repos, key=lambda r: (r.stars or 0, r.full_name))
+    if top in lists:
+        return f"top repository {top.full_name} is a curated list"
+    return None
+
+
 def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
     from radar.providers.domains import is_academic_domain
 
@@ -655,6 +686,7 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
         created = _company_created(c, repos_by.get(c.id, []))
         if created is not None and 0 <= (day - created).days <= YOUNG_DAYS:
             young.append((c, created))
+    young = [(c, created) for c, created in young if curated_list_anchor(c, repos_by.get(c.id, [])) is None]
     if not young:
         return []
     yids = [c.id for c, _ in young]

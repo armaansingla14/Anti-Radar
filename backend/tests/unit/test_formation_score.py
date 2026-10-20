@@ -230,3 +230,33 @@ def test_generic_founder_only():
                                     [bio, aff], {bio.id: ["co-founder"]})
     assert not generic_founder_only([fact, EvidenceFact("young_org", "Linked to acme")], [bio],
                                     {bio.id: ["co-founder"]})
+
+
+# ── public GitHub org memberships and curated-list anchors ───────────────────
+
+
+def test_founder_quality_explains_public_org_membership():
+    from radar.scoring.formation import founder_quality
+
+    m = MemberInfo(A, "Ada", founder_score=60, tier=1.0, tier_match="OpenAI", self_reported=True,
+                   tier_basis="public_github_org", tier_org_login="openai", profile_url="https://github.com/ada")
+    c = founder_quality([m, MemberInfo(B, "Ben", founder_score=40)])
+    assert "Ada is a public GitHub member of openai (OpenAI, tier-1)" in c["explanation"]
+    assert "self-reported" not in c["explanation"]
+    assert c["raw"]["tier_basis"] == "public_github_org" and c["raw"]["tier_self_reported"] is False
+    assert "public GitHub member of openai" in c["evidence"][0]["detail"]
+
+
+def test_curated_list_anchor():
+    from radar.models.core import Company, Repository
+    from radar.scoring.formation import curated_list_anchor
+
+    co = Company(name="V-Modal", github_org="v-modal")
+    lst = Repository(full_name="v-modal/awesome-jev-tools", owner="v-modal", stars=752,
+                     description="A curated list of tools", topics=["awesome-list"])
+    eng = Repository(full_name="v-modal/engine", owner="v-modal", stars=10, description="Visual memory", topics=[])
+    assert curated_list_anchor(co, [lst]) == "all repositories are curated lists"
+    assert "top repository v-modal/awesome-jev-tools" in curated_list_anchor(co, [lst, eng])
+    big = Repository(full_name="v-modal/engine", owner="v-modal", stars=900, description="Visual memory", topics=[])
+    assert curated_list_anchor(co, [lst, big]) is None  # a real product leads; the list is a side repo
+    assert curated_list_anchor(co, []) is None

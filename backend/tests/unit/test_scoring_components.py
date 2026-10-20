@@ -192,3 +192,35 @@ def test_person_attention_unmeasured_awards_no_gap(thesis, monkeypatch):
     assert fs.attention.attention is None and fs.attention.to_api()["attention"] is None
     assert att.value == 0 and att.raw["gap"] is None and "not measured" in att.explanation
     assert "0th" not in att.explanation
+
+
+def test_pedigree_from_public_github_org_membership():
+    from radar.models.core import Person
+    from radar.scoring.extract import person_affiliation_tier, public_org_canonical
+    from radar.scoring.founder import pedigree
+
+    thesis = get_thesis()
+    assert public_org_canonical({"login": "openai"}) == "OpenAI"
+    assert public_org_canonical({"login": "google-deepmind"}) == "Google DeepMind"
+    assert public_org_canonical({"login": "tesla-fans-club"}) is None  # partial matches are not trusted
+    p = Person(name="Ada", current_company="Acme", prior_affiliations=[],
+               attrs={"github_orgs": [{"login": "openai", "name": "openai", "observed_at": "2026-10-06T00:00:00"},
+                                      {"login": "random-club"}]})
+    aff = person_affiliation_tier(p, thesis)
+    assert (aff.tier, aff.tier_match, aff.basis, aff.org_login) == (1.0, "OpenAI", "public_github_org", "openai")
+    assert aff.affiliations == ["Acme"] and aff.public_orgs == ["OpenAI"]
+    pf = person(affiliations=aff.affiliations, tier=aff.tier, tier_match=aff.tier_match)
+    pf.tier_basis, pf.tier_org_login, pf.public_orgs = aff.basis, aff.org_login, aff.public_orgs
+    c = pedigree(pf)
+    assert c.value == FOUNDER_MAX["pedigree"]
+    assert c.explanation == "Public GitHub member of openai (OpenAI, tier-1)."
+    assert c.raw["basis"] == "public_github_org" and c.raw["public_github_orgs"] == ["OpenAI"]
+    # A self-reported tier-1 affiliation of equal tier: the observed membership is preferred as the basis.
+    p2 = Person(name="Ben", current_company="OpenAI", prior_affiliations=[], attrs={"github_orgs": [{"login": "openai"}]})
+    assert person_affiliation_tier(p2, thesis).basis == "public_github_org"
+    # Without public orgs the old wording stays.
+    p3 = Person(name="Cy", current_company="NVIDIA", prior_affiliations=[], attrs={})
+    a3 = person_affiliation_tier(p3, thesis)
+    assert a3.basis == "affiliation" and pedigree(person(affiliations=a3.affiliations, tier=a3.tier,
+                                                         tier_match=a3.tier_match)).explanation.startswith(
+        "Affiliation with NVIDIA")

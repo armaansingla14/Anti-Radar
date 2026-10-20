@@ -161,3 +161,71 @@ def test_evidence_cap_keeps_oldest_dated_items():
     titles = [e["title"] for e in kept]
     assert len(kept) == 10 and "r0" in titles and "r14" in titles  # oldest and newest both survive
     assert [e["event_at"] for e in kept] == sorted((e["event_at"] for e in kept), reverse=True)
+
+
+# ── public GitHub org memberships (VERIFIED) and automation accounts ─────────
+
+
+def _orgs(p, *logins):
+    p.attrs = {**(p.attrs or {}), "github_orgs": [{"login": lg, "name": lg, "observed_at": "2026-10-06T00:00:00+00:00"}
+                                                   for lg in logins]}
+    db_flush(p)
+
+
+def db_flush(p):
+    from sqlalchemy.orm import object_session
+
+    object_session(p).flush()
+
+
+def test_shared_public_org_is_verified_worked_with(db):
+    a = person(db, "ada", company="Acme")  # self-reported "Acme" shared with ben
+    b = person(db, "ben", company="Acme")
+    c = person(db, "cy")
+    _orgs(a, "openai", "younglab")
+    _orgs(b, "openai", "younglab")
+    _orgs(c, "younglab")
+    # younglab is a young tracked org (a formation anchor): sharing it is not prior history.
+    young = Company(slug="younglab", name="YoungLab", github_org="younglab", kind="project",
+                    founded_date=date(2026, 9, 1), attrs={"gh_org_created_at": "2026-09-01T00:00:00+00:00"})
+    db.add(young)
+    db.flush()
+    rel.build(db)
+    ww = rows(db, rel.WORKED_WITH)
+    assert len(ww) == 1  # only ada-ben; cy shares nothing but the anchor
+    e = ww[0]
+    assert {e.src_id, e.dst_id} == {a.id, b.id}
+    assert e.epistemic == rel.VERIFIED  # the public membership upgrades the shared self-reported string
+    pub = [x for x in e.evidence if x.get("basis") == "public_github_org"]
+    assert len(pub) == 1 and pub[0]["title"] == "Both are public members of github.com/openai"
+    assert pub[0]["org"] == "OpenAI" and pub[0]["org_key"] == "openai" and pub[0]["event_at"] is None
+    assert pub[0]["source_url"] == "https://github.com/openai" and pub[0]["source_type"] == "github"
+    assert any("lists" in x["title"] for x in e.evidence)  # self-reported evidence is kept alongside
+
+
+def test_huge_public_org_is_skipped(db):
+    ps = [person(db, f"m{i}") for i in range(rel.GIANT_ORG_PEOPLE + 1)]
+    for p in ps:
+        _orgs(p, "pytorch")
+    _orgs(ps[0], "pytorch", "tinyco")
+    _orgs(ps[1], "pytorch", "tinyco")
+    rel.build(db)
+    ww = rows(db, rel.WORKED_WITH)
+    assert len(ww) == 1 and ww[0].evidence[0]["org_login"] == "tinyco"
+
+
+def test_bot_accounts_get_no_edges(db):
+    a = person(db, "ada", company="NVIDIA")
+    bot = person(db, "claude-x", company="NVIDIA", handle="claude")
+    agent = person(db, "devin", handle="devin-ai-integration")
+    _orgs(a, "tinyco")
+    _orgs(bot, "tinyco")
+    paper(db, "2501.00009", datetime(2025, 3, 1, tzinfo=UTC), [a, bot])
+    r = repo(db, "acme/core")
+    contrib(db, r, a, 40)
+    contrib(db, r, bot, 40)
+    contrib(db, r, agent, 40)
+    rel.build(db)
+    ids = {bot.id, agent.id}
+    assert all(x.src_id not in ids and x.dst_id not in ids for x in rows(db))
+    assert len(rows(db, rel.AUTHORED)) == 1 and len(rows(db, rel.CONTRIBUTED_TO)) == 1

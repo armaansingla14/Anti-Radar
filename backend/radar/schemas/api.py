@@ -800,3 +800,45 @@ class FormationDetail(BaseModel):
     papers: list[PaperCard] = Field(default_factory=list)
     jobs: list[dict[str, Any]] = Field(default_factory=list)
     sources: list[SourceRef] = Field(default_factory=list)
+
+
+# ── Who Should We Meet (M3) ──────────────────────────────────────────────────
+
+
+class MeetFormation(BaseModel):
+    id: str
+    slug: str
+    label: str  # EMERGING TEAM | POSSIBLE FORMATION | FORMATION SIGNALS DETECTED — never "founded"
+    tier: str
+    score: int
+
+
+class MeetCard(BaseModel):
+    rank: int
+    priority: Literal["HIGH", "MEDIUM", "WATCH"]
+    confidence: Literal["HIGH CONFIDENCE", "MEDIUM CONFIDENCE", "EARLY SIGNAL"]
+    person: PersonCard
+    area: str  # thesis area, e.g. "AI · World models"
+    affiliation_line: str  # e.g. "DeepLethe (self-reported) · prev. NVIDIA"
+    why_person: list[str] = Field(default_factory=list)
+    why_now: list[EvidenceItem] = Field(default_factory=list)
+    what_changed: list[str] = Field(default_factory=list)
+    thesis_alignment: list[str] = Field(default_factory=list)
+    evidence_count: int = 0
+    formation: MeetFormation | None = None
+    brief_report_id: str | None = None
+    score: float = 0.0  # deterministic meet score (services.meet), 0..100
+    families: list[str] = Field(default_factory=list)  # independent source families behind the evidence
+
+
+class MeetFeed(BaseModel):
+    week: str  # ISO week 'YYYY-Www' (America/New_York)
+    generated_at: datetime | None = None  # when this week's ranking was computed (None: never computed)
+    as_of: date
+    people: list[MeetCard] = Field(default_factory=list)
+    history_weeks: list[str] = Field(default_factory=list)  # newest first
+
+
+class MeetingBriefRequest(BaseModel):
+    person_id: str = Field(max_length=200)  # UUID or slug
+    force: bool = False  # regenerate even if a brief exists
