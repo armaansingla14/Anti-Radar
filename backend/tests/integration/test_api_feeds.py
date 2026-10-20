@@ -393,3 +393,97 @@ def test_radar_feed_live_as_of_fields(seeded, client):
     assert feed["data_as_of"] == "2026-10-06" and feed["is_snapshot"] is False
     assert feed["snapshot_age_days"] is None
     assert all(c["data_age"] and "updated_at" in c["data_age"] for c in feed["cards"] + feed["founders"])
+
+
+# ── trust fields on cards (M4) ───────────────────────────────────────────────
+
+
+def test_cards_carry_confidence_why_now_and_collision_v2(seeded, client):
+    feed = client.get("/api/radar", params=DEMO).json()
+    allowed = {"HIGH CONFIDENCE", "MEDIUM CONFIDENCE", "EARLY SIGNAL"}
+    for c in feed["cards"] + feed["founders"]:
+        assert c["confidence"] in allowed
+        assert 0 <= c["sources_count"] <= 6
+        if c["confidence"] == "HIGH CONFIDENCE":
+            assert c["sources_count"] >= 3
+        elif c["confidence"] == "MEDIUM CONFIDENCE":
+            assert c["sources_count"] == 2 or c["sources_count"] >= 3
+        else:
+            assert c["sources_count"] <= 2
+        if c["recent_change"] is not None:
+            assert c["why_now_sentence"]
+        col = c["collision"]
+        if col:
+            assert col["strength"] in ("HIGH", "MEDIUM", "LOW") and col["sentence"]
+            assert len(col["family_labels"]) == len(col["families"])
+            assert set(col["family_labels"]) <= {"GitHub", "Research", "Hiring", "Web", "Community", "Social",
+                                                 "Manual"}
+        gap = c["attention_gap"]
+        if gap:
+            assert gap["explanation"].startswith("Technical momentum")
+            assert gap["technical_score"] == gap["technical"]
+            if gap["attention_score"] is None:
+                assert gap["gap_points"] is None and "no gap claimed" in gap["explanation"]
+            if not gap["social_available"]:
+                assert "social attention unavailable" in gap["explanation"]
+    halcyon = feed["cards"][0]
+    assert halcyon["why_now_sentence"] and halcyon["recent_change"]
+    assert halcyon["confidence"] != "EARLY SIGNAL"
+
+
+# ── /api/daily/v2 ────────────────────────────────────────────────────────────
+
+V2_SECTIONS = ("what_changed", "people", "formations", "companies_accelerating", "research", "strange_signals",
+               "watchlist_changes")
+
+
+def test_daily_v2_sections_carry_why_now_time_sources_confidence(seeded, client):
+    _as_live_history()
+    r = client.get("/api/daily/v2", params=DEMO)
+    assert r.status_code == 200
+    d = r.json()
+    since = _ts(d["since"])
+    assert abs((clock.now() - timedelta(hours=24) - since).total_seconds()) < 120  # same window as /daily
+    assert d["data_as_of"] == "2026-10-06" and d["summary"]["generator"] == "template"
+    for k in V2_SECTIONS:
+        for i in d[k]:
+            assert i["headline"] and i["why_now"], (k, i)
+            assert i["confidence"] in ("HIGH CONFIDENCE", "MEDIUM CONFIDENCE", "EARLY SIGNAL")
+            assert i["sources"], (k, i["headline"])
+            assert "at" in i
+    assert all(d[k] for k in ("what_changed", "people", "formations", "companies_accelerating", "research",
+                              "strange_signals"))
+    assert len(d["what_changed"]) <= 8 and len({i["kind"] for i in d["what_changed"]}) >= 3
+    assert any(s["source_url"] for i in d["people"] for s in i["sources"])
+    companies = d["companies_accelerating"]
+    assert "Tessellate Compute" not in {i["entity"]["name"] for i in companies}  # score fell, not accelerating
+    assert all((i["delta"] or 0) > 0 or "accelerating" in i["headline"] for i in companies)
+    with session_scope() as s:
+        for i in d["people"]:
+            for src in i["sources"]:
+                if src["signal_id"]:
+                    assert s.get(Signal, uuid.UUID(src["signal_id"])) is not None
+    # the old shape is unchanged
+    old = client.get("/api/daily", params=DEMO).json()
+    assert {"founders", "companies", "papers", "strange_signals", "watchlist_changes", "new_entities"} <= set(old)
+
+
+def test_daily_v2_since_and_watchlist(seeded, client):
+    assert client.get("/api/daily/v2", params={"since": "2099-01-01T00:00:00Z"}).status_code == 422
+    explicit = (clock.now() - timedelta(days=3)).replace(microsecond=0)
+    d = client.get("/api/daily/v2", params={**DEMO, "since": explicit.isoformat()}).json()
+    assert _ts(d["since"]) == explicit
+    with session_scope() as s:
+        halcyon = s.scalar(select(Company).where(Company.slug == "halcyon-dynamics"))
+        u = User(name="Anti Fund")
+        s.add(u)
+        s.flush()
+        wl = Watchlist(user_id=u.id, name="Default")
+        s.add(wl)
+        s.flush()
+        s.add(WatchlistItem(watchlist_id=wl.id, entity_type="company", entity_id=halcyon.id,
+                            last_seen_at=clock.now() - timedelta(days=10)))
+    d = client.get("/api/daily/v2", params=DEMO).json()
+    w = d["watchlist_changes"]
+    assert len(w) == 1 and w[0]["entity"]["slug"] == "halcyon-dynamics" and w[0]["label"] == "WATCHLIST"
+    assert "new engineering role" in w[0]["why_now"] and w[0]["sources"] and w[0]["at"]

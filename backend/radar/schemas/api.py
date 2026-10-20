@@ -11,9 +11,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Epistemic = Literal["FACT", "INFERENCE", "MODEL_OPINION"]
+Confidence = Literal["HIGH CONFIDENCE", "MEDIUM CONFIDENCE", "EARLY SIGNAL"]
+CollisionStrength = Literal["HIGH", "MEDIUM", "LOW"]
 Verification = Literal["VERIFIED", "INFERRED", "UNKNOWN"]
 EntityKind = Literal["company", "person", "repository", "paper"]
 
@@ -48,16 +50,69 @@ class AttentionGap(BaseModel):
     flagged: bool
     coverage: Literal["good", "partial", "low"]
     sources: list[dict[str, Any]]  # [{key, label, available: bool, value, percentile, note}]
+    # Attention Gap 2.0 — explicit numbers + a deterministic "why" (scoring/attention.py).
+    technical_score: float = 0.0  # 0..100 technical momentum (= technical)
+    attention_score: float | None = None  # 0..100 public attention; None = unmeasured (never zero)
+    gap_points: float | None = None  # Attention Gap component points; None when no gap is claimed / unknown
+    explanation: str = ""  # "Technical momentum 88 vs public attention 29 — repo acceleration … "
+    social_available: bool = False  # False when X / social attention could not be measured
+    unavailable: list[str] = Field(default_factory=list)  # labels of unmeasured attention sources
+
+    @model_validator(mode="before")
+    @classmethod
+    def _v2_fields(cls, data: Any) -> Any:
+        """Snapshots stored before Attention Gap 2.0 carry only technical/attention/sources: derive the
+        rest from them (gap_points stays None — it is not reconstructable from the stored dict)."""
+        if not isinstance(data, dict):
+            return data
+        from radar.scoring.attention import gap_explanation, social_available, unavailable_sources
+
+        d = dict(data)
+        sources = d.get("sources") or []
+        d.setdefault("technical_score", d.get("technical") or 0.0)
+        d.setdefault("attention_score", d.get("attention"))
+        if d.get("attention") is None:
+            d["gap_points"] = None
+        if not d.get("explanation"):
+            d["explanation"] = gap_explanation(float(d.get("technical") or 0.0), d.get("attention"), sources,
+                                               d.get("drivers") or (), d.get("hn_threads"))
+        d.setdefault("social_available", social_available(sources))
+        d.setdefault("unavailable", unavailable_sources(sources))
+        return d
 
 
 class Collision(BaseModel):
     score: float  # 0..1
-    families: list[str]  # independent source families present in window
+    families: list[str]  # independent source families present in window (machine keys)
     window_days: int
     span_days: float | None
     signal_count: int
     evidence: list[EvidenceItem] = Field(default_factory=list)
     summary: str  # e.g. "4 independent sources within 18 days"
+    # Collision 2.0 (scoring/collision.py)
+    strength: CollisionStrength = "LOW"  # HIGH: >=3 families & score>=0.7; MEDIUM: >=2 families or >=0.5
+    family_labels: list[str] = Field(default_factory=list)  # GitHub, Research, Hiring, Web, Community, Social
+    sentence: str = ""  # "4 independent sources within 17 days"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _v2_fields(cls, data: Any) -> Any:
+        """Derive strength / labels / sentence for snapshots stored before Collision 2.0."""
+        if not isinstance(data, dict):
+            return data
+        from radar.scoring.collision import collision_sentence, collision_strength, family_labels
+
+        d = dict(data)
+        fams = list(d.get("families") or [])
+        ev = [e if isinstance(e, dict) else getattr(e, "model_dump", lambda: {})() for e in d.get("evidence") or []]
+        if not d.get("strength"):
+            d["strength"] = collision_strength(len(fams), float(d.get("score") or 0.0))
+        if not d.get("family_labels"):
+            d["family_labels"] = family_labels(fams, ev)
+        if not d.get("sentence"):
+            d["sentence"] = collision_sentence(len(fams), d.get("span_days"), int(d.get("signal_count") or 0),
+                                               d["family_labels"], int(d.get("window_days") or 0))
+        return d
 
 
 class AntiScore(BaseModel):
@@ -247,6 +302,11 @@ class IntelCard(BaseModel):
     is_demo: bool = False
     data_note: str | None = None  # e.g. "Real data captured 2026-10-06"
     data_age: DataAge | None = None  # light: updated_at only
+    # Trust (M4): deterministic, from independent families + evidence (services.presenters.confidence_for)
+    confidence: Confidence = "EARLY SIGNAL"
+    why_now_sentence: str = ""  # one line from the strongest dated evidence; "" when nothing is dated
+    recent_change: str | None = None  # newest dated change in plain words; None when nothing is dated
+    sources_count: int = 0  # independent source families behind the evidence
 
 
 class CompanySummary(BaseModel):
@@ -342,6 +402,8 @@ class PersonDetail(BaseModel):
     watched: bool = False
     data_note: str | None = None
     data_age: DataAge | None = None
+    # Stored relationships (relationships table) touching this person; VERIFIED / INFERRED as stored.
+    relationships: list[RelationshipOut] = Field(default_factory=list)
 
 
 # ── Feeds ────────────────────────────────────────────────────────────────────
@@ -521,7 +583,8 @@ class FeedbackRequest(BaseModel):
     entity_type: EntityKind
     entity_id: str
     label: Literal[
-        "useful", "not_interesting", "too_obvious", "too_early", "wrong_thesis", "bad_data", "already_known", "dismiss"
+        "useful", "not_interesting", "too_obvious", "too_early", "wrong_thesis", "bad_data", "already_known", "dismiss",
+        "interesting", "strong_founder", "interesting_shift", "weak_team",
     ]
     note: str | None = Field(default=None, max_length=2000)
 

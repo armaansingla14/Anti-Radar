@@ -458,8 +458,16 @@ def build_company_features(
             for r in repos
         )
 
-        ids = [c.id, *ser.keys(), *(cp.person_id for cp in links)]
-        signals = index.for_entities(ids)
+        # The company's own signals (on it, its repos, or explicitly linked to them) plus signals *about*
+        # its linked people. A person's 'related' links (e.g. a new contributor to another org's repo)
+        # are about that other org and must not leak into this company's evidence.
+        pids = {cp.person_id for cp in links}
+        signals = index.for_entities([c.id, *ser.keys()])
+        if pids:
+            own_ids = {s.id for s in signals}
+            signals = sorted([*signals, *(s for s in index.for_entities(pids)
+                                          if s.entity_id in pids and s.id not in own_ids)],
+                             key=lambda s: s.event_at, reverse=True)
         # Per repo: the provider's first-commit-based count if fresh, else a delta on one consistent series.
         new_contributors = sum_known(
             sig if (sig := latest_new_contributors_signal(signals, r.id, day)) is not None
@@ -637,11 +645,188 @@ def talent_tiers() -> dict[str, int]:
     return _TALENT_TIERS
 
 
+_TALENT_HINTS: dict[str, list[str]] | None = None
+
+
+def talent_theme_hints() -> dict[str, list[str]]:
+    """GitHub org login (lowercase) -> thesis themes (``theme_hint``) from config/talent_sources.yaml."""
+    global _TALENT_HINTS
+    if _TALENT_HINTS is None:
+        import yaml
+
+        out: dict[str, list[str]] = {}
+        try:
+            with open(talent_sources_path()) as f:
+                data = yaml.safe_load(f) or {}
+            lists = [data] if isinstance(data, list) else [v for v in data.values() if isinstance(v, list)]
+            for row in (row for lst in lists for row in lst):
+                if isinstance(row, dict) and row.get("org") and isinstance(row.get("theme_hint"), list):
+                    out[str(row["org"]).lower()] = [str(t) for t in row["theme_hint"] if t]
+        except (OSError, ValueError, AttributeError, TypeError, yaml.YAMLError):
+            out = {}
+        _TALENT_HINTS = out
+    return _TALENT_HINTS
+
+
 def person_lab_contributions(p: Person | None):
     """Verified lab contributions of ``p`` (``Person.attrs['lab_contributions']``), strongest first."""
     attrs = getattr(p, "attrs", None) or {}
     return parse_lab_contributions(attrs.get("lab_contributions") if isinstance(attrs, dict) else None,
                                    talent_tiers())
+
+
+# ── New-project quality (is a new repository formation evidence?) ────────────
+# A ``new_project`` signal (a person created a public repository) counts as formation evidence only when
+# the repository shows *traction* (stars / forks / other contributors) or, for a non-trivial repository by
+# someone who is not creating repositories in series, thesis-keyword *depth* (>= 2 thesis subcategories).
+# Trivial utility repositories ('*-stats', dotfiles, MCP wrappers, experiments ...) and serial hobby repos
+# (>= SERIAL_NEW_PROJECTS new repositories by one person in the window) need traction. Counts are the
+# latest observed (max of the signal's metadata at detection and the repositories row).
+NEW_PROJECT_TRACTION_STARS = 25
+NEW_PROJECT_TRACTION_FORKS = 5
+NEW_PROJECT_TRACTION_CONTRIBUTORS = 2  # contributors other than the owner (automation excluded)
+NEW_PROJECT_STRONG_STARS = 500  # stars at which traction strength saturates
+NEW_PROJECT_DEPTH_MATCHES = 2
+NEW_PROJECT_DEPTH_STRENGTH = 0.35
+SERIAL_NEW_PROJECTS = 7
+TRIVIAL_REPO_TOKENS = frozenset({
+    "stats", "dotfiles", "config", "configs", "notes", "scripts", "experiment", "experiments", "playground",
+    "sandbox", "test", "tests", "demo", "demos", "template", "templates", "starter", "homework", "tutorial",
+    "practice", "mcp", "blog", "homepage", "resume", "cv", "snippets", "utils", "scratch", "exercises",
+})
+
+
+@dataclass(frozen=True)
+class NewProjectQuality:
+    repo: str
+    stars: int
+    forks: int
+    contributors: int  # other than the owner
+    thesis_matches: tuple[str, ...]
+    serial: int  # new repositories by the same person in the window
+    age_days: int | None
+    counts: bool
+    traction: bool
+    strength: float  # 0..1 (0 when it does not count)
+    reason: str
+
+    @property
+    def url(self) -> str:
+        return f"https://github.com/{self.repo}"
+
+    def traction_text(self) -> str:
+        bits = [f"{self.stars:,} star{'s' if self.stars != 1 else ''}"]
+        if self.forks:
+            bits.append(f"{self.forks:,} fork{'s' if self.forks != 1 else ''}")
+        if self.contributors:
+            bits.append(f"{self.contributors} other contributor{'s' if self.contributors != 1 else ''}")
+        age = f" within {self.age_days} days of creation" if self.age_days is not None else ""
+        return ", ".join(bits) + age
+
+
+def trivial_repo_name(repo: str) -> str | None:
+    """The token that makes a repository name a trivial utility ('vllm-force-merge-stats' -> 'stats'), else None."""
+    import re
+
+    name = repo.rsplit("/", 1)[-1].lower()
+    for tok in re.split(r"[-_.\s]+", name):
+        if tok in TRIVIAL_REPO_TOKENS:
+            return tok
+    return None
+
+
+def assess_new_project(repo: str, *, stars: int = 0, forks: int = 0, contributors: int = 0,
+                       thesis_matches: Iterable[str] = (), serial: int = 1, age_days: int | None = None
+                       ) -> NewProjectQuality:
+    """Pure: does a new repository count as formation evidence (see the constants above)?"""
+    import math
+
+    matches = tuple(dict.fromkeys(str(m) for m in thesis_matches if m))
+    traction_bits = []
+    if stars >= NEW_PROJECT_TRACTION_STARS:
+        traction_bits.append(f"{stars} stars")
+    if forks >= NEW_PROJECT_TRACTION_FORKS:
+        traction_bits.append(f"{forks} forks")
+    if contributors >= NEW_PROJECT_TRACTION_CONTRIBUTORS:
+        traction_bits.append(f"{contributors} other contributors")
+    traction = bool(traction_bits)
+    trivial = trivial_repo_name(repo)
+    is_serial = serial >= SERIAL_NEW_PROJECTS
+
+    def q(counts: bool, strength: float, reason: str) -> NewProjectQuality:
+        return NewProjectQuality(repo, stars, forks, contributors, matches, serial, age_days, counts, traction,
+                                 round(strength if counts else 0.0, 4), reason)
+
+    if traction:
+        strength = 0.5 + 0.5 * min(1.0, math.log1p(max(stars, 0)) / math.log1p(NEW_PROJECT_STRONG_STARS))
+        return q(True, strength, "traction: " + ", ".join(traction_bits))
+    if trivial:
+        return q(False, 0.0, f"trivial utility repository ('{trivial}') without traction "
+                             f"(< {NEW_PROJECT_TRACTION_STARS} stars)")
+    if is_serial:
+        return q(False, 0.0, f"one of {serial} new repositories by the same person in the window, without "
+                             f"traction (< {NEW_PROJECT_TRACTION_STARS} stars)")
+    if len(matches) >= NEW_PROJECT_DEPTH_MATCHES:
+        return q(True, NEW_PROJECT_DEPTH_STRENGTH, f"thesis depth ({', '.join(matches)}), no traction yet")
+    return q(False, 0.0, f"no traction (< {NEW_PROJECT_TRACTION_STARS} stars) and thin thesis match "
+                         f"({', '.join(matches) or 'none'})")
+
+
+def assess_new_project_signals(session: Session, signals: Iterable[object], day: date | None = None
+                               ) -> dict[uuid.UUID, NewProjectQuality]:
+    """{signal id: quality} for ``new_project`` signals (``Signal`` or ``SignalLite`` with ``meta``); batched.
+
+    ``serial`` is the number of distinct new repositories the same person has among ``signals`` (or the
+    provider's ``new_repos_in_window`` when larger)."""
+    from radar.providers.github import is_bot
+
+    sigs = [s for s in signals if getattr(s, "signal_type", None) == "new_project"]
+    if not sigs:
+        return {}
+
+    def repo_of(s: object) -> str:
+        meta = getattr(s, "meta", None) or {}
+        r = str(meta.get("repo") or "")
+        if not r:
+            title = str(getattr(s, "title", "") or "")
+            r = title.rsplit(": ", 1)[-1].strip() if ": " in title else title
+        return r
+
+    by_person: dict[object, set[str]] = defaultdict(set)
+    for s in sigs:
+        by_person[getattr(s, "entity_id", None)].add(repo_of(s).lower())
+    names = sorted({repo_of(s).lower() for s in sigs if repo_of(s)})
+    stats: dict[str, tuple[int, int, int, datetime | None]] = {}
+    if names:
+        rows = list(session.scalars(select(Repository).where(func.lower(Repository.full_name).in_(names))))
+        others: dict[uuid.UUID, int] = defaultdict(int)
+        if rows:
+            owners = {r.id: (r.owner or "").lower() for r in rows}
+            for rid, login in session.execute(
+                select(RepoContributor.repository_id, Person.github_handle)
+                .join(Person, Person.id == RepoContributor.person_id)
+                .where(RepoContributor.repository_id.in_(list(owners)))
+            ).all():
+                if login and login.lower() != owners[rid] and not is_bot(login):
+                    others[rid] += 1
+        for r in rows:
+            stats[r.full_name.lower()] = (int(r.stars or 0), int(r.forks or 0), others.get(r.id, 0), r.gh_created_at)
+    out: dict[uuid.UUID, NewProjectQuality] = {}
+    for s in sigs:
+        meta = getattr(s, "meta", None) or {}
+        repo = repo_of(s)
+        st, fk, co, created = stats.get(repo.lower(), (0, 0, 0, None))
+        stars = max(st, int(meta.get("stars") or 0))
+        serial = max(len(by_person.get(getattr(s, "entity_id", None), ())), int(meta.get("new_repos_in_window") or 0))
+        created = created or getattr(s, "event_at", None)
+        from radar import clock
+
+        ref = day or clock.today()
+        age = (ref - created.date()).days if isinstance(created, datetime) else None
+        out[s.id] = assess_new_project(repo, stars=stars, forks=fk, contributors=co,  # type: ignore[attr-defined]
+                                       thesis_matches=meta.get("thesis_matches") or (), serial=serial,
+                                       age_days=age if age is None or age >= 0 else None)
+    return out
 
 
 def tier_phrase(t: AffiliationTier) -> str | None:
@@ -743,6 +928,10 @@ def build_person_features(
     topics = _topics(session, pids + key_ids + [p.id for ps in papers.values() for p in ps])
 
     young_cut = day - timedelta(days=YOUNG_ORG_DAYS)
+    # New repositories count as formation evidence only with traction or thesis depth (assess_new_project).
+    projects = assess_new_project_signals(
+        session, {x.id: x for sigs in index.by_entity.values() for x in sigs.values()
+                  if x.signal_type == "new_project"}.values(), day)
     out: list[PersonFeatures] = []
     for p in people:
         repos = owned.get(p.id, [])
@@ -757,7 +946,8 @@ def build_person_features(
         transition = [s.id for s in own if s.signal_type in TRANSITION_SIGNAL_TYPES]
         events = [s for s in own if s.signal_type in FORMATION_EVENT_TYPES and s.entity_id == p.id]
         new_projects = list(dict.fromkeys(
-            str((s.meta or {}).get("repo") or s.title) for s in events if s.signal_type == "new_project"))
+            str((s.meta or {}).get("repo") or s.title) for s in events if s.signal_type == "new_project"
+            and (q := projects.get(s.id)) is not None and q.counts))
         joined_orgs = [str((s.meta or {}).get("org") or s.title) for s in events
                        if s.signal_type == "joined_young_org"]
         clusters = list(dict.fromkeys(s.title for s in own if s.signal_type == LAB_ALUMNI_CLUSTER))

@@ -1,4 +1,9 @@
-"""Official X API v2 provider (bearer-token, read-only endpoints)."""
+"""Official X API v2 provider (bearer-token, read-only endpoints).
+
+Rate-limit aware: every response's ``x-rate-limit-remaining`` / ``x-rate-limit-reset`` headers are
+recorded; once the remaining quota hits 0 (or the API answers 429) the provider makes no further
+calls this run and reports when the window resets. Stopping on a limit is not an error.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +18,12 @@ from radar.providers.x.base import XPost, XUser, post_url, valid_handle
 
 API = "https://api.x.com/2"
 USER_FIELDS = "description,public_metrics,created_at,url,location"
+SEARCH_USER_FIELDS = "username,name,description,public_metrics"  # only what a person record needs
 TWEET_FIELDS = "created_at,public_metrics,author_id"
 
 
-class XApiProvider:
-    """X API v2 client. On HTTP 429 it records the limit and makes no further calls this run."""
+class OfficialXProvider:
+    """X API v2 client. On HTTP 429 or an exhausted quota it records the limit and makes no further calls."""
 
     name = "x"
 
@@ -27,6 +33,8 @@ class XApiProvider:
         self.rate_limited_until: datetime | None = None
         self.rate_limited = False
         self.last_error: str | None = None
+        self.rate_limit_remaining: int | None = None
+        self.requests = 0
         self._users: dict[str, XUser] = {}
 
     def enabled(self) -> tuple[bool, str]:
@@ -35,17 +43,31 @@ class XApiProvider:
             return False, f"X API rate limit reached; paused until {until}"
         return True, "official X API v2"
 
+    def _note_reset(self, headers: Any) -> None:
+        reset = headers.get("x-rate-limit-reset")
+        if reset and reset.isdigit():
+            self.rate_limited_until = datetime.fromtimestamp(int(reset), tz=UTC)
+
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any] | None:
         if self.rate_limited:
             return None
         resp = self.client.get(f"{API}{path}", params=params, headers=self._auth)
+        self.requests += 1
+        remaining = resp.headers.get("x-rate-limit-remaining")
+        if remaining and remaining.isdigit():
+            self.rate_limit_remaining = int(remaining)
+            self.client.stats.rate_limit_remaining = int(remaining)
         if resp.status_code == 429:
+            # A handled condition (clean stop), not a failed request.
+            self.client.stats.errors = max(0, self.client.stats.errors - 1)
             self.rate_limited = True
-            reset = resp.headers.get("x-rate-limit-reset")
-            if reset and reset.isdigit():
-                self.rate_limited_until = datetime.fromtimestamp(int(reset), tz=UTC)
+            self._note_reset(resp.headers)
             self.last_error = "rate limited (429)"
             return None
+        if self.rate_limit_remaining == 0:
+            # Quota exhausted by this call: keep its data, make no further calls this run.
+            self.rate_limited = True
+            self._note_reset(resp.headers)
         if resp.status_code >= 400:
             self.last_error = f"HTTP {resp.status_code} for {path}"
             return None
@@ -106,23 +128,38 @@ class XApiProvider:
         return [p for p in posts if p][:limit]
 
     def search_recent(self, query: str, limit: int = 20) -> list[XPost]:
-        body = self._get(
-            "/tweets/search/recent",
-            {
-                "query": query,
-                "max_results": max(10, min(100, limit)),
-                "tweet.fields": TWEET_FIELDS,
-                "expansions": "author_id",
-                "user.fields": "username",
-            },
-        )
+        return self.search_recent_with_authors(query, limit)[0]
+
+    def search_recent_with_authors(
+        self, query: str, limit: int = 20, *, start_time: datetime | None = None
+    ) -> tuple[list[XPost], dict[str, XUser]]:
+        """Recent search → (posts, author username (lowercase) → XUser). Posts whose author is not in
+        the response's user expansion are dropped (never guess an author)."""
+        params: dict[str, Any] = {
+            "query": query,
+            "max_results": max(10, min(100, limit)),
+            "tweet.fields": TWEET_FIELDS,
+            "expansions": "author_id",
+            "user.fields": SEARCH_USER_FIELDS,
+        }
+        if start_time is not None:
+            params["start_time"] = start_time.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        body = self._get("/tweets/search/recent", params)
         if not body:
-            return []
-        authors = {u["id"]: u["username"] for u in (body.get("includes") or {}).get("users") or []}
+            return [], {}
+        users_by_id: dict[str, XUser] = {}
+        for u in (body.get("includes") or {}).get("users") or []:
+            if u.get("id") and valid_handle(str(u.get("username") or "")):
+                users_by_id[str(u["id"])] = self._user(u)
         out: list[XPost] = []
         for d in body.get("data") or []:
-            username = authors.get(d.get("author_id"))
-            post = self._post(d, username) if username else None  # never guess an author
+            user = users_by_id.get(str(d.get("author_id")))
+            post = self._post(d, user.username) if user else None  # never guess an author
             if post:
                 out.append(post)
-        return out[:limit]
+        authors = {u.username.lower(): u for u in users_by_id.values()}
+        return out[:limit], authors
+
+
+# Backwards-compatible name (V1).
+XApiProvider = OfficialXProvider

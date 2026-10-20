@@ -64,6 +64,19 @@ export interface AttentionGap {
   flagged: boolean;
   coverage: "good" | "partial" | "low";
   sources: AttentionGapSource[];
+  // ── Attention Gap 2.0 (absent on older backends) ──
+  /** Technical momentum, 0..100. */
+  technical_score?: number;
+  /** Public attention, 0..100; null = unmeasured (never read as 0). */
+  attention_score?: number | null;
+  /** technical − attention; null when attention is unmeasured. */
+  gap_points?: number | null;
+  /** Plain-English reading of the gap. */
+  explanation?: string;
+  /** Whether any social (X) attention source was measured. */
+  social_available?: boolean;
+  /** Labels of attention sources that could not be measured. */
+  unavailable?: string[];
 }
 
 export interface Collision {
@@ -74,7 +87,15 @@ export interface Collision {
   signal_count: number;
   evidence: EvidenceItem[];
   summary: string;
+  // ── Collision 2.0 (absent on older backends) ──
+  strength?: CollisionStrength;
+  /** Display families: GitHub, Research, Hiring, Web, Community, Social. */
+  family_labels?: string[];
+  /** "4 independent sources within 17 days". */
+  sentence?: string;
 }
+
+export type CollisionStrength = "HIGH" | "MEDIUM" | "LOW";
 
 export interface AntiScore {
   total: number;
@@ -278,7 +299,17 @@ export interface IntelCard {
   data_note: string | null;
   /** Light: updated_at only. */
   data_age?: DataAge | null;
+  // ── WHY NOW first (absent on older backends) ──
+  confidence?: Confidence;
+  /** One sentence: why this surfaced now. */
+  why_now_sentence?: string;
+  /** The most recent dated change, e.g. "Released v0.1.0-rc9 on Oct 11". */
+  recent_change?: string | null;
+  /** Distinct sources behind the card. */
+  sources_count?: number;
 }
+
+export type Confidence = "HIGH CONFIDENCE" | "MEDIUM CONFIDENCE" | "EARLY SIGNAL";
 
 export interface CompanySummary {
   id: string;
@@ -381,6 +412,8 @@ export interface PersonDetail {
   watched: boolean;
   data_note: string | null;
   data_age?: DataAge | null;
+  /** Stored relationships (relationships table); VERIFIED / INFERRED exactly as stored, bots excluded. */
+  relationships?: RelationshipOut[];
 }
 
 // ── Feeds ────────────────────────────────────────────────────────────────────
@@ -510,6 +543,65 @@ export interface ThesisMap {
   generated_at: ISODateTime;
 }
 
+// ── Home (GET /api/home; backend schemas/feeds_v2.py) ───────────────────────
+
+export interface HomeSummary {
+  updated_at: ISODateTime | null;
+  data_as_of: ISODate | null;
+  is_snapshot: boolean;
+  snapshot_age_days: number | null;
+  possible_formations: number;
+  people_to_meet: number;
+  companies_accelerating: number;
+  signal_collisions: number;
+  strange_signals: number;
+}
+
+export type ChangeKind = "formation" | "person" | "company" | "collision" | "strange" | "research";
+
+export interface ChangeEntity {
+  type: string;
+  id: string;
+  slug: string | null;
+  name: string;
+}
+
+export interface ChangeItem {
+  kind: ChangeKind | string;
+  headline: string;
+  why_now: string;
+  entity: ChangeEntity | null;
+  evidence: EvidenceItem[];
+  confidence: Confidence | string | null;
+  at: ISODateTime | null;
+  /** Display tag, e.g. "POSSIBLE FORMATION", "HIGH COLLISION". */
+  label?: string | null;
+  is_demo?: boolean;
+}
+
+export interface HomeFeed {
+  summary: HomeSummary;
+  /** ≤ 8 */
+  what_changed: ChangeItem[];
+  /** ≤ 3 */
+  formations: FormationCard[];
+  /** ≤ 5 */
+  people_to_meet: MeetCard[];
+  /** ≤ 6 */
+  companies: IntelCard[];
+  /** ≤ 3 */
+  strange_signals: StrangeSignal[];
+  /** "top_ranked" when no company is measurably accelerating (companies are then the top-ranked ones). */
+  companies_basis?: "accelerating" | "top_ranked";
+  companies_note?: string | null;
+  /** Active window filter. */
+  new?: HomeWindow | null;
+  demo_mode?: boolean;
+  snapshot_note?: string | null;
+}
+
+export type HomeWindow = "today" | "week";
+
 // ── Search ───────────────────────────────────────────────────────────────────
 
 export type SearchSort = "score" | "momentum" | "attention_gap" | "recent" | "delta";
@@ -569,7 +661,12 @@ export type FeedbackLabel =
   | "wrong_thesis"
   | "bad_data"
   | "already_known"
-  | "dismiss";
+  | "dismiss"
+  // v2
+  | "interesting"
+  | "strong_founder"
+  | "interesting_shift"
+  | "weak_team";
 
 export interface FeedbackRequest {
   entity_type: EntityKind;

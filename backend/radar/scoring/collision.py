@@ -31,6 +31,30 @@ FAMILY_OF_SOURCE: dict[str, str] = {
     "x": "x",
     "manual": "manual",
 }
+# Display names for source families (UI / sentences). "hiring/web" is one *independent* family
+# (a company's own website and its job board are not independent of each other); it is labeled by
+# the source that actually contributed: jobs -> Hiring, website -> Web.
+FAMILY_LABEL: dict[str, str] = {
+    "github": "GitHub",
+    "arxiv": "Research",
+    "hackernews": "Community",
+    "x": "Social",
+    "manual": "Manual",
+    "hiring/web": "Hiring",
+}
+SOURCE_LABEL: dict[str, str] = {
+    "github": "GitHub",
+    "arxiv": "Research",
+    "jobs": "Hiring",
+    "hiring": "Hiring",
+    "website": "Web",
+    "hackernews": "Community",
+    "x": "Social",
+    "manual": "Manual",
+}
+STRENGTH_HIGH_FAMILIES, STRENGTH_HIGH_SCORE = 3, 0.7
+STRENGTH_MEDIUM_FAMILIES, STRENGTH_MEDIUM_SCORE = 2, 0.5
+COLLISION_THESIS_FLOOR = 0.4  # ranking weight of a fully off-thesis collision (vs 1.0 on-thesis)
 FAMILY_PRESENT_MIN = 0.15  # a family counts as "present" above this noisy-OR strength
 DEFAULT_STRENGTH = 0.5
 MAX_EVIDENCE = 10
@@ -57,6 +81,65 @@ def number_word(n: int, capitalize: bool = False) -> str:
     return w.capitalize() if capitalize else w
 
 
+def collision_strength(n_families: int, score: float) -> str:
+    """HIGH: >= 3 independent families and score >= 0.7; MEDIUM: >= 2 families or score >= 0.5; else LOW."""
+    if n_families >= STRENGTH_HIGH_FAMILIES and score >= STRENGTH_HIGH_SCORE:
+        return "HIGH"
+    if n_families >= STRENGTH_MEDIUM_FAMILIES or score >= STRENGTH_MEDIUM_SCORE:
+        return "MEDIUM"
+    return "LOW"
+
+
+def family_label(family: str, source_types: list[str] | tuple[str, ...] = ()) -> str:
+    """Human family name. For the merged ``hiring/web`` family the contributing sources decide:
+    any job posting -> Hiring, website only -> Web."""
+    if family == "hiring/web":
+        srcs = set(source_types)
+        if "website" in srcs and not srcs & {"jobs", "hiring"}:
+            return "Web"
+        return "Hiring"
+    return FAMILY_LABEL.get(family) or SOURCE_LABEL.get(family) or family.replace("_", " ").title()
+
+
+def family_labels(families: list[str], evidence: list[dict[str, Any]] | None = None) -> list[str]:
+    """Labels in family order; ``evidence`` (dicts with ``source_type``) disambiguates hiring/web."""
+    srcs = [str(e.get("source_type")) for e in (evidence or []) if e.get("source_type")]
+    out: list[str] = []
+    for f in families:
+        fam_srcs = [x for x in srcs if FAMILY_OF_SOURCE.get(x) == f] if f == "hiring/web" else []
+        lab = family_label(f, fam_srcs)
+        if lab not in out:
+            out.append(lab)
+    return out
+
+
+def collision_sentence(n_families: int, span_days: float | None, signal_count: int,
+                       labels: list[str], window_days: int) -> str:
+    """'4 independent sources within 17 days' / 'One source (GitHub): 3 signals in 45 days' /
+    'No recent independent signals'."""
+    if n_families >= 2:
+        return f"{n_families} independent sources within {max(1, round(span_days or 0))} days"
+    if n_families == 1:
+        lab = labels[0] if labels else "one family"
+        return (f"One source ({lab}): {signal_count} signal{'s' if signal_count != 1 else ''} "
+                f"in {window_days} days")
+    return "No recent independent signals"
+
+
+def collision_rank_weight(col: Any, thesis_fit_ratio: float | None) -> float:
+    """Ranking-time weight of a collision: its score scaled by thesis fit (0..1 of max).
+
+    An off-thesis collision keeps ``COLLISION_THESIS_FLOOR`` of its weight; an unknown fit counts as
+    off-thesis (no fit is not evidence of fit). Accepts a Collision model, a CollisionResult or the
+    stored dict; None -> 0."""
+    if col is None:
+        return 0.0
+    score = col.get("score") if isinstance(col, dict) else getattr(col, "score", None)
+    score = min(max(float(score or 0.0), 0.0), 1.0)
+    fit = min(max(float(thesis_fit_ratio or 0.0), 0.0), 1.0)
+    return round(score * (COLLISION_THESIS_FLOOR + (1 - COLLISION_THESIS_FLOOR) * fit), 4)
+
+
 @dataclass
 class CollisionResult:
     score: float
@@ -68,9 +151,31 @@ class CollisionResult:
     contributions: list[tuple[SignalLite, float]] = field(default_factory=list)
     summary: str = ""
 
+    @property
+    def strength(self) -> str:
+        return collision_strength(len(self.families), self.score)
+
+    @property
+    def family_labels(self) -> list[str]:
+        out: list[str] = []
+        for f in self.families:
+            srcs = [s.source_type for s, _ in self.contributions if FAMILY_OF_SOURCE.get(s.source_type) == f]
+            lab = family_label(f, srcs)
+            if lab not in out:
+                out.append(lab)
+        return out
+
+    @property
+    def sentence(self) -> str:
+        return collision_sentence(len(self.families), self.span_days, self.signal_count, self.family_labels,
+                                  self.window_days)
+
     def to_api(self) -> dict[str, Any]:
         """Collision-shaped dict (schemas/api.py)."""
         return {
+            "strength": self.strength,
+            "family_labels": self.family_labels,
+            "sentence": self.sentence,
             "score": round(self.score, 4),
             "families": self.families,
             "window_days": self.window_days,

@@ -213,15 +213,142 @@ def _top_mover(session: Session, companies: Sequence[Company], used: set[str]) -
             "entity_refs": [_ref("company", c)], "evidence": _ids(act[c.id]["signals"], 3)}
 
 
+def _backed(session: Session, refs: list[dict[str, Any]], wanted: Sequence[str], days: int = 90,
+            fallback: int = 3) -> list[str]:
+    """Signal ids backing a line, each verifiably about an entity in ``refs``.
+
+    ``wanted`` ids on (or linked to) a ref are kept. A wanted signal recorded on another entity (e.g. the
+    repository a person contributes to) is kept too, and that entity is appended to ``refs`` so the line
+    names what the evidence is about. With nothing wanted, the newest ``fallback`` signals on the refs."""
+    from radar.models import Signal
+
+    ids = [uuid.UUID(r["id"]) for r in refs if r.get("type") in ("company", "person", "repository")]
+    act = signal_activity(session, ids, clock.now() - timedelta(days=days))
+    on_refs = {str(s.id): s for a in act.values() for s in a["signals"]}
+    keep = [sid for sid in dict.fromkeys(wanted) if sid in on_refs]
+    others = [sid for sid in dict.fromkeys(wanted) if sid not in on_refs]
+    if others:
+        uids = []
+        for sid in others:
+            try:
+                uids.append(uuid.UUID(sid))
+            except ValueError:
+                continue
+        sigs = list(session.scalars(select(Signal).where(Signal.id.in_(uids)))) if uids else []
+        known = {r["id"] for r in refs}
+        repo_ids = [s.entity_id for s in sigs if s.entity_type == "repository"]
+        comp_ids = [s.entity_id for s in sigs if s.entity_type == "company"]
+        repos = {r.id: r for r in session.scalars(select(Repository).where(Repository.id.in_(repo_ids)))} \
+            if repo_ids else {}
+        comps = {c.id: c for c in session.scalars(select(Company).where(Company.id.in_(comp_ids)))} \
+            if comp_ids else {}
+        for sig in sigs:
+            ent = repos.get(sig.entity_id) or comps.get(sig.entity_id)
+            if ent is None:
+                continue
+            if str(ent.id) not in known:
+                refs.append(_ref("repository" if isinstance(ent, Repository) else "company", ent))
+                known.add(str(ent.id))
+            keep.append(str(sig.id))
+    if keep:
+        return keep
+    newest = sorted(on_refs.values(), key=lambda s: s.event_at, reverse=True)
+    return [str(s.id) for s in newest[:fallback]]
+
+
+def _formation(session: Session, include_demo: bool) -> dict[str, Any] | None:
+    """The strongest recently active formation candidate (tier first, then score)."""
+    from sqlalchemy import case
+
+    from radar.models import FormationCandidate
+    from radar.services import formation as F
+    from radar.services import home as H
+
+    lo = clock.now() - timedelta(days=H.RECENT_DAYS)
+    q = select(FormationCandidate).where(FormationCandidate.latest_activity_at >= lo)
+    if not include_demo:
+        q = q.where(FormationCandidate.is_demo.is_(False))
+    tier_rank = case({"high": 0, "emerging": 1}, value=FormationCandidate.tier, else_=2)
+    row = session.scalar(q.order_by(tier_rank, FormationCandidate.score.desc(), FormationCandidate.slug).limit(1))
+    if row is None:
+        return None
+    card = F.formation_cards(session, [row])[0]
+    anchor_ref = {"type": card.anchor.type, "id": card.anchor.id, "slug": card.anchor.slug,
+                  "name": card.anchor.name, "is_demo": card.is_demo}
+    member_refs = [{"type": "person", "id": m.id, "slug": m.slug, "name": m.name, "is_demo": m.is_demo}
+                   for m in card.members[:3]]
+    refs = [anchor_ref] + [r for r in member_refs if r["id"] != anchor_ref["id"]]
+    ev = _backed(session, refs, [e.signal_id for e in card.why_now if e.signal_id])
+    n = len(card.members)
+    who = (f"{_num(n).lower()} people ({', '.join(m.name for m in card.members[:3])}"
+           f"{', …' if n > 3 else ''}) active around {card.anchor.name}") if card.kind == "team" and n >= 2 \
+        else f"{card.members[0].name if card.members else card.anchor.name}"
+    lead = card.why_now[0].title if card.why_now else (
+        f"{card.independent_signals} signals from {', '.join(H.family_names(card.families)) or 'one source'}")
+    return {"text": f"{card.label.capitalize()} (score {card.score}): {who} — {lead}.",
+            "entity_refs": refs, "evidence": ev,
+            "importance": FOCUS_BONUS + H.TIER_WEIGHT.get(card.tier, 0.5) + card.score / 400}
+
+
+def _meet(session: Session, include_demo: bool) -> dict[str, Any] | None:
+    """The top of this week's meet list (up to two people)."""
+    from radar.services import home as H
+    from radar.services import meet
+
+    cards = meet.meet_feed(session, "current", include_demo=include_demo).people[:2]
+    if not cards:
+        return None
+    parts, refs, wanted, whys = [], [], [], set()
+    for c in cards:
+        p = c.person
+        why = c.what_changed[0] if c.what_changed else (c.why_now[0].title if c.why_now else
+                                                       (c.why_person[0] if c.why_person else ""))
+        if why in whys:
+            why = c.why_person[0] if c.why_person and c.why_person[0] not in whys else ""
+        whys.add(why)
+        area = f", {c.area}" if c.area and c.area != "Unclassified" else ""
+        parts.append(f"{p.name} ({c.priority.lower()} priority{area}{'; ' + why if why else ''})")
+        refs.append({"type": "person", "id": p.id, "slug": p.slug, "name": p.name, "is_demo": p.is_demo})
+        wanted += [e.signal_id for e in c.why_now if e.signal_id]
+    ev = _backed(session, refs, wanted)
+    return {"text": "Worth meeting this week: " + "; ".join(parts) + ".", "entity_refs": refs, "evidence": ev,
+            "importance": FOCUS_BONUS + H.PRIORITY_WEIGHT.get(cards[0].priority, 0.5)
+            + H.CONF_BONUS.get(cards[0].confidence, 0)}
+
+
+# Formation-first product: formation and meet lines get a bonus over aggregate lines of similar weight.
+FOCUS_BONUS = 0.15
+# Fixed importance of the remaining candidate lines (formation / meet / strange carry their own).
+_IMPORTANCE = {"theme": 0.7, "founders": 0.6, "velocity": 0.55, "hiring": 0.5}
+
+
 def what_changed(session: Session, *, include_demo: bool, strange: StrangeSignal | None) -> list[BriefItem]:
+    """Top MAX_ITEMS things worth knowing, ranked by importance (formation tier, meet priority, strange
+    strength, fixed weights for aggregate lines); a line whose entities are all covered by a stronger
+    line is skipped; the week's top ANTI SCORE mover fills a free slot."""
     companies = candidate_companies(session, include_demo=include_demo)
     people = candidate_people(session, include_demo=include_demo, floor=0)
-    raw = [_theme_acceleration(session, companies), _founders_surfaced(session, people),
-           _github_velocity(session, include_demo), _hiring(session, companies), _strange(strange)]
-    items = [r for r in raw if r and r["evidence"]]
+    raw: list[tuple[float, dict[str, Any] | None]] = []
+    for r in (_formation(session, include_demo), _meet(session, include_demo)):
+        raw.append((r.pop("importance") if r else 0.0, r))
+    raw += [(_IMPORTANCE["theme"], _theme_acceleration(session, companies)),
+            (_IMPORTANCE["founders"], _founders_surfaced(session, people)),
+            (_IMPORTANCE["velocity"], _github_velocity(session, include_demo)),
+            (_IMPORTANCE["hiring"], _hiring(session, companies)),
+            (0.45 + 0.35 * strange.strength if strange else 0.0, _strange(strange))]
+    ranked = sorted(((imp, r) for imp, r in raw if r and r["evidence"]), key=lambda t: -t[0])
+    items: list[dict[str, Any]] = []
+    covered: set[str] = set()
+    for _imp, r in ranked:
+        ids = {ref["id"] for ref in r["entity_refs"]}
+        if ids and ids <= covered:
+            continue
+        items.append(r)
+        covered |= ids
+        if len(items) >= MAX_ITEMS:
+            break
     if len(items) < MAX_ITEMS:
-        used = {ref["id"] for r in items for ref in r["entity_refs"]}
-        mover = _top_mover(session, companies, used)
+        mover = _top_mover(session, companies, covered)
         if mover:
             items.append(mover)
     return [BriefItem(n=i, text=r["text"], entity_refs=r["entity_refs"], evidence=list(dict.fromkeys(r["evidence"])))
@@ -341,3 +468,74 @@ def morning_brief(session: Session, *, include_demo: bool | None = None) -> Morn
     return MorningBrief(date=day, generated_at=clock.now(), what_changed=items, founders_to_know=founders, companies_to_watch=companies,
                         research=research, strange_signal=strange, narrative=narrative, markdown=md,
                         generator=narrative.generator)
+
+
+# ── stored briefs (history) ──────────────────────────────────────────────────
+#
+# The sweep's "brief" step (ops.persist_morning_brief) stores one ResearchReport(kind='morning_brief')
+# per day with body = MorningBrief JSON (body.date = the day). History is read-only: a day with no
+# stored brief is reported as such and never generated retroactively.
+
+ARCHIVE_LIMIT = 120
+
+
+def _stored_rows(session: Session, day: date | None = None, limit: int | None = None) -> list[Any]:
+    from radar.models import ResearchReport
+
+    day_col = ResearchReport.body["date"].as_string()
+    q = select(ResearchReport).where(ResearchReport.kind == "morning_brief", ResearchReport.status == "complete")
+    if day is not None:
+        q = q.where(day_col == day.isoformat())
+    rows = list(session.scalars(q.order_by(day_col.desc(), ResearchReport.updated_at.desc())))
+    out, seen = [], set()
+    for r in rows:  # one per date (the newest write wins; persist_morning_brief already keeps one)
+        d = (r.body or {}).get("date")
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        out.append(r)
+        if limit and len(out) >= limit:
+            break
+    return out
+
+
+def brief_archive(session: Session, limit: int = ARCHIVE_LIMIT) -> list[Any]:
+    """Stored briefs, newest first: [{date, id, title, items, headlines, generator, generated_at, is_demo}]."""
+    from radar.schemas.feeds_v2 import BriefArchiveEntry
+
+    out = []
+    for r in _stored_rows(session, limit=limit):
+        body = r.body or {}
+        try:
+            d = date.fromisoformat(str(body["date"]))
+        except ValueError:
+            continue
+        lines = [str(i.get("text") or "") for i in body.get("what_changed") or [] if isinstance(i, dict)]
+        out.append(BriefArchiveEntry(date=d, id=str(r.id), title=r.title, items=len(lines), headlines=lines[:3],
+                                     generator=r.generator or "template",
+                                     generated_at=body.get("generated_at") or r.updated_at, is_demo=bool(r.is_demo)))
+    return out
+
+
+def stored_brief(session: Session, day: date) -> MorningBrief | None:
+    """The brief stored for ``day`` exactly as it was written (None when nothing was stored)."""
+    from pydantic import ValidationError
+
+    rows = _stored_rows(session, day=day, limit=1)
+    if not rows:
+        return None
+    r = rows[0]
+    body = dict(r.body or {})
+    try:
+        return MorningBrief.model_validate(body)
+    except ValidationError:
+        # An older stored shape: keep what still validates (the lines and the markdown are the record).
+        items = []
+        for i in body.get("what_changed") or []:
+            try:
+                items.append(BriefItem.model_validate(i))
+            except ValidationError:
+                continue
+        gen = r.generator if r.generator in ("llm", "template", "cached") else "template"
+        return MorningBrief(date=day, what_changed=items, founders_to_know=[], companies_to_watch=[], research=[],
+                            markdown=r.markdown or "", generator=gen, generated_at=r.updated_at)

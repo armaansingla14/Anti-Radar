@@ -29,6 +29,11 @@ given and >= 2 members have verified lab-repository commits:
   carries the same repository (never counted twice).
 * LAB_SHARED_ORG — commits to repositories of the same lab org (different repositories, or dates unknown):
   collaboration *context* only (weight 0.35, undated, adds no kind). It is never employment.
+* Lab-alumni convergence — >= 2 members with verified lab history but *no* lab tie between them (different
+  labs, e.g. vllm-project/vllm and sgl-project/sglang): proven engineers from separate projects converging on
+  the anchor. Not prior shared history, so it is not a tie (no pair strength, no kind); it adds
+  ``W_LAB_CONVERGENCE`` x the share of members with verified lab history, and the families term counts in full
+  (as with ties). Explained as "Two members previously contributed to A and B (verified commits)".
 
 Dates come from evidence (paper date; for co-contribution the later of the two people's
 ``RepoContributor.first_commit_at``). Co-contributions whose first-commit dates are unknown
@@ -69,6 +74,7 @@ CURRENT_EMPLOYER_FACTOR = 0.5
 RECENCY_DAYS = 730.0  # a collaboration two years before the anchor counts e^-1 as much
 HIGH, MEDIUM = 0.6, 0.35
 W_COVERAGE, W_PAIRS, W_KINDS, W_FAMILIES = 0.45, 0.25, 0.15, 0.15
+W_LAB_CONVERGENCE = 0.30
 MAX_FAMILIES = 4
 JOIN_WINDOW_DAYS = 30
 LAB_CO_CONTRIBUTED = "LAB_CO_CONTRIBUTED"
@@ -124,6 +130,7 @@ class ConvergenceResult:
     founding_members: list[uuid.UUID] = field(default_factory=list)  # first commit within the join window
     join_dates_unknown: int = 0  # members whose first commit on the anchor is unknown (when ``joined`` given)
     lab_members: list[uuid.UUID] = field(default_factory=list)  # members with verified lab-repository commits
+    lab_convergence: bool = False  # >= 2 lab members from separate labs, no lab tie between them
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -140,6 +147,7 @@ class ConvergenceResult:
             "founding_members": [str(m) for m in self.founding_members],
             "join_dates_unknown": self.join_dates_unknown,
             "lab_members": [str(m) for m in self.lab_members],
+            "lab_convergence": self.lab_convergence,
         }
 
 
@@ -340,6 +348,13 @@ def _names(ids: Sequence[uuid.UUID], members: dict[uuid.UUID, Member]) -> str:
     return ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
+def _and(items: Sequence[str]) -> str:
+    items = list(items)
+    if len(items) <= 2:
+        return " and ".join(items)
+    return ", ".join(items[:-1]) + f" and {items[-1]}"
+
+
 def _share(k: int, n: int) -> str:
     if k == n:
         return "both" if n == 2 else (f"all {number_word(n)}" if n > 2 else "the member")
@@ -349,8 +364,14 @@ def _share(k: int, n: int) -> str:
 def explain(ties: list[PriorTie], members: dict[uuid.UUID, Member], n: int, anchor_name: str,
             created: datetime, families: list[str], *, undated: int = 0,
             founders: Sequence[uuid.UUID] = (), join_unknown: int | None = None,
-            window_days: int = JOIN_WINDOW_DAYS) -> str:
+            window_days: int = JOIN_WINDOW_DAYS,
+            lab_convergence: Mapping[uuid.UUID, Sequence[LabContribution]] | None = None) -> str:
     parts: list[str] = []
+    if lab_convergence:
+        repos = list(dict.fromkeys(cs[0].full_name for cs in lab_convergence.values() if cs))
+        who = f"{number_word(len(lab_convergence))} members"
+        parts.append(f"{who} previously contributed to {_and(repos)} (verified commits) — proven engineers from "
+                     f"separate projects converging on {anchor_name}, not prior shared history")
     by_kind: dict[str, list[PriorTie]] = defaultdict(list)
     for t in ties:
         by_kind[t.kind].append(t)
@@ -410,6 +431,9 @@ def explain(ties: list[PriorTie], members: dict[uuid.UUID, Member], n: int, anch
     if not parts:
         text = (f"No relationship among the {n} members predates {anchor_name} "
                 f"(created {created.date().isoformat()}); they are linked only through it")
+    elif lab_convergence and len(parts) == 1:
+        text = parts[0][0].upper() + parts[0][1:] + (f"; no relationship among them predates {anchor_name} "
+                                                     f"(created {created.date().isoformat()})")
     else:
         text = "; ".join(parts)
         text = text[0].upper() + text[1:]
@@ -463,10 +487,14 @@ def convergence(
     ties = [t for t in prior_ties(rels, created, anchor_repo_ids=anchor_repo_ids, anchor_org_keys=anchor_org_keys)
             if t.a in mem and t.b in mem and t.a != t.b]
     lab_members = sorted((m for m in mem if lab and lab.get(m)), key=str)
+    cross_lab: dict[uuid.UUID, Sequence[LabContribution]] = {}
     if len(lab_members) >= 2:
         assert lab is not None
         _mark_lab_cocontributions(ties, lab)
         ties += lab_ties({m: lab[m] for m in lab_members}, created, ties)
+        lab_tied = {p for t in ties if t.kind in (LAB_CO_CONTRIBUTED, LAB_SHARED_ORG) for p in (t.a, t.b)}
+        if not lab_tied & set(lab_members):
+            cross_lab = {m: lab[m] for m in sorted(lab_members, key=lambda m: (mem[m].name, str(m)))}
     pair_w: dict[tuple[uuid.UUID, uuid.UUID], list[float]] = defaultdict(list)
     for t in ties:
         pair_w[(t.a, t.b) if str(t.a) < str(t.b) else (t.b, t.a)].append(t.weight)
@@ -483,9 +511,12 @@ def convergence(
     kinds = sorted({t.kind for t in ties})
     kind_buckets = {KIND_BUCKET[t.kind] for t in ties if t.kind in KIND_BUCKET}
     fam_part = min(len(fams), MAX_FAMILIES) / MAX_FAMILIES
+    lab_part = W_LAB_CONVERGENCE * len(cross_lab) / n if cross_lab and n else 0.0
     if ties:
         score = (W_COVERAGE * coverage + W_PAIRS * avg_pair + W_KINDS * min(len(kind_buckets), 3) / 3
-                 + W_FAMILIES * fam_part)
+                 + W_FAMILIES * fam_part + lab_part)
+    elif cross_lab:
+        score = lab_part + W_FAMILIES * fam_part
     else:
         score = W_FAMILIES * fam_part * 0.5
     score = min(max(score, 0.0), 1.0)
@@ -494,7 +525,7 @@ def convergence(
         score=score,
         strength=strength_label(score),
         explanation=explain(ties, mem, n, anchor_name, created, fams, undated=undated, founders=founders,
-                            join_unknown=join_unknown, window_days=join_window_days),
+                            join_unknown=join_unknown, window_days=join_window_days, lab_convergence=cross_lab),
         prior_relationships=len(pair_w),
         relationship_ids=rel_ids,
         families=fams,
@@ -506,6 +537,7 @@ def convergence(
         founding_members=founders,
         join_dates_unknown=join_unknown or 0,
         lab_members=lab_members,
+        lab_convergence=bool(cross_lab),
     )
 
 

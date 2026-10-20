@@ -9,10 +9,14 @@ from radar.detectors.strange import (
     _young_orgs,
     affiliation_exodus,
     age_phrase,
+    code_and_jobs,
+    credible_engineers_tiny_repo,
     detect_strange_signals,
+    former_coworkers_converging,
     hiring_pivot,
     lab_cluster,
     paper_code_launch,
+    quiet_specialized_hiring,
     quiet_velocity,
     shared_prior_employer_new_org,
 )
@@ -23,9 +27,11 @@ from radar.models.core import (
     MetricSnapshot,
     PaperAuthor,
     Person,
+    Relationship,
     RepoContributor,
     Repository,
     ResearchPaper,
+    ScoreSnapshot,
     Signal,
 )
 from radar.schemas.api import StrangeSignal
@@ -303,3 +309,188 @@ def test_detect_strange_signals_end_to_end(db, thesis):
     assert [f["pattern"] for f in found] == ["shared_prior_employer_new_org"]
     again = detect_strange_signals(db, DAY, thesis)
     assert again[0]["id"] == found[0]["id"]  # stable ids across runs
+
+
+# ── credible engineers → tiny / young repo ───────────────────────────────────
+
+def talent(db, name, lab="acme-lab", commits=40):
+    p = person(db, name)
+    p.attrs = {"lab_contributions": [{"org": lab, "label": "Acme Lab", "tier": 1, "repo": f"{lab}/core",
+                                      "commits": commits}]}
+    db.flush()
+    return p
+
+
+def solo_repo(db, full_name, stars, created_days_ago=20):
+    owner = full_name.split("/")[0]
+    r = Repository(full_name=full_name, owner=owner, gh_created_at=at(created_days_ago), first_seen_at=at(10),
+                   stars=stars)
+    db.add(r)
+    db.flush()
+    return r
+
+
+def commits(db, repo, p, n=10, last_days_ago=5):
+    db.add(RepoContributor(repository_id=repo.id, person_id=p.id, contributions=n, last_commit_at=at(last_days_ago)))
+    db.flush()
+
+
+def test_credible_engineers_tiny_repo_fires(db, thesis):
+    r = solo_repo(db, "someone/tactile-sim", stars=12)
+    a, b = talent(db, "Ann A"), talent(db, "Bob B")
+    commits(db, r, a)
+    commits(db, r, b)
+    found = validate(credible_engineers_tiny_repo(ctx(db, thesis)))
+    assert len(found) == 1 and found[0]["pattern"] == "credible_engineers_tiny_repo"
+    assert found[0]["headline"] == ("Two engineers with verified commits to acme-lab/core are committing to "
+                                    "someone/tactile-sim, a 12-star repository")
+    assert "not employment" in found[0]["detail"]
+    assert {e["type"] for e in found[0]["entities"]} == {"repository", "person"}
+
+
+def test_credible_engineers_tiny_repo_young_org_fires_even_when_starred(db, thesis):
+    c, r = org(db, "newco", created_days_ago=30)
+    r.stars = 900
+    a, b = talent(db, "Ann A"), talent(db, "Bob B")
+    commits(db, r, a)
+    commits(db, r, b)
+    found = validate(credible_engineers_tiny_repo(ctx(db, thesis)))
+    assert len(found) == 1 and "4-week-old GitHub organization's repository newco/core" in found[0]["headline"]
+
+
+def test_credible_engineers_tiny_repo_near_misses(db, thesis):
+    a, b, plain = talent(db, "Ann A"), talent(db, "Bob B"), person(db, "Cy C")
+    one = solo_repo(db, "x/one-talent", stars=3)  # only one talent-pool person (+ a non-talent person)
+    commits(db, one, a)
+    commits(db, one, plain)
+    big = solo_repo(db, "x/popular", stars=5000, created_days_ago=400)  # popular, no young org
+    commits(db, big, a)
+    commits(db, big, b)
+    few = solo_repo(db, "x/drive-by", stars=3)  # two talent people but only 1 commit each
+    commits(db, few, a, n=1)
+    commits(db, few, b, n=1)
+    stale = solo_repo(db, "x/stale", stars=3, created_days_ago=900)  # last commits years ago
+    commits(db, stale, a, last_days_ago=700)
+    commits(db, stale, b, last_days_ago=700)
+    lab = solo_repo(db, "acme-lab/tiny-tool", stars=4)  # the lab's own repositories are pedigree, not news
+    commits(db, lab, a)
+    commits(db, lab, b)
+    assert credible_engineers_tiny_repo(ctx(db, thesis)) == []
+
+
+# ── code release + technical jobs ────────────────────────────────────────────
+
+
+def test_code_and_jobs_fires(db, thesis):
+    c, r = org(db, "shipco", created_days_ago=400)
+    add_signal(db, r, "repository", "release_published", "github", 6, "shipco/core v0.4.0")
+    _jobs(db, c, ["Senior Robotics Software Engineer", "Controls Engineer"], 3)
+    found = validate(code_and_jobs(ctx(db, thesis)))
+    assert len(found) == 1
+    assert found[0]["headline"].startswith("Shipco released code and opened two technical roles within ")
+    assert any(e["source_type"] == "jobs" for e in found[0]["evidence"])
+    assert any(e["source_type"] == "github" for e in found[0]["evidence"])
+
+
+def test_code_and_jobs_near_misses(db, thesis):
+    c, r = org(db, "oldrelease", created_days_ago=400)
+    add_signal(db, r, "repository", "release_published", "github", 45, "oldrelease/core v1")  # release too old
+    _jobs(db, c, ["Firmware Engineer"], 3)
+    c2, _ = org(db, "salesonly", created_days_ago=400)
+    _jobs(db, c2, ["Account Executive"], 3)  # only non-technical roles
+    r2 = Repository(full_name="salesonly/new", owner="salesonly", company_id=c2.id, gh_created_at=at(4),
+                    first_seen_at=at(4), stars=1)
+    db.add(r2)
+    c3, _ = org(db, "codeonly", created_days_ago=10)  # code, no jobs
+    db.flush()
+    assert code_and_jobs(ctx(db, thesis)) == []
+
+
+# ── quiet specialized hiring ─────────────────────────────────────────────────
+
+
+def _attention(db, c, attention, day=DAY):
+    db.add(ScoreSnapshot(entity_type="company", entity_id=c.id, day=day, score=40.0, components={},
+                         attention={"technical": 80.0, "attention": attention, "gap": 0, "flagged": False,
+                                    "coverage": "partial",
+                                    "sources": [{"key": "hn_points", "label": "Hacker News points (90d)",
+                                                 "available": attention is not None}]},
+                         collision={}, version="t"))
+    db.flush()
+
+
+def test_quiet_specialized_hiring_fires(db, thesis):
+    c, _ = org(db, "quietfab", created_days_ago=400)
+    _jobs(db, c, ["ASIC Design Engineer", "RTL Engineer"], 5)
+    _attention(db, c, 12.0)
+    found = validate(quiet_specialized_hiring(ctx(db, thesis)))
+    assert len(found) == 1
+    assert found[0]["headline"] == ("Quietfab opened two specialized silicon roles in 30 days while public "
+                                    "attention sits at the 12th percentile")
+
+
+def test_quiet_specialized_hiring_near_misses(db, thesis):
+    c, _ = org(db, "loudfab", created_days_ago=400)
+    _jobs(db, c, ["ASIC Design Engineer", "RTL Engineer"], 5)
+    _attention(db, c, 85.0)  # well known
+    c2, _ = org(db, "unmeasured", created_days_ago=400)
+    _jobs(db, c2, ["ASIC Design Engineer", "RTL Engineer"], 5)
+    _attention(db, c2, None)  # attention not measured: unknown, not low
+    c3, _ = org(db, "onerole", created_days_ago=400)
+    _jobs(db, c3, ["ASIC Design Engineer"], 5)
+    _attention(db, c3, 5.0)  # only one specialized role
+    c4, _ = org(db, "generic", created_days_ago=400)
+    _jobs(db, c4, ["Backend Engineer", "Frontend Engineer"], 5)
+    _attention(db, c4, 5.0)  # technical but not specialized
+    c5, _ = org(db, "oldroles", created_days_ago=400)
+    _jobs(db, c5, ["ASIC Design Engineer", "RTL Engineer"], 60)
+    _attention(db, c5, 5.0)  # roles posted two months ago
+    assert quiet_specialized_hiring(ctx(db, thesis)) == []
+
+
+# ── former co-workers converging ─────────────────────────────────────────────
+
+
+def tie(db, a, b, kind="COAUTHORED_WITH", days_ago=300, epistemic="VERIFIED", **ev):
+    src, dst = (a, b) if str(a.id) < str(b.id) else (b, a)
+    rel = Relationship(src_type="person", src_id=src.id, dst_type="person", dst_id=dst.id, kind=kind,
+                       first_seen_at=at(days_ago), epistemic=epistemic,
+                       evidence=[{"title": ev.get("title", "Dense Tactile Skins"), "source_type": "arxiv",
+                                  "source_url": "https://arxiv.org/abs/2601.00001", "event_at": at(days_ago).isoformat(),
+                                  **{k: v for k, v in ev.items() if k != "title"}}])
+    db.add(rel)
+    db.flush()
+    return rel
+
+
+def test_former_coworkers_converging_fires(db, thesis):
+    _, repo = org(db, "tactilelab", created_days_ago=40)
+    a, b = person(db, "Ann A"), person(db, "Bob B")
+    contribute(db, repo, a, b)
+    tie(db, a, b)
+    c = ctx(db, thesis)
+    found = validate(former_coworkers_converging(c, *_young_orgs(c)))
+    assert len(found) == 1
+    assert found[0]["headline"] == ("Two people who previously co-authored “Dense Tactile Skins” are contributing "
+                                    "to the same 6-week-old GitHub organization")
+    assert found[0]["evidence"][0]["source_type"] == "arxiv"
+    assert [f["pattern"] for f in validate(detect_strange_signals(db, DAY, thesis))] == ["former_coworkers_converging"]
+
+
+def test_former_coworkers_converging_near_misses(db, thesis):
+    _, repo = org(db, "tactilelab", created_days_ago=40)
+    a, b, cc, d, e, f = (person(db, n) for n in ("Ann A", "Bob B", "Cy C", "Dee D", "Eve E", "Fay F"))
+    contribute(db, repo, a, b, cc, d, e, f)
+    tie(db, a, b, days_ago=10)  # tie dated after the org existed: met there, not prior
+    tie(db, cc, d, kind="WORKED_WITH", days_ago=300)  # wrong kind (self-reported employer overlap)
+    tie(db, e, f, epistemic="INFERRED", days_ago=300)  # not verified
+    _, repo2 = org(db, "selfref", created_days_ago=40)
+    g, h = person(db, "Gus G"), person(db, "Hal H")
+    contribute(db, repo2, g, h)
+    tie(db, g, h, kind="CONTRIBUTED_WITH", days_ago=300, title="selfref/core", repo_id=str(repo2.id))  # about the unit
+    _, old = org(db, "oldorg", created_days_ago=400)
+    i, j = person(db, "Ian I"), person(db, "Jo J")
+    contribute(db, old, i, j)
+    tie(db, i, j, days_ago=600)  # org is not young
+    c = ctx(db, thesis)
+    assert former_coworkers_converging(c, *_young_orgs(c)) == []

@@ -435,9 +435,12 @@ def submit_feedback(session: Session, req) -> dict:
         raise WatchTargetNotFound(f"unknown {req.entity_type} {req.entity_id!r}")
     user = default_user(session)
     ctx = entity_context(session, req.entity_type, ent.id)
-    session.add(UserFeedback(user_id=user.id, entity_type=req.entity_type, entity_id=ent.id, label=req.label,
-                             note=req.note, context=ctx))
+    fb = UserFeedback(user_id=user.id, entity_type=req.entity_type, entity_id=ent.id, label=req.label,
+                      note=req.note, context=ctx)
+    session.add(fb)
     changed = apply_feedback(session, req.entity_type, ent.id, req.label)
+    # The analyst's reason travels with the feedback context (with the weights it moved) for later review.
+    fb.context = {**ctx, "reason": (req.note or "").strip() or None, "preference_changes": changed}
     dismissed = False
     if req.label == "dismiss" and hasattr(ent, "dismissed"):
         ent.dismissed = True

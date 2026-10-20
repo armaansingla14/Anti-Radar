@@ -98,3 +98,62 @@ def test_measurement_signals_are_not_collision_events():
     event = sig("github", 1, 0.9, stype="release_published")
     r = collision([event, sig("github", 1, 0.9, stype="star_velocity")], TODAY, CFG)
     assert r.signal_count == 1 and r.contributions[0][0].id == event.id
+
+
+# ── Collision 2.0: strength, family labels, sentence, ranking weight ─────────
+
+
+def test_strength_thresholds():
+    from radar.scoring.collision import collision_strength
+
+    assert collision_strength(3, 0.7) == "HIGH"
+    assert collision_strength(3, 0.69) == "MEDIUM"  # near miss: score just under HIGH
+    assert collision_strength(4, 0.2) == "MEDIUM"  # >= 2 families
+    assert collision_strength(2, 0.1) == "MEDIUM"
+    assert collision_strength(1, 0.5) == "MEDIUM"  # strong single family
+    assert collision_strength(1, 0.49) == "LOW"
+    assert collision_strength(0, 0.0) == "LOW"
+
+
+def test_family_labels_and_sentence_in_api():
+    r = collision(
+        [sig("website"), sig("jobs"), sig("hackernews", 18), sig("github", 2), sig("arxiv", 3)], TODAY, CFG
+    )
+    api = r.to_api()
+    assert set(api["family_labels"]) == {"Hiring", "Community", "GitHub", "Research"}
+    assert api["sentence"] == "4 independent sources within 17 days"
+    assert api["strength"] in ("HIGH", "MEDIUM")
+    web_only = collision([sig("website"), sig("x")], TODAY, CFG)
+    assert web_only.family_labels == ["Web", "Social"] or set(web_only.family_labels) == {"Web", "Social"}
+
+
+def test_single_family_sentence_and_low_strength():
+    r = collision([sig("github", 1, 0.3)], TODAY, CFG)
+    assert r.families == ["github"] and r.strength == "LOW"
+    assert r.sentence == f"One source (GitHub): 1 signal in {CFG.window_days} days"
+    assert collision([], TODAY, CFG).sentence == "No recent independent signals"
+
+
+def test_schema_derives_v2_fields_for_old_snapshots():
+    from radar.schemas.api import Collision
+
+    old = {"score": 0.8, "families": ["github", "arxiv", "hiring/web"], "window_days": 60, "span_days": 12.4,
+           "signal_count": 5, "summary": "3 independent sources within 12 days",
+           "evidence": [{"title": "Site", "source_type": "website"}]}
+    c = Collision.model_validate(old)
+    assert c.strength == "HIGH" and c.family_labels == ["GitHub", "Research", "Web"]
+    assert c.sentence == "3 independent sources within 12 days"
+    fresh = Collision.model_validate(collision([sig("github"), sig("arxiv")], TODAY, CFG).to_api())
+    assert fresh.family_labels == ["GitHub", "Research"] or set(fresh.family_labels) == {"GitHub", "Research"}
+
+
+def test_collision_rank_weight_thesis_scaling():
+    from radar.scoring.collision import COLLISION_THESIS_FLOOR, collision_rank_weight
+
+    r = collision([sig("github"), sig("arxiv"), sig("jobs")], TODAY, CFG)
+    on = collision_rank_weight(r, 1.0)
+    off = collision_rank_weight(r, 0.0)
+    assert on == round(r.score, 4) and off == round(r.score * COLLISION_THESIS_FLOOR, 4)
+    assert collision_rank_weight(r.to_api(), None) == off  # unknown fit counts as off-thesis
+    assert collision_rank_weight(None, 1.0) == 0.0
+    assert collision_rank_weight({"score": 2.0}, 5.0) == 1.0  # bounded

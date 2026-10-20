@@ -135,10 +135,10 @@ def test_week_ranking_order_penalties_diversity_and_exclusions(world, client):
     feed = r.json()
     assert feed["week"] == WEEK and feed["as_of"] == "2026-10-06"
     hs = _handles(feed)
-    assert hs == ["ada", "ben", "star", "liked", "plain"]
-    # obviousness: 50k followers costs 25 points (famous would rank 3rd without it); a 60k-follower person
-    # with an exceptional formation score (>= 60) is exempt
-    assert "famous" not in hs
+    assert hs == ["ada", "ben", "famous", "star", "liked"]
+    # obviousness: 50k followers costs 25 points (famous would rank 1st without it); a 60k-follower person
+    # with an exceptional formation score (>= 60) is exempt. Founder Score leads the formula, so "famous"
+    # still edges out "star", an unverified single-family person whose only weight is formation membership.
     # diversity: at most two people from the same formation candidate
     assert "cat" not in hs
     # dismissed, bots / AI agents, brand accounts and people without dated evidence never appear
@@ -154,7 +154,9 @@ def test_week_ranking_order_penalties_diversity_and_exclusions(world, client):
     by = {c["person"]["github_handle"]: c for c in feed["people"]}
     assert by["ben"]["confidence"] == "MEDIUM CONFIDENCE" and by["liked"]["confidence"] == "EARLY SIGNAL"
     assert not any("Obviousness penalty" in w for w in by["star"]["why_person"])
-    assert by["ada"]["priority"] == "HIGH" and by["plain"]["priority"] == "WATCH"
+    assert by["ada"]["priority"] == "HIGH" and by["ben"]["priority"] == "MEDIUM"
+    # unknown (no verified pedigree, Founder Score < 45, single family) → WATCH whatever the score
+    assert by["star"]["priority"] == by["liked"]["priority"] == by["famous"]["priority"] == "WATCH"
     assert by["ada"]["score"] > by["ben"]["score"] > by["star"]["score"]
 
 
@@ -300,7 +302,12 @@ def test_talent_pool_person_with_new_project_outranks_unknown_contributor(db, cl
         snap.components = c
     db.commit()
     rows = {r.person.github_handle: r for r in meet.rank_people(db, limit=20)}
-    assert rows["kira"].features["talent"] == meet.TALENT_POINTS
+    # 25 stars = traction: the event counts at its quality strength (0.5..1 by stars)
+    from radar.scoring.extract import assess_new_project
+
+    q = assess_new_project("kira/tactile-sim", stars=25)
+    assert q.counts and q.traction
+    assert rows["kira"].features["talent"] == pytest.approx(meet.TALENT_POINTS * q.strength, abs=0.01)
     assert rows["uno"].features["talent"] == 0
     assert rows["kira"].score > rows["uno"].score
     feed = client.get("/api/meet").json()

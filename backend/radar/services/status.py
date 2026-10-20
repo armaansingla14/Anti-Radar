@@ -114,16 +114,15 @@ def _provider_status(key: str, label: str, cadence: float | None, runs: list[Ing
             reasons.append("no successful run yet")
     av = registry.availability(key, settings, github_authenticated=_github_authenticated() if key == "github" else None)
     if av.state == "disabled":
+        # A disabled provider shows only why it is disabled (run-history notes such as
+        # "no successful run yet" are expected and would only add noise).
         state = "disabled"
-        reasons.insert(0, av.reason or "disabled")
-        desc = registry.get(key)
-        if finished and desc.note:
-            reasons.append(desc.note)
+        reasons = [av.reason or "disabled"]
     elif av.state == "degraded" and state in ("healthy", "degraded", "never_run"):
         if state != "never_run":
             state = "degraded"
         reasons.insert(0, av.reason or "degraded")
-    if snapshot:
+    if snapshot and state != "disabled":
         reasons.append(f"Snapshot replay — captured {clock.as_of():%Y-%m-%d}")
 
     return ProviderStatus(

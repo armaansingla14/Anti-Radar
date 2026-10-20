@@ -18,21 +18,30 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from radar import clock
-from radar.detectors.hiring import is_technical_class, job_class, job_start
+from radar.detectors.hiring import is_open, is_technical_class, job_class, job_start
 from radar.models.core import (
     Company,
     CompanyPerson,
     Job,
     PaperAuthor,
     Person,
+    Relationship,
     RepoContributor,
     Repository,
     ResearchPaper,
+    ScoreSnapshot,
     Signal,
 )
 from radar.providers.domains import github_repos_in
+from radar.scoring.cohort import ordinal
 from radar.scoring.collision import number_word
-from radar.scoring.extract import SignalIndex, build_company_features, load_signal_index, org_created_date
+from radar.scoring.extract import (
+    SignalIndex,
+    build_company_features,
+    load_signal_index,
+    org_created_date,
+    person_lab_contributions,
+)
 from radar.scoring.features import SignalLite
 from radar.thesis.loader import Thesis, get_thesis
 
@@ -49,6 +58,20 @@ QUIET_MAX_RESULTS = 5
 HIRING_WINDOW_DAYS = 30
 SIGNAL_LOOKBACK_DAYS = 180
 PRIOR_ORG_META_KEYS = ("from", "previous", "prior", "prior_affiliation", "old_affiliation", "from_org")
+# credible_engineers_tiny_repo
+TINY_REPO_MAX_STARS = 50
+TINY_ORG_DAYS = 90
+TALENT_MIN_COMMITS = 3  # commits to the tiny repo for a talent-pool person to count (owner always counts)
+TALENT_MIN_PEOPLE = 2
+TALENT_RECENT_DAYS = 180  # the repo must have been created, or committed to by them, this recently
+# code_and_jobs
+CODE_JOBS_WINDOW_DAYS = 30
+CODE_SIGNAL_TYPES = ("release_published", "repo_created")
+# quiet_specialized_hiring
+SPECIALIZED_CLASSES = ("silicon", "robotics_controls", "gpu_compiler", "rf_defense", "energy_plasma")
+SPECIALIZED_MIN_ROLES = 2
+# former_coworkers_converging
+PRIOR_TIE_KINDS = ("COAUTHORED_WITH", "CONTRIBUTED_WITH")
 ROLE_CLASS_LABELS = {
     "ml_research": "ML research",
     "robotics_controls": "robotics & controls",
@@ -587,6 +610,423 @@ def hiring_pivot(ctx: _Ctx) -> list[dict]:
     return out
 
 
+# ── Talent / hiring / convergence patterns (M5) ──────────────────────────────
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    return None if dt is None else dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _end(day: date) -> datetime:
+    return datetime.combine(day, time.max, tzinfo=UTC)
+
+
+def _repo_ev(r: Repository, detail: str) -> dict[str, Any]:
+    return {
+        "signal_id": None,
+        "title": r.full_name,
+        "detail": detail,
+        "source_type": "github",
+        "source_url": f"https://github.com/{r.full_name}",
+        "event_at": r.gh_created_at,
+    }
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def _lab_orgs(people: list[Person]) -> set[str]:
+    return {lc.org.lower() for p in people for lc in person_lab_contributions(p)}
+
+
+def credible_engineers_tiny_repo(ctx: _Ctx) -> list[dict]:
+    """>= 2 talent-pool people (verified frontier-lab commit history, ``Person.attrs['lab_contributions']``)
+    committing to a repository with < 50 stars or one owned by an organization < 90 days old."""
+    from radar.pipeline.relationships import lab_source
+    from radar.providers.github import is_bot
+
+    s, day = ctx.session, ctx.day
+    end = _end(day)
+    talent = {
+        p.id: p
+        for p in s.scalars(select(Person).where(Person.dismissed.is_(False)))
+        if person_lab_contributions(p) and not is_bot(p.github_handle or p.name)
+    }
+    if len(talent) < TALENT_MIN_PEOPLE:
+        return []
+    lab_orgs = _lab_orgs(list(talent.values()))
+    rows = s.execute(
+        select(RepoContributor, Repository)
+        .join(Repository, Repository.id == RepoContributor.repository_id)
+        .where(RepoContributor.person_id.in_(list(talent)))
+    ).all()
+    by_repo: dict[uuid.UUID, list[RepoContributor]] = defaultdict(list)
+    repos: dict[uuid.UUID, Repository] = {}
+    for rc, r in rows:
+        repos[r.id] = r
+        by_repo[r.id].append(rc)
+    cids = {r.company_id for r in repos.values() if r.company_id}
+    companies = {c.id: c for c in s.scalars(select(Company).where(Company.id.in_(list(cids))))} if cids else {}
+    repo_dates: dict[uuid.UUID, list[datetime | None]] = defaultdict(list)
+    if cids:
+        for cid, created in s.execute(
+            select(Repository.company_id, Repository.gh_created_at).where(Repository.company_id.in_(list(cids)))
+        ).all():
+            repo_dates[cid].append(created)
+    recent = end - timedelta(days=TALENT_RECENT_DAYS)
+    out = []
+    for rid, rcs in by_repo.items():
+        r = repos[rid]
+        if lab_source(r) or (r.owner or "").lower() in lab_orgs:
+            continue  # the lab repositories themselves are the pedigree, not the anomaly
+        c = companies.get(r.company_id) if r.company_id else None
+        if c is not None and c.dismissed:
+            continue
+        org_age = None
+        if c is not None:
+            created = org_created_date(c.founded_date, repo_dates.get(c.id, []))
+            org_age = (day - created).days if created is not None else None
+        tiny = (r.stars or 0) < TINY_REPO_MAX_STARS
+        young = org_age is not None and 0 <= org_age < TINY_ORG_DAYS
+        if not (tiny or young):
+            continue
+        created_at = _aware(r.gh_created_at)
+        if created_at is not None and created_at > end:
+            continue
+        members = []
+        for rc in rcs:
+            p = talent[rc.person_id]
+            owner = bool(p.github_handle and p.github_handle.lower() == (r.owner or "").lower())
+            if (rc.contributions or 0) < TALENT_MIN_COMMITS and not owner:
+                continue
+            last = _aware(rc.last_commit_at)
+            if last is not None and last > end:
+                last = None  # commit history recorded after the as-of day is not evidence for it
+            is_recent = (last is not None and last >= recent) or (created_at is not None and created_at >= recent)
+            if is_recent:
+                members.append((p, rc, owner))
+        if len(members) < TALENT_MIN_PEOPLE:
+            continue
+        members.sort(key=lambda m: (-person_lab_contributions(m[0])[0].strength, m[0].name))
+        n = len(members)
+        labs = []
+        for p, _, _ in members:
+            fn = person_lab_contributions(p)[0].full_name
+            if fn not in labs:
+                labs.append(fn)
+        where = (
+            f"a {age_phrase(org_age)} {_org_noun(c)}'s repository {r.full_name}"
+            if young and c is not None
+            else f"{r.full_name}, a {int(r.stars or 0):,}-star repository"
+        )
+        headline = (
+            f"{number_word(n, True)} engineers with verified commits to "
+            f"{' and '.join(labs[:2])}{' and others' if len(labs) > 2 else ''} are committing to {where}"
+        )
+        detail = (
+            "; ".join(
+                f"{p.name}: {person_lab_contributions(p)[0].phrase(verb=False)}; "
+                + ("owner of" if owner else f"{rc.contributions} commits to") + f" {r.full_name}"
+                for p, rc, owner in members[:5]
+            )
+            + ". Public commit history — not employment."
+        )
+        evidence = [_repo_ev(r, f"{int(r.stars or 0):,} stars" + (f"; org ~{org_age} days old" if young else ""))]
+        evidence += [
+            _person_ev(p, f"{person_lab_contributions(p)[0].phrase(verb=False)}; {rc.contributions} commits here")
+            for p, rc, _ in members
+        ]
+        ids = [r.id] + ([c.id] if c else []) + [p.id for p, _, _ in members]
+        evidence += _sig_ev(ctx.index.for_entities(ids), 3)
+        avg_lab = sum(person_lab_contributions(p)[0].strength for p, _, _ in members) / n
+        strength = 0.5 + 0.1 * (n - TALENT_MIN_PEOPLE) + 0.25 * avg_lab + (0.1 if young else 0.0)
+        ents = ([_ent("company", c)] if c else []) + [_ent("repository", r)] + [_ent("person", p) for p, _, _ in members]
+        out.append(
+            ctx.make(
+                "credible_engineers_tiny_repo",
+                str(r.id),
+                headline,
+                detail,
+                ents,
+                evidence,
+                strength,
+                bool(r.is_demo or (c is not None and c.is_demo) or any(p.is_demo for p, _, _ in members)),
+            )
+        )
+    return out
+
+
+def code_and_jobs(ctx: _Ctx) -> list[dict]:
+    """An organization released code (new repository / release) and opened technical roles, all within the
+    last 30 days."""
+    s, day = ctx.session, ctx.day
+    end = _end(day)
+    lo = end - timedelta(days=CODE_JOBS_WINDOW_DAYS)
+    jobs_by: dict[uuid.UUID, list[Job]] = defaultdict(list)
+    for j in s.scalars(select(Job).where(Job.first_seen_at <= end)):
+        if lo < job_start(j) <= end and is_open(j, day) and is_technical_class(job_class(j, ctx.thesis)):
+            jobs_by[j.company_id].append(j)
+    if not jobs_by:
+        return []
+    companies = {c.id: c for c in s.scalars(select(Company).where(Company.id.in_(list(jobs_by))))}
+    repos_by: dict[uuid.UUID, list[Repository]] = defaultdict(list)
+    for r in s.scalars(select(Repository).where(Repository.company_id.in_(list(jobs_by)))):
+        repos_by[r.company_id].append(r)
+    out = []
+    for cid, jobs in jobs_by.items():
+        c = companies.get(cid)
+        if c is None or c.dismissed:
+            continue
+        repos = repos_by.get(cid, [])
+        code: list[dict[str, Any]] = []
+        seen_repo: set[str] = set()
+        for x in ctx.index.for_entities([cid, *(r.id for r in repos)]):
+            ev = _aware(x.event_at)
+            if x.signal_type in CODE_SIGNAL_TYPES and ev is not None and lo < ev <= end:
+                code.append(x.evidence())
+                if x.signal_type == "repo_created":
+                    seen_repo.add((x.title or "").lower())
+        for r in repos:
+            ca = _aware(r.gh_created_at)
+            if ca is not None and lo < ca <= end and not any(r.full_name.lower() in t for t in seen_repo):
+                code.append(_repo_ev(r, "New public repository"))
+        if not code:
+            continue
+        times = [_parse_dt(e["event_at"]) for e in code] + [_aware(job_start(j)) for j in jobs]
+        times = [t for t in times if t is not None]
+        span = max(1, math.ceil((max(times) - min(times)).total_seconds() / 86400))
+        n = len(jobs)
+        classes = sorted({ROLE_CLASS_LABELS.get(job_class(j, ctx.thesis) or "", job_class(j, ctx.thesis) or "technical")
+                          for j in jobs})
+        n_code = len(code)
+        headline = (
+            f"{c.name} released code and opened {number_word(n)} technical role{'s' if n != 1 else ''} "
+            f"within {span} days"
+        )
+        detail = (
+            f"Code: {'; '.join(str(e['title']) for e in code[:3])}. Roles ({', '.join(classes)}): "
+            f"{', '.join(j.title for j in jobs[:5])}."
+        )
+        job_ev = [
+            {
+                "signal_id": None,
+                "title": j.title,
+                "detail": j.department,
+                "source_type": "jobs",
+                "source_url": j.url,
+                "event_at": job_start(j),
+            }
+            for j in sorted(jobs, key=job_start, reverse=True)[:5]
+        ]
+        strength = 0.45 + 0.05 * min(n, 5) + 0.05 * min(n_code, 3) + 0.15 * (1 - span / CODE_JOBS_WINDOW_DAYS)
+        out.append(
+            ctx.make(
+                "code_and_jobs",
+                f"{cid}:{min(times).date().isoformat()}",
+                headline,
+                detail,
+                [_ent("company", c)],
+                code[:5] + job_ev,
+                strength,
+                bool(c.is_demo or any(j.is_demo for j in jobs)),
+            )
+        )
+    return out
+
+
+def quiet_specialized_hiring(ctx: _Ctx) -> list[dict]:
+    """>= 2 open specialized technical roles (silicon, robotics & controls, GPU/compiler, RF/defense,
+    energy/plasma) posted in the last 30 days at an organization whose public attention was *measured* low."""
+    s, day = ctx.session, ctx.day
+    end = _end(day)
+    lo = end - timedelta(days=HIRING_WINDOW_DAYS)
+    by: dict[uuid.UUID, list[tuple[Job, str]]] = defaultdict(list)
+    for j in s.scalars(select(Job).where(Job.first_seen_at <= end)):
+        cls = job_class(j, ctx.thesis)
+        if cls in SPECIALIZED_CLASSES and lo < job_start(j) <= end and is_open(j, day):
+            by[j.company_id].append((j, cls))
+    by = {cid: js for cid, js in by.items() if len(js) >= SPECIALIZED_MIN_ROLES}
+    if not by:
+        return []
+    snaps: dict[uuid.UUID, ScoreSnapshot] = {}
+    for snap in s.scalars(
+        select(ScoreSnapshot)
+        .where(ScoreSnapshot.entity_id.in_(list(by)), ScoreSnapshot.day <= day)
+        .order_by(ScoreSnapshot.entity_id, ScoreSnapshot.day.desc())
+        .distinct(ScoreSnapshot.entity_id)
+    ):
+        snaps[snap.entity_id] = snap
+    max_att = ctx.thesis.scoring.attention_gap.flag_attention_max * 100
+    companies = {c.id: c for c in s.scalars(select(Company).where(Company.id.in_(list(by))))}
+    out = []
+    for cid, js in by.items():
+        c, snap = companies.get(cid), snaps.get(cid)
+        if c is None or c.dismissed or snap is None:
+            continue
+        att = (snap.attention or {}).get("attention")
+        if not isinstance(att, int | float) or att > max_att:
+            continue  # unmeasured attention is unknown, not low
+        n = len(js)
+        labels = sorted({ROLE_CLASS_LABELS.get(cls, cls) for _, cls in js})
+        measured = [x.get("label") for x in (snap.attention or {}).get("sources") or [] if x.get("available")]
+        headline = (
+            f"{c.name} opened {number_word(n)} specialized {' / '.join(labels)} roles in {HIRING_WINDOW_DAYS} days "
+            f"while public attention sits at the {ordinal(att)} percentile"
+        )
+        detail = (
+            f"Roles: {', '.join(j.title for j, _ in js[:5])}. Public attention measured from "
+            f"{', '.join(m for m in measured if m) or 'available sources'} (as of {snap.day.isoformat()})."
+        )
+        evidence = [
+            {
+                "signal_id": None,
+                "title": j.title,
+                "detail": ROLE_CLASS_LABELS.get(cls, cls),
+                "source_type": "jobs",
+                "source_url": j.url,
+                "event_at": job_start(j),
+            }
+            for j, cls in sorted(js, key=lambda x: job_start(x[0]), reverse=True)[:6]
+        ]
+        strength = 0.5 + 0.08 * min(n - SPECIALIZED_MIN_ROLES, 4) + 0.2 * (1 - att / max_att if max_att else 0)
+        out.append(
+            ctx.make(
+                "quiet_specialized_hiring",
+                f"{cid}:{'+'.join(sorted({cls for _, cls in js}))}",
+                headline,
+                detail,
+                [_ent("company", c)],
+                evidence,
+                strength,
+                bool(c.is_demo or any(j.is_demo for j, _ in js)),
+            )
+        )
+    return out
+
+
+def _parse_dt(v: Any) -> datetime | None:
+    if isinstance(v, datetime):
+        return _aware(v)
+    if isinstance(v, str) and v:
+        try:
+            return _aware(datetime.fromisoformat(v))
+        except ValueError:
+            return None
+    return None
+
+
+def _tie_phrase(kind: str, ev: dict[str, Any]) -> str:
+    t = str(ev.get("title") or "").strip()
+    if kind == "COAUTHORED_WITH":
+        return f"co-authored “{t}”" if t else "co-authored a paper"
+    return f"contributed to {t} together" if t else "contributed to the same repository"
+
+
+def former_coworkers_converging(
+    ctx: _Ctx, young: list[_YoungOrg], people: dict[uuid.UUID, Person]
+) -> list[dict]:
+    """>= 2 people with a VERIFIED prior tie (COAUTHORED_WITH / CONTRIBUTED_WITH evidence dated before the
+    unit existed, about something other than the unit) now contributing to the same young org or repository."""
+    s, day = ctx.session, ctx.day
+    units: list[tuple[str, Any, int, datetime, dict[uuid.UUID, str], set[str]]] = []
+    for y in young:
+        repo_ids = {str(r) for r in s.scalars(select(Repository.id).where(Repository.company_id == y.company.id))}
+        created = datetime.combine(day - timedelta(days=y.age_days), time.min, tzinfo=UTC)
+        units.append(("company", y.company, y.age_days, created, dict(y.people), repo_ids | {str(y.company.id)}))
+    lo = datetime.combine(day - timedelta(days=YOUNG_ORG_DAYS), time.min, tzinfo=UTC)
+    for r in s.scalars(
+        select(Repository).where(
+            Repository.company_id.is_(None), Repository.gh_created_at >= lo, Repository.gh_created_at <= _end(day)
+        )
+    ):
+        pids = {pid: "contributor" for pid in s.scalars(
+            select(RepoContributor.person_id).where(RepoContributor.repository_id == r.id))}
+        if len(pids) >= 2:
+            ca = _aware(r.gh_created_at)
+            units.append(("repository", r, (day - ca.date()).days, ca, pids, {str(r.id)}))
+    if not units:
+        return []
+    all_pids = {pid for u in units for pid in u[4]}
+    rels = list(
+        s.scalars(
+            select(Relationship).where(
+                Relationship.kind.in_(PRIOR_TIE_KINDS),
+                Relationship.epistemic == "VERIFIED",
+                Relationship.src_id.in_(list(all_pids)),
+                Relationship.dst_id.in_(list(all_pids)),
+            )
+        )
+    ) if len(all_pids) >= 2 else []
+    if not rels:
+        return []
+    missing = all_pids - set(people)
+    if missing:
+        people = {**people, **{p.id: p for p in s.scalars(select(Person).where(Person.id.in_(list(missing))))}}
+    out = []
+    for kind, obj, age, created, members, own_ids in units:
+        ties: list[tuple[Relationship, dict[str, Any], datetime]] = []
+        for rel in rels:
+            if rel.src_id not in members or rel.dst_id not in members:
+                continue
+            prior = []
+            for ev in rel.evidence or []:
+                at = _parse_dt(ev.get("event_at"))
+                about_unit = str(ev.get("repo_id") or "") in own_ids or str(ev.get("company_id") or "") in own_ids
+                if at is not None and at < created and not about_unit:
+                    prior.append((ev, at))
+            if prior:
+                ev, at = min(prior, key=lambda x: x[1])
+                ties.append((rel, ev, at))
+        if not ties:
+            continue
+        pids = sorted({p for rel, _, _ in ties for p in (rel.src_id, rel.dst_id) if p in people},
+                      key=lambda pid: people[pid].name)
+        if len(pids) < 2:
+            continue
+        n = len(pids)
+        noun = _org_noun(obj) if kind == "company" else "repository"
+        verb = _relation_verb([members[pid] for pid in pids])
+        if len(ties) == 1:
+            rel, ev, _ = ties[0]
+            who = f"people who previously {_tie_phrase(rel.kind, ev)}"
+        else:
+            who = "people with verified prior collaborations"
+        headline = f"{number_word(n, True)} {who} {verb} the same {age_phrase(max(age, 1))} {noun}"
+        detail = "; ".join(
+            f"{people[rel.src_id].name} & {people[rel.dst_id].name} {_tie_phrase(rel.kind, ev)} ({at.date().isoformat()})"
+            for rel, ev, at in sorted(ties, key=lambda t: t[2])[:5]
+            if rel.src_id in people and rel.dst_id in people
+        ) + f". {obj.name if kind == 'company' else obj.full_name} was created ~{age} days ago."
+        evidence = [
+            {
+                "signal_id": None,
+                "title": str(ev.get("title") or rel.kind),
+                "detail": ev.get("detail"),
+                "source_type": ev.get("source_type") or ("arxiv" if rel.kind == "COAUTHORED_WITH" else "github"),
+                "source_url": ev.get("source_url"),
+                "event_at": at,
+            }
+            for rel, ev, at in ties[:5]
+        ]
+        ent_kind = "company" if kind == "company" else "repository"
+        evidence += _sig_ev(ctx.index.for_entities([obj.id, *pids]), 3)
+        strength = 0.5 + 0.1 * min(n - 2, 3) + 0.05 * min(len(ties), 4) + 0.15 * (1 - min(age, YOUNG_ORG_DAYS) / YOUNG_ORG_DAYS)
+        out.append(
+            ctx.make(
+                "former_coworkers_converging",
+                f"{obj.id}:{'+'.join(sorted(str(p) for p in pids))}",
+                headline,
+                detail,
+                [_ent(ent_kind, obj)] + [_ent("person", people[pid]) for pid in pids],
+                evidence,
+                strength,
+                bool(obj.is_demo or any(people[pid].is_demo for pid in pids) or any(r.is_demo for r, _, _ in ties)),
+            )
+        )
+    return out
+
+
 def detect_strange_signals(
     session: Session, day: date | None = None, thesis: Thesis | None = None
 ) -> list[dict]:
@@ -601,12 +1041,23 @@ def detect_strange_signals(
         detected_at,
     )
     young, people = _young_orgs(ctx)
+    labs = lab_cluster(ctx, young, people)
+    # A lab cluster (>= 3 co-authors) already tells the convergence story for that org.
+    lab_orgs = {e["id"] for f in labs for e in f["entities"] if e["type"] == "company"}
+    converging = [
+        f for f in former_coworkers_converging(ctx, young, people)
+        if not any(e["type"] == "company" and e["id"] in lab_orgs for e in f["entities"])
+    ]
     found = (
         shared_prior_employer_new_org(ctx, young, people)
-        + lab_cluster(ctx, young, people)
+        + labs
         + paper_code_launch(ctx)
         + affiliation_exodus(ctx)
         + quiet_velocity(ctx)
         + hiring_pivot(ctx)
+        + credible_engineers_tiny_repo(ctx)
+        + code_and_jobs(ctx)
+        + quiet_specialized_hiring(ctx)
+        + converging
     )
     return sorted(found, key=lambda x: -x["strength"])

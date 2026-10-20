@@ -207,7 +207,7 @@ def get_x_provider(settings: Settings | None = None) -> XProvider:
     """Official API provider when X_BEARER_TOKEN is configured, else a disabled provider."""
     settings = settings or get_settings()
     if settings.x_bearer_token:
-        from radar.providers.x.api import XApiProvider
+        from radar.providers.x.api import OfficialXProvider
 
-        return XApiProvider(settings.x_bearer_token)
+        return OfficialXProvider(settings.x_bearer_token)
     return DisabledXProvider()

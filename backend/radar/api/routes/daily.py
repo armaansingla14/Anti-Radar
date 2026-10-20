@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from radar.db import get_session
 from radar.schemas.api import DailyRadar
+from radar.schemas.feeds_v2 import DailyRadarV2
 from radar.services import feed
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -25,5 +26,19 @@ def get_daily(
 ) -> DailyRadar:
     try:
         return feed.daily_radar(session, since=since, include_demo=include_demo)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+
+
+@router.get("/daily/v2", response_model=DailyRadarV2)
+def get_daily_v2(
+    session: SessionDep,
+    since: Annotated[datetime | None, Query(description="ISO timestamp; default: earlier of now-24h and last visit")] = None,
+    include_demo: Annotated[bool | None, Query()] = None,
+) -> DailyRadarV2:
+    """Daily Radar v2: sections (what changed, people, formations, companies accelerating, research, strange
+    signals, watchlist changes); every item has why_now, timestamp, sources and confidence."""
+    try:
+        return feed.daily_radar_v2(session, since=since, include_demo=include_demo)
     except ValueError as e:
         raise HTTPException(422, detail=str(e)) from None

@@ -16,24 +16,33 @@ when synthetic demo data is enabled.
 
 Meet score (0..100, every input already stored by the scoring pipeline)
 ------------------------------------------------------------------------
-* founder    30 × Founder Score / 100
-* formation  25 × best Formation Score / 100 of a candidate the person anchors or is a member of
-* thesis     10 × Founder-Score thesis-fit component (value / max)
-* recency    10 × (1 − age / 30 d) of the newest *own* dated signal (measurement signals, whose
-             date is the observation time, never count as a change)
-* attention  10 × Founder-Score attention-gap component (value / max)
-* collision  15 × min(families, 3) / 3 — independent source families (github, research, community,
+The person comes first: the Founder Score carries the most weight and verified technical history
+(talent) is the second-largest term; membership of a formation candidate is a supporting term, so
+a young org's unknown contributors cannot outrank verified talent on membership alone.
+
+* founder    40 × Founder Score / 100
+* formation  12 × best Formation Score / 100 of a candidate the person anchors or is a member of
+* thesis      8 × Founder-Score thesis-fit component (value / max)
+* recency     8 × (1 − age / 60 d) of the newest *own* dated change (measurement signals and profile-bio
+             observations — dated when we first looked, not when they changed — never count)
+* attention   6 × Founder-Score attention-gap component (value / max)
+* collision   9 × min(families, 3) / 3 — independent source families (github, research, community,
              web, hiring, social) among the person's own evidence in the last 90 days
 * feedback   ± per-person analyst labels on the person or their formation anchor:
              strong_founder +6, interesting_shift +4, useful +3; weak_team −6, too_obvious −6,
              not_interesting −4, already_known −4, wrong_thesis −3; total capped at ±10.
              (Global learned preference weights already act inside the Founder Score — not
              counted twice.)
-* talent     + up to 8 × verified lab strength (``features.lab_strength``: tier weight × commit depth of the
-             person's verified lab-repository commits, ``Person.attrs['lab_contributions']``) when the person
-             has a recent own formation event (new_project / joined_young_org / lab_alumni_cluster in the last
-             90 days); a quarter of that without one. Prefers talent-pool people who are starting something
-             over unknown contributors. The total is capped at 100.
+* talent     + up to 17 × verified lab strength (``features.lab_strength``: tier weight × commit depth of the
+             person's verified lab-repository commits, ``Person.attrs['lab_contributions']``) × the strength of
+             their best own formation event in the last 180 days (joined_young_org / lab_alumni_cluster
+             0.6..1 by the person's own commits on the young org, saturating at 50; a new_project its ``extract.assess_new_project`` strength — 0.5..1 with traction, 0.35 for
+             thesis depth; a new repository that does not count is no event); a quarter of the lab strength
+             without one. The total is capped at 100.
+* unverified −10 for someone with no verified pedigree (no verified lab commits, no public membership of a
+             tier-listed GitHub org), Founder Score < 45 and single-family evidence, unless they are in a
+             formation candidate with >= 2 families: an unknown contributor of a young org is a WATCH, not a
+             meeting.
 * obviousness −25 when the person has > 20k followers, or > 1k followers and a current affiliation
              with an established organization (``scoring.formation._established_employer``) —
              waived when the best Formation Score is ≥ 60 (exceptional formation evidence).
@@ -46,8 +55,9 @@ Diversity: at most 2 people from the same formation candidate (or, without one, 
 normalized current company) per week.
 
 Confidence = evidence breadth: ≥ 3 independent families → HIGH CONFIDENCE, 2 → MEDIUM
-CONFIDENCE, otherwise EARLY SIGNAL. Priority: HIGH needs meet score ≥ 60 and ≥ 2 families;
-MEDIUM needs ≥ 40; otherwise WATCH.
+CONFIDENCE, otherwise EARLY SIGNAL. Priority: HIGH needs meet score ≥ 55 and ≥ 2 families;
+MEDIUM needs ≥ 40; both also need at least one of {verified pedigree, a formation candidate with
+≥ 2 families, Founder Score ≥ 45} — otherwise WATCH.
 
 Language: a person is only called a founder when a founder relation (company_people.is_founder)
 backs it; formation membership is phrased with the candidate's stored label ("EMERGING TEAM",
@@ -58,6 +68,7 @@ self-reported.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import uuid
 from collections import defaultdict
@@ -87,7 +98,7 @@ from radar.models import (
 from radar.pipeline.aliases import org_key
 from radar.providers.github import is_bot
 from radar.schemas.api import EvidenceItem, MeetCard, MeetFeed, MeetFormation
-from radar.scoring.extract import person_lab_contributions
+from radar.scoring.extract import NewProjectQuality, assess_new_project_signals, person_lab_contributions
 from radar.scoring.features import (
     FORMATION_EVENT_TYPES,
     LAB_ALUMNI_CLUSTER,
@@ -106,26 +117,34 @@ WEEK_RE = re.compile(r"^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$")
 MEET_LIMIT = 5
 MAX_PER_GROUP = 2
 SCORE_MAX_AGE_DAYS = 14
-RECENCY_DAYS = 30
+RECENCY_DAYS = 60
 EVIDENCE_DAYS = 90
+# The person's own formation events (new project, joined young org, lab cluster) are evidence for as long as
+# the Formation Radar looks back (``formation.PERSON_SIGNAL_DAYS``): a young org is dated at its creation.
+FORMATION_EVENT_DAYS = 180
 OBVIOUS_FOLLOWERS = 20_000
 ESTABLISHED_PERSON_FOLLOWERS = 1_000
 EXCEPTIONAL_FORMATION = 60.0
 OBVIOUS_PENALTY = 25.0
 FEEDBACK_CAP = 10.0
-TALENT_POINTS = 8.0
+TALENT_POINTS = 17.0
 TALENT_NO_EVENT_SHARE = 0.25
+UNVERIFIED_PENALTY = 10.0
+JOIN_BASE = 0.6
+JOIN_FULL_COMMITS = 50
+GATE_FOUNDER_SCORE = 45.0
+GATE_FORMATION_FAMILIES = 2
 TALENT_EVENT_TYPES = FORMATION_EVENT_TYPES | {LAB_ALUMNI_CLUSTER}
 HISTORY_WEEKS = 26
 
-WEIGHTS: dict[str, float] = {"founder": 30, "formation": 25, "thesis": 10, "recency": 10, "attention": 10,
-                             "collision": 15}
+WEIGHTS: dict[str, float] = {"founder": 40, "formation": 12, "thesis": 8, "recency": 8, "attention": 6,
+                             "collision": 9}
 COLLISION_FULL = 3
 FEEDBACK_POINTS: dict[str, float] = {
     "strong_founder": 6, "interesting_shift": 4, "useful": 3,
     "weak_team": -6, "too_obvious": -6, "not_interesting": -4, "already_known": -4, "wrong_thesis": -3,
 }
-PRIORITY_HIGH, PRIORITY_MEDIUM = 60.0, 40.0
+PRIORITY_HIGH, PRIORITY_MEDIUM = 55.0, 40.0
 WHY_NOW_LIMIT = 5
 WHAT_CHANGED_LIMIT = 4
 # Signal types that describe a change worth mentioning under "what changed".
@@ -171,9 +190,16 @@ class Evidence:
 
     def newest_change(self, now: datetime) -> Signal | None:
         for s in self.signals:  # newest first
-            if s.signal_type not in MEASUREMENT_SIGNAL_TYPES and s.event_at <= now + timedelta(days=1):
+            if (s.signal_type not in MEASUREMENT_SIGNAL_TYPES and not is_observation(s)
+                    and s.event_at <= now + timedelta(days=1)):
                 return s
         return None
+
+
+def is_observation(s: Signal) -> bool:
+    """A profile field read on our crawl (``metadata.observation == 'observed'``, e.g. a bio that mentions
+    'co-founder'): its date is when we looked, not when it changed — not a recent change."""
+    return str((getattr(s, "meta", None) or {}).get("observation") or "") == "observed"
 
 
 @dataclass
@@ -189,6 +215,12 @@ class Ranked:
     feedback: dict[str, float]
     group: str | None
     labs: list[LabContribution] = field(default_factory=list)  # verified lab-repository history
+    gate: str | None = None  # why HIGH/MEDIUM priority is allowed (None = WATCH only)
+    projects: dict[uuid.UUID, NewProjectQuality] = field(default_factory=dict)  # new_project signal -> quality
+
+    @property
+    def priority(self) -> str:
+        return priority_for(self.score, len(self.families), eligible=self.gate is not None)
 
     @property
     def founder_score(self) -> float:
@@ -214,9 +246,18 @@ def _evidence_signal_ids(snap: ScoreSnapshot) -> set[uuid.UUID]:
     return out
 
 
-def load_evidence(session: Session, snaps: dict[uuid.UUID, ScoreSnapshot], since: datetime
-                  ) -> dict[uuid.UUID, Evidence]:
-    """Own evidence per person (batched): direct + linked signals since ``since`` and Founder-Score evidence."""
+def load_evidence(session: Session, snaps: dict[uuid.UUID, ScoreSnapshot], since: datetime,
+                  events_since: datetime | None = None) -> dict[uuid.UUID, Evidence]:
+    """Own evidence per person (batched): direct + linked signals since ``since`` and Founder-Score evidence;
+    formation events (``TALENT_EVENT_TYPES``) since ``events_since`` (default ``since``)."""
+    events_since = min(events_since or since, since)
+    out = _load_evidence(session, snaps, events_since)
+    return {pid: Evidence([s for s in ev.signals if s.event_at >= since or s.signal_type in TALENT_EVENT_TYPES])
+            for pid, ev in out.items()}
+
+
+def _load_evidence(session: Session, snaps: dict[uuid.UUID, ScoreSnapshot], since: datetime
+                   ) -> dict[uuid.UUID, Evidence]:
     ids = list(snaps)
     if not ids:
         return {}
@@ -327,12 +368,38 @@ def _obviousness(session: Session, p: Person, formation_score: float, young_ids:
     return None
 
 
-def priority_for(score: float, n_families: int) -> str:
+def priority_for(score: float, n_families: int, *, eligible: bool = True) -> str:
+    """HIGH (>= 55 and >= 2 families) / MEDIUM (>= 40) only for ``eligible`` people (see ``priority_gate``)."""
+    if not eligible:
+        return "WATCH"
     if score >= PRIORITY_HIGH and n_families >= 2:
         return "HIGH"
     if score >= PRIORITY_MEDIUM:
         return "MEDIUM"
     return "WATCH"
+
+
+def verified_pedigree(labs: Sequence[LabContribution], snap: ScoreSnapshot) -> str | None:
+    """Verified lab commits, or an observed public membership of a tier-listed GitHub org (never self-reported)."""
+    if labs:
+        return f"verified commits to {labs[0].full_name}"
+    raw = ((snap.components or {}).get("pedigree") or {}).get("raw") or {}
+    if raw.get("source") == "public_github_org" and float(raw.get("strength") or 0) > 0:
+        return f"public GitHub member of {raw.get('org_login') or raw.get('matched')}"
+    return None
+
+
+def priority_gate(labs: Sequence[LabContribution], snap: ScoreSnapshot, cand: FormationCandidate | None
+                  ) -> str | None:
+    """Why this person may be HIGH/MEDIUM priority (None = WATCH only)."""
+    ped = verified_pedigree(labs, snap)
+    if ped:
+        return ped
+    if cand is not None and len(cand.signal_families or []) >= GATE_FORMATION_FAMILIES:
+        return f"formation candidate with {len(cand.signal_families or [])} source families"
+    if float(snap.score) >= GATE_FOUNDER_SCORE:
+        return f"Founder Score {round(float(snap.score))} >= {round(GATE_FOUNDER_SCORE)}"
+    return None
 
 
 def confidence_for(n_families: int) -> str:
@@ -347,13 +414,56 @@ def meet_score(features: dict[str, float]) -> float:
     return round(min(100.0, max(0.0, sum(features.values()))), 2)
 
 
-def formation_events(ev: Evidence) -> list[Signal]:
-    """The person's own recent formation events (newest first): new project, joined young org, lab cluster."""
-    return [s for s in ev.signals if s.signal_type in TALENT_EVENT_TYPES]
+def formation_events(ev: Evidence, projects: dict[uuid.UUID, NewProjectQuality] | None = None) -> list[Signal]:
+    """The person's own recent formation events (newest first): new project, joined young org, lab cluster.
+
+    With ``projects`` (new_project signal -> quality) a new repository that does not count is left out."""
+    return [s for s in ev.signals if s.signal_type in TALENT_EVENT_TYPES
+            and (projects is None or s.signal_type != "new_project"
+                 or ((q := projects.get(s.id)) is not None and q.counts))]
 
 
-def talent_points(labs: Sequence[LabContribution], has_event: bool) -> float:
-    return TALENT_POINTS * lab_strength(labs) * (1.0 if has_event else TALENT_NO_EVENT_SHARE)
+def own_commits_on_anchor(s: Signal, person_id: uuid.UUID | None) -> int | None:
+    """The person's own commits to the young org / repository of a joined_young_org or lab_alumni_cluster event
+    (signal metadata), None when not recorded."""
+    meta = getattr(s, "meta", None) or {}
+    if s.signal_type == "joined_young_org":
+        v = meta.get("commits")
+        return int(v) if isinstance(v, (int, float)) else None
+    if s.signal_type == LAB_ALUMNI_CLUSTER:
+        for m in meta.get("members") or []:
+            if isinstance(m, dict) and str(m.get("person_id")) == str(person_id):
+                v = m.get("commits")
+                return int(v) if isinstance(v, (int, float)) else None
+    return None
+
+
+def membership_strength(commits: int | None) -> float:
+    """JOIN_BASE..1 by the person's own commits on the young org (log scale, saturating at JOIN_FULL_COMMITS):
+    a public member with a handful of commits is weaker evidence than someone building the project."""
+    if commits is None:
+        return JOIN_BASE
+    return JOIN_BASE + (1 - JOIN_BASE) * min(1.0, math.log1p(max(commits, 0)) / math.log1p(JOIN_FULL_COMMITS))
+
+
+def event_strength(events: Sequence[Signal], projects: dict[uuid.UUID, NewProjectQuality] | None = None,
+                   person_id: uuid.UUID | None = None) -> float:
+    """0..1: the strongest formation event — a new repository by its quality strength, a young-org event
+    (joined_young_org / lab_alumni_cluster) by the person's own commits there (``membership_strength``)."""
+    best = 0.0
+    for s in events:
+        if s.signal_type == "new_project":
+            q = (projects or {}).get(s.id)
+            best = max(best, q.strength if q is not None else 0.0)
+        else:
+            best = max(best, membership_strength(own_commits_on_anchor(s, person_id)))
+    return best
+
+
+def talent_points(labs: Sequence[LabContribution], event: float | bool) -> float:
+    """``event``: the strength (0..1) of the best own formation event (True = 1.0, False/0 = none)."""
+    e = float(event)
+    return TALENT_POINTS * lab_strength(labs) * (e if e > 0 else TALENT_NO_EVENT_SHARE)
 
 
 def rank_people(session: Session, *, include_demo: bool | None = None, limit: int = MEET_LIMIT) -> list[Ranked]:
@@ -369,9 +479,12 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
     people = {pid: p for pid, p in people.items()
               if not (p.github_handle and is_bot(p.github_handle)) and not is_brand_account(p, brand)}
     snaps = {pid: s for pid, s in snaps.items() if pid in people}
-    evidence = load_evidence(session, snaps, now - timedelta(days=EVIDENCE_DAYS))
+    evidence = load_evidence(session, snaps, now - timedelta(days=EVIDENCE_DAYS),
+                             now - timedelta(days=FORMATION_EVENT_DAYS))
     cands, young_ids = _candidates_by_person(session, include_demo)
     fb = _feedback_points(session, list(people) + [c.anchor_id for c in cands.values()])
+    projects = assess_new_project_signals(
+        session, {s.id: s for e in evidence.values() for s in e.signals if s.signal_type == "new_project"}.values())
 
     out: list[Ranked] = []
     for pid, p in people.items():
@@ -394,7 +507,11 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
         feedback = max(-FEEDBACK_CAP, min(FEEDBACK_CAP, sum(labels.values())))
         obvious = _obviousness(session, p, fscore, young_ids)
         labs = person_lab_contributions(p)
-        events = formation_events(ev)
+        events = formation_events(ev, projects)
+        gate = priority_gate(labs, snap, cand)
+        unverified = (verified_pedigree(labs, snap) is None and float(snap.score) < GATE_FOUNDER_SCORE
+                      and len(families) < 2
+                      and not (cand is not None and len(cand.signal_families or []) >= GATE_FORMATION_FAMILIES))
         features = {
             "founder": WEIGHTS["founder"] * float(snap.score) / 100,
             "formation": WEIGHTS["formation"] * fscore / 100,
@@ -402,14 +519,15 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
             "recency": WEIGHTS["recency"] * recency,
             "attention": WEIGHTS["attention"] * _comp_ratio(snap, "attention_gap"),
             "collision": WEIGHTS["collision"] * min(len(families), COLLISION_FULL) / COLLISION_FULL,
-            "talent": talent_points(labs, bool(events)),
+            "talent": talent_points(labs, event_strength(events, projects, pid)),
+            "unverified": -UNVERIFIED_PENALTY if unverified else 0.0,
             "feedback": feedback,
             "obviousness": -OBVIOUS_PENALTY if obvious else 0.0,
         }
         features = {k: round(v, 2) for k, v in features.items()}
         out.append(Ranked(person=p, snap=snap, score=meet_score(features), features=features, families=families,
                           evidence=ev, candidate=cand, obvious=obvious, feedback=labels, group=_group_key(p, cand),
-                          labs=labs))
+                          labs=labs, gate=gate, projects=projects))
     return select_diverse(out, limit)
 
 
@@ -484,7 +602,15 @@ def why_person(r: Ranked, founder_of: Sequence[str], anchor: Company | None = No
     comps = r.snap.components or {}
     # Verified technical history leads ('412 commits to google-deepmind/mujoco'); never phrased as employment.
     out = [c.phrase(verb=False) for c in r.labs[:2]]
+    projects = getattr(r, "projects", None)
+    traction = next((f"New repository {q.repo}: {q.traction_text()}" for s in formation_events(r.evidence, projects)
+                     if projects and s.signal_type == "new_project" and (q := projects.get(s.id)) is not None
+                     and q.traction), None)
+    if traction and r.labs:
+        out.append(traction)  # verified history, then what they are building now
     out.append(f"Founder Score {round(r.founder_score)}/100")
+    if traction and not r.labs:
+        out.append(traction)
     for key in _FOUNDER_COMPONENTS:
         c = comps.get(key) or {}
         if key == "pedigree" and r.labs and ((c.get("raw") or {}).get("source") in (None, "lab_contribution")):
@@ -516,7 +642,8 @@ def why_now(r: Ranked, now: datetime) -> list[EvidenceItem]:
     seen: set[str] = set()
     recent = now - timedelta(days=RECENCY_DAYS)
     # The new project / young org (formation events) first, within the evidence window; then the newest evidence.
-    events = [s for s in formation_events(r.evidence) if s.event_at <= now + timedelta(days=1)]
+    events = [s for s in formation_events(r.evidence, getattr(r, "projects", None))
+              if s.event_at <= now + timedelta(days=1)]
     rest = [s for s in r.evidence.signals if s.event_at >= recent and s.signal_type not in TALENT_EVENT_TYPES]
     for s in [*events, *rest]:
         if s.title in seen:
@@ -618,10 +745,11 @@ def compute_week(session: Session, week: str | None = None, *, force: bool = Fal
                     "features": r.features,
                     "feedback": r.feedback,
                     "founder_score": round(r.founder_score, 1),
+                    "priority_gate": r.gate,
                     "score_day": r.snap.day.isoformat(),
                 }
                 session.add(MeetingRecommendation(
-                    week=week, person_id=r.person.id, rank=i, priority=priority_for(r.score, len(r.families)),
+                    week=week, person_id=r.person.id, rank=i, priority=r.priority,
                     score=r.score, reasons=reasons, evidence_count=len(r.evidence.signals),
                     confidence=confidence_for(len(r.families)),
                     formation_candidate_id=r.candidate.id if r.candidate is not None else None,

@@ -2,13 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { AttentionGapPlot } from "@/components/AttentionGapPlot";
 import { DemoBadge, NewBadge, VerificationBadge } from "@/components/Badges";
 import { CollisionStrip } from "@/components/CollisionStrip";
 import { FounderCard } from "@/components/FounderCard";
 import { SignalTimeline } from "@/components/SignalTimeline";
 import { ThesisTag } from "@/components/ThesisTag";
-import { loadCompany, loadGraph, loadLlmEnabled } from "@/components/entity/data";
+import { loadCompany, loadFormationFeed, loadGraph, loadStatus } from "@/components/entity/data";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { EntityGraph } from "@/components/entity/EntityGraph";
 import { EntityHeader } from "@/components/entity/EntityHeader";
@@ -16,8 +15,24 @@ import { FactsTable } from "@/components/entity/FactsTable";
 import { HiringPanel, MatchCandidates, PaperList, ReportsList, RepoTable, RiskList } from "@/components/entity/Lists";
 import { Momentum } from "@/components/entity/Momentum";
 import { evidenceIndex, NarrativeBlock } from "@/components/entity/NarrativeBlock";
+import { Delta } from "@/components/Delta";
 import { Contents, Quiet, Section, stageText } from "@/components/entity/primitives";
 import { Sources } from "@/components/entity/Sources";
+import { DataAge } from "@/components/DataAge";
+import { SourcesButton } from "@/components/SourceDrawer";
+import {
+  collisionLine,
+  familyPresence,
+  formationsFor,
+  sectionNumbers,
+  recentChanges,
+  velocityHighlights,
+  whyNowEvidence,
+  xModeFromStatus,
+} from "@/components/entity/entityLogic";
+import { AttentionGap2Block, IndependentSignals, ScoreCompact, WhatChanged, WhyNowLead } from "@/components/entity/WhyNowFirst";
+import { formationHref } from "@/components/formation/FormationCardView";
+import { FormationLabel } from "@/components/formation/Labels";
 import { today } from "@/lib/clock";
 import { daysBetween, externalHref, fmtDate, githubUrl, humanize, isSafeUrl, parseDate } from "@/lib/format";
 import type { ChartMarker } from "@/components/LineChart";
@@ -36,7 +51,25 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
 
   const c = detail.summary;
   const score = detail.anti_score;
-  const [graph, llmEnabled] = await Promise.all([loadGraph(c.id), loadLlmEnabled()]);
+  const [graph, status, formationFeed] = await Promise.all([loadGraph(c.id), loadStatus(), loadFormationFeed()]);
+  const llmEnabled = typeof status?.llm?.enabled === "boolean" ? status.llm.enabled : null;
+  const xMode = xModeFromStatus(status?.providers.find((p) => p.provider === "x"));
+  const jobsProvider = status?.providers.find((p) => p.provider === "jobs");
+  const now = new Date();
+  const asOf = today();
+  const collision = score?.collision ?? null;
+  const line = collisionLine(collision);
+  const whyEvidence = whyNowEvidence(score, 4);
+  const allEvidence = whyNowEvidence(score, 50);
+  const whyTitles = new Set(whyEvidence.map((e) => e.title));
+  // WHAT CHANGED adds to WHY NOW rather than repeating it.
+  const changes = recentChanges(detail.timeline.filter((e) => !whyTitles.has(e.title)), asOf, 30, 6);
+  const velocity = velocityHighlights(detail.velocity, 5);
+  const families = familyPresence(detail.data_age, allEvidence, {
+    socialAvailable: xMode === "official",
+    hiringAvailable: jobsProvider ? jobsProvider.state !== "disabled" : undefined,
+  });
+  const formations = formationsFor(formationFeed, c.id);
   const evidence = evidenceIndex(score);
   const stageFact = detail.facts.find((f) => /stage/i.test(f.label));
   const isNew = (() => {
@@ -50,11 +83,17 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
   ].slice(0, 4);
 
   // Numbered sections, in reading order. The table of contents is built from the same list.
-  const toc: { id: string; title: string }[] = [];
+  const hasGraph = Boolean(graph && graph.nodes.length > 1);
+  const numbers = sectionNumbers([
+    "why-now", "what-changed", "signals", "anti-score", "attention-gap", "timeline", "facts",
+    Boolean(score?.collision) && "collision", "momentum", "team", hasGraph && "team-graph", "repositories", "research", "hiring",
+    "why-anti", "risks", "reports", "duplicates", "sources",
+  ]);
+  const titles = new Map<string, string>();
   const sec = (id: string, title: string, children: ReactNode, right?: ReactNode, className?: string) => {
-    toc.push({ id, title });
+    titles.set(id, title);
     return (
-      <Section key={id} n={toc.length} id={id} title={title} right={right} className={className}>
+      <Section key={id} n={numbers.get(id)} id={id} title={title} right={right} className={className}>
         {children}
       </Section>
     );
@@ -63,12 +102,45 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
   const whyNow = sec(
     "why-now",
     "Why now",
-    detail.why_now ? (
-      <NarrativeBlock narrative={detail.why_now} evidence={evidence} size="lead" demo={c.is_demo} />
-    ) : (
-      <Quiet>No why-now narrative yet — not enough dated signals to say what changed.</Quiet>
-    ),
+    <WhyNowLead
+      narrative={detail.why_now}
+      evidence={whyEvidence}
+      collision={line}
+      demo={c.is_demo}
+      emptyText="No why-now yet — not enough dated signals to say what changed."
+    />,
+    formations.length > 0 ? (
+      <Link href={formationHref(formations[0])} className="hover:text-accent">
+        <FormationLabel label={formations[0].label} tier={formations[0].tier} /> →
+      </Link>
+    ) : undefined,
   );
+  const whatChanged = sec(
+    "what-changed",
+    "What changed",
+    <WhatChanged
+      events={changes}
+      velocity={velocity}
+      windowDays={30}
+      demo={c.is_demo}
+      scoreDelta={score ? { d7: score.delta_7d, d30: score.delta_30d, label: "Anti Score" } : null}
+    />,
+  );
+  const signals = sec(
+    "signals",
+    "Independent signals",
+    <IndependentSignals
+      families={families}
+      now={now}
+      drawer={<SourcesButton claim={`Independent signals behind ${c.name}`} evidence={allEvidence} demo={c.is_demo} />}
+    />,
+  );
+  const scoreSec = sec(
+    "anti-score",
+    "Anti Score",
+    <ScoreCompact score={score} value={c.score} label="Anti Score" history={detail.score_history} entityName={c.name} isDemo={c.is_demo} />,
+  );
+  const gap = sec("attention-gap", "Attention gap", <AttentionGap2Block gap={score?.attention_gap ?? null} />);
   const facts = sec("facts", "Facts", <FactsTable facts={detail.facts} demo={c.is_demo} />);
   const timeline = sec(
     "timeline",
@@ -76,24 +148,9 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
     detail.timeline.length ? <SignalTimeline events={detail.timeline} /> : <Quiet>No dated signals yet.</Quiet>,
     <span className="tnum">{detail.timeline.length} events</span>,
   );
-  const gap = sec(
-    "attention-gap",
-    "Attention gap",
-    score?.attention_gap ? (
-      <AttentionGapPlot gap={score.attention_gap} />
-    ) : (
-      <Quiet>Attention gap not computed — technical or attention inputs are missing for this entity.</Quiet>
-    ),
-  );
-  const collision = sec(
-    "collision",
-    "Signal collision",
-    score?.collision ? (
-      <CollisionStrip collision={score.collision} asOf={score.computed_on} />
-    ) : (
-      <Quiet>No collision — fewer than two independent source families moved inside the window.</Quiet>
-    ),
-  );
+  const collisionSec = score?.collision
+    ? sec("collision", "Collision window", <CollisionStrip collision={score.collision} asOf={score.computed_on} />)
+    : null;
   const momentum = sec("momentum", "Technical momentum", <Momentum series={detail.series} markers={markers} />);
   const founders = sec(
     "team",
@@ -198,6 +255,21 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
           history={detail.score_history}
           delta7d={c.delta_7d}
           isDemo={c.is_demo}
+          showScore={false}
+          aside={
+            <div className="space-y-3">
+              <p className="flex items-baseline justify-between gap-3">
+                <a href="#anti-score" className="label text-ink-2 hover:text-ink">
+                  Anti Score
+                </a>
+                <span className="flex items-baseline gap-3">
+                  <span className="tnum font-serif text-[30px] leading-none text-ink">{score?.total ?? c.score ?? "—"}</span>
+                  <Delta value={score?.delta_7d ?? c.delta_7d} period="7d" size="xs" />
+                </span>
+              </p>
+              <p className="text-[12px] leading-snug text-ink-3">Secondary to the evidence — read why now first; the score is decomposed further down.</p>
+            </div>
+          }
         />
         <EntityActions
           entityType="company"
@@ -209,18 +281,25 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
         />
       </div>
 
-      <Contents items={toc} />
+      <Contents items={[...numbers.keys()].filter((id) => titles.has(id)).map((id) => ({ id, title: titles.get(id)! }))} />
 
       <div className="mt-12 space-y-16">
+        {whyNow}
+        {whatChanged}
+        {signals}
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-y border-rule py-2.5" aria-label="Data age">
+          <span className="label shrink-0 text-ink">Data age</span>
+          <DataAge age={detail.data_age} now={now} />
+        </div>
         <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-          {whyNow}
-          {facts}
+          {scoreSec}
+          {gap}
         </div>
         <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
           {timeline}
           <div className="space-y-14">
-            {gap}
-            {collision}
+            {facts}
+            {collisionSec}
           </div>
         </div>
         {momentum}

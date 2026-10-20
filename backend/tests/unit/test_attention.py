@@ -94,3 +94,59 @@ def test_none_differs_from_zero():
     measured_zero = attention_gap(ent(hn_points_90d=0.0), c, 10.0, CFG)
     unmeasured = attention_gap(ent(), c, 10.0, CFG)
     assert measured_zero.attention == 0.0 and unmeasured.attention is None
+
+
+# ── Attention Gap 2.0 ────────────────────────────────────────────────────────
+
+
+def test_v2_fields_and_explanation():
+    _, c = _crowd()
+    f = ent(hn_points_90d=0.0, stars_total=50.0, stars_7d=70.0, stars_prev_28d=40.0, stars_30d=90.0,
+            new_contributors_30d=3.0, hn_mentions_90d=2)
+    r = attention_gap(f, c, 20.0, CFG)
+    attention_component(r, CFG)
+    api = r.to_api()
+    assert api["technical_score"] == round(r.technical, 1) and api["attention_score"] == round(r.attention, 1)
+    assert api["gap_points"] is not None and api["gap_points"] > 0
+    assert api["social_available"] is False and "X followers" in api["unavailable"]
+    assert "Press mentions" in api["unavailable"]
+    e = api["explanation"]
+    assert e.startswith(f"Technical momentum {r.technical:.0f} vs public attention {r.attention:.0f} — ")
+    assert "repo acceleration and new contributors with only 2 HN threads" in e
+    assert "press not measured" in e and e.endswith("; social attention unavailable")
+
+
+def test_unmeasured_attention_has_no_gap_points_and_says_so():
+    from radar.schemas.api import AttentionGap
+
+    _, c = _crowd()
+    r = attention_gap(ent(), c, 20.0, CFG)
+    attention_component(r, CFG)
+    api = r.to_api()
+    assert api["attention_score"] is None and api["gap_points"] is None
+    assert "public attention not measured — no gap claimed" in api["explanation"]
+    m = AttentionGap.model_validate(api)
+    assert m.attention_score is None and m.gap_points is None
+
+
+def test_social_available_when_x_measured():
+    feats = [ent(hn_points_90d=float(i), stars_total=float(i * 10), x_followers=float(i * 100)) for i in range(1, 21)]
+    c = cohort_of(feats, [float(i) for i in range(1, 21)])
+    r = attention_gap(ent(hn_points_90d=1.0, stars_total=5.0, x_followers=10.0), c, 20.0, CFG)
+    assert r.social_available and "social attention unavailable" not in r.explanation
+    assert "X followers" not in r.unavailable
+
+
+def test_schema_backfills_old_stored_attention():
+    from radar.schemas.api import AttentionGap
+
+    old = {"technical": 88.0, "attention": 29.0, "gap": 59.0, "flagged": True, "coverage": "partial",
+           "sources": [{"key": "hn_points", "label": "Hacker News points (90d)", "available": True, "value": 12.0,
+                        "percentile": 20.0},
+                       {"key": "x_followers", "label": "X followers", "available": False, "value": None,
+                        "percentile": None, "note": "X: unavailable"}]}
+    m = AttentionGap.model_validate(old)
+    assert m.technical_score == 88.0 and m.attention_score == 29.0 and m.gap_points is None
+    assert m.explanation == ("Technical momentum 88 vs public attention 29 — only 12 HN points; "
+                             "social attention unavailable")
+    assert m.unavailable == ["X followers"] and not m.social_available

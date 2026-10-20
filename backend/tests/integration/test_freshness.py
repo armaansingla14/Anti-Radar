@@ -178,3 +178,29 @@ def test_radar_feed_live_has_no_snapshot_fields(db, client):
     feed = client.get("/api/radar").json()
     assert feed["is_snapshot"] is False and feed["snapshot_age_days"] is None
     assert feed["data_as_of"] == DAY.isoformat() and feed["snapshot_note"] is None
+
+
+def test_person_github_family_from_key_repos_and_profile_checks(db):
+    from radar.models import RepoContributor
+
+    p = Person(slug="kz", name="KZ", github_handle="kz",
+               attrs={"talent_pool_observed_at": _dt(DAY - timedelta(days=6)).isoformat(),
+                      "activity_checked_at": "not-a-date"})
+    solo = Person(slug="solo", name="Solo", attrs={"activity_checked_at": _dt(DAY - timedelta(days=8)).isoformat()})
+    db.add_all([p, solo])
+    db.flush()
+    repo = Repository(full_name="lab/sim", owner="lab")
+    db.add(repo)
+    db.flush()
+    db.add_all([
+        RepoContributor(repository_id=repo.id, person_id=p.id, contributions=40),
+        MetricSnapshot(entity_type="repository", entity_id=repo.id, metric="stars", day=DAY - timedelta(days=2),
+                       value=5, source="observed"),
+        MetricSnapshot(entity_type="repository", entity_id=repo.id, metric="stars", day=DAY,
+                       value=6, source="backfill"),  # reconstructed: not an observation
+    ])
+    db.flush()
+    ages = freshness.data_age(db, "person", [p.id, solo.id])
+    assert ages[p.id].families["github"] == _dt(DAY - timedelta(days=2), 0)  # key repo observed metric
+    assert ages[solo.id].families["github"] == _dt(DAY - timedelta(days=8))  # recorded GitHub profile check
+    assert ages[solo.id].families["research"] is None

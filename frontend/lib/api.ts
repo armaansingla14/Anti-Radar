@@ -16,6 +16,8 @@ import type {
   FormationDetail,
   FormationFeed,
   GraphOut,
+  HomeFeed,
+  HomeWindow,
   IngestGithubRequest,
   IngestUrlRequest,
   IngestXRequest,
@@ -41,6 +43,7 @@ import type {
   WatchlistResponse,
   WatchRequest,
 } from "./types";
+import { legacyFeedbackLabel } from "./labels.ts";
 import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
 
 export class ApiError extends Error {
@@ -148,6 +151,8 @@ const enc = encodeURIComponent;
 
 // ── Feeds ────────────────────────────────────────────────────────────────────
 
+/** Home: counts, WHAT CHANGED and compact sections. `new` narrows to entities first seen today / this week. */
+export const getHome = (params?: { new?: HomeWindow }) => get<HomeFeed>("/home", params);
 export const getRadar = (params?: { new_only?: boolean; theme?: string; include_demo?: boolean }) =>
   get<RadarFeed>("/radar", params);
 export const getDaily = (params?: { since?: string }) => get<DailyRadar>("/daily", params);
@@ -199,7 +204,21 @@ export const getWatchlist = () => get<WatchlistResponse>("/watchlist");
 export const addWatch = (req: WatchRequest) => post<WatchlistEntry>("/watchlist", req);
 export const removeWatch = (itemOrEntityId: string) => request<OkOut>("DELETE", `/watchlist/${enc(itemOrEntityId)}`);
 export const markWatchlistSeen = () => post<OkOut>("/watchlist/seen", {});
-export const postFeedback = (req: FeedbackRequest) => post<FeedbackOut>("/feedback", req);
+/**
+ * Record analyst feedback. v2 labels (interesting, strong_founder, …) are
+ * retried once with the nearest legacy label if an older backend rejects them (422).
+ */
+export async function postFeedback(req: FeedbackRequest): Promise<FeedbackOut> {
+  try {
+    return await post<FeedbackOut>("/feedback", req);
+  } catch (err) {
+    const legacy = legacyFeedbackLabel(req.label);
+    if (err instanceof ApiError && err.status === 422 && legacy) {
+      return post<FeedbackOut>("/feedback", { ...req, label: legacy, note: req.note ?? `v2:${req.label}` });
+    }
+    throw err;
+  }
+}
 
 export const ingestGithub = (req: IngestGithubRequest) => post<IngestOut>("/ingest/github", req);
 export const ingestUrl = (req: IngestUrlRequest) => post<IngestOut>("/ingest/url", req);

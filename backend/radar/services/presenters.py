@@ -13,7 +13,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, select
@@ -44,7 +44,7 @@ from radar.schemas.api import (
     VelocityMetric,
 )
 from radar.scoring.run import anti_score_from_snapshot
-from radar.services.freshness import light_data_age
+from radar.services.freshness import SOURCE_FAMILY, light_data_age
 from radar.thesis.loader import get_thesis
 
 NEW_DAYS = 7
@@ -560,6 +560,184 @@ def why_anti(c: Company, tags: Sequence[TopicTag], snap: ScoreSnapshot | None) -
     return lines
 
 
+# ── trust: confidence, why-now sentence, recent change ───────────────────────
+
+CONF_HIGH_FAMILIES, CONF_HIGH_EVIDENCE = 3, 4
+CONF_MEDIUM_FAMILIES = 2
+CONF_HIGH_MIN_VERIFIED = 0.5  # HIGH also needs at least half the evidence directly cited (signal / URL)
+WHY_NOW_CLAUSES = 3
+
+
+def confidence_for(families: Iterable[str] | int, evidence_count: int, verified_share: float | None = None) -> str:
+    """Card confidence from evidence breadth (deterministic):
+
+    * HIGH CONFIDENCE — >= 3 independent source families and >= 4 evidence items (and, when known,
+      at least half of the evidence directly cited);
+    * MEDIUM CONFIDENCE — >= 2 independent families;
+    * EARLY SIGNAL — otherwise (one family, or nothing dated/cited)."""
+    n = families if isinstance(families, int) else len(set(families))
+    cited_ok = verified_share is None or verified_share >= CONF_HIGH_MIN_VERIFIED
+    if n >= CONF_HIGH_FAMILIES and evidence_count >= CONF_HIGH_EVIDENCE and cited_ok:
+        return "HIGH CONFIDENCE"
+    if n >= CONF_MEDIUM_FAMILIES:
+        return "MEDIUM CONFIDENCE"
+    return "EARLY SIGNAL"
+
+
+def ago_phrase(at: datetime, now: datetime | None = None) -> str:
+    """'today' / 'yesterday' / '5 days ago' / '3 weeks ago' / '4 months ago' on the data clock."""
+    now = now or clock.now()
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=now.tzinfo)
+    days = (now.date() - at.date()).days
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    if days < 21:
+        return f"{days} days ago"
+    if days < 70:
+        return f"{round(days / 7)} weeks ago"
+    return f"{round(days / 30)} months ago"
+
+
+def _clause(e: EvidenceItem, now: datetime, dated: bool = True) -> str:
+    title = (e.title or "").strip().rstrip(".")
+    if len(title) > 90:
+        title = title[:89].rsplit(" ", 1)[0] + "…"
+    return f"{title} ({ago_phrase(e.event_at, now)})" if dated and e.event_at else title
+
+
+def _evidence_family(e: EvidenceItem) -> str | None:
+    return SOURCE_FAMILY.get(e.source_type or "")
+
+
+_SLUG_IN_TEXT = re.compile(r"\b[\w.\-]+/[\w.\-]+\b")
+
+
+def _same_story(a: EvidenceItem, b: EvidenceItem) -> bool:
+    """Two evidence lines telling one story: one title contains the other ('FDE-Gym …' / 'Code for arXiv
+    paper: FDE-Gym …'), or both name the same owner/repo on the same day."""
+    ta, tb = (a.title or "").lower().strip(), (b.title or "").lower().strip()
+    if ta and tb and (ta in tb or tb in ta):
+        return True
+    if a.event_at and b.event_at and _aware(a.event_at).date() == _aware(b.event_at).date():
+        return bool(set(_SLUG_IN_TEXT.findall(ta)) & set(_SLUG_IN_TEXT.findall(tb)))
+    return False
+
+
+def _dedupe(items: Iterable[EvidenceItem]) -> list[EvidenceItem]:
+    out: list[EvidenceItem] = []
+    seen = set()
+    for e in items:
+        k = e.signal_id or (e.title, e.source_url)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(e)
+    return out
+
+
+@dataclass(frozen=True)
+class CardTrust:
+    confidence: str
+    why_now_sentence: str
+    recent_change: str | None
+    sources_count: int
+    families: tuple[str, ...]
+
+
+# Signals dated when *observed* rather than when the change happened (metric restatements, website
+# language): they are measurements with their own window in the title, never "dated changes".
+OBSERVATION_DATED_TYPES = frozenset({"formation_language"})
+
+
+def observation_dated_ids(session: Session, evidence: Iterable[EvidenceItem]) -> set[str]:
+    """Signal ids (as str) among ``evidence`` whose type is observation-dated (one query)."""
+    from radar.scoring.features import MEASUREMENT_SIGNAL_TYPES
+
+    ids = []
+    for e in evidence:
+        if not e.signal_id:
+            continue
+        try:
+            ids.append(uuid.UUID(e.signal_id))
+        except ValueError:
+            continue
+    if not ids:
+        return set()
+    types = MEASUREMENT_SIGNAL_TYPES | OBSERVATION_DATED_TYPES
+    rows = session.execute(select(Signal.id, Signal.signal_type).where(Signal.id.in_(ids)))
+    return {str(i) for i, t in rows if t in types}
+
+
+def card_trust(evidence: Iterable[EvidenceItem], now: datetime | None = None,
+               observed: set[str] | frozenset[str] = frozenset()) -> CardTrust:
+    """Confidence / why-now / recent change from a card's evidence (why_surfaced + collision evidence).
+
+    Only evidence from a real source family counts (system lines like 'Signal collision: …' do not).
+    ``observed`` = signal ids dated at observation time (``observation_dated_ids``): they are treated as
+    measurements (undated). The why-now sentence leads with the strongest measurement, then the strongest
+    *dated* events (weight, then recency), at most three clauses, one per story. The recent change is the
+    newest dated event. Nothing is invented: no evidence -> '' / None."""
+    now = now or clock.now()
+    future = now + timedelta(days=1)  # evidence dated after the as-of time is not evidence for it
+    items = [e for e in _dedupe(evidence)
+             if _evidence_family(e) and (e.event_at is None or _aware(e.event_at) <= future)]
+    families = tuple(sorted({f for e in items if (f := _evidence_family(e))}))
+    cited = [e for e in items if e.signal_id or e.source_url]
+    share = len(cited) / len(items) if items else None
+    is_event = [e.event_at is not None and (e.signal_id or "") not in observed for e in items]
+    events = [e for e, ev in zip(items, is_event, strict=True) if ev]
+    # Measurements with a number ("+616 stars in 30 days") lead; other undated facts follow.
+    measures = sorted((e for e, ev in zip(items, is_event, strict=True) if not ev),
+                      key=lambda e: not re.search(r"\d", e.title or ""))
+    picked: list[tuple[EvidenceItem, bool]] = []
+    for e, dated in [*((m, False) for m in measures[:1]),
+                     *((e, True) for e in sorted(events, key=lambda e: (e.weight or 0.0, _aware(e.event_at)),
+                                                 reverse=True))]:
+        if len(picked) >= WHY_NOW_CLAUSES:
+            break
+        if not any(_same_story(e, p) for p, _ in picked):
+            picked.append((e, dated))
+    head = [p for p in picked if not p[1]]
+    tail = sorted((p for p in picked if p[1]), key=lambda p: _aware(p[0].event_at), reverse=True)
+    sentence = "; ".join(_clause(e, now, dated) for e, dated in head + tail)
+    newest = max(events, key=lambda e: _aware(e.event_at), default=None)
+    return CardTrust(
+        confidence=confidence_for(families, len(items), share),
+        why_now_sentence=sentence,
+        recent_change=_clause(newest, now) if newest else None,
+        sources_count=len(families),
+        families=families,
+    )
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _with_gap_points(ascore: AntiScore | None, snap: ScoreSnapshot | None) -> AntiScore | None:
+    """Fill AttentionGap.gap_points from the stored component for snapshots that predate it."""
+    gap = ascore.attention_gap if ascore else None
+    if gap is None or gap.gap_points is not None or gap.attention_score is None or snap is None:
+        return ascore
+    comp = (snap.components or {}).get("attention_gap") or {}
+    if isinstance(comp.get("value"), int | float):
+        gap.gap_points = round(float(comp["value"]), 2)
+    return ascore
+
+
+def _set_trust(session: Session, cards: list[IntelCard]) -> None:
+    """Fill confidence / why_now_sentence / recent_change / sources_count on cards (one signal-type query)."""
+    allev = [e for c in cards for e in [*c.why_surfaced, *(c.collision.evidence if c.collision else [])]]
+    observed = observation_dated_ids(session, allev)
+    for c in cards:
+        t = card_trust([*c.why_surfaced, *(c.collision.evidence if c.collision else [])], observed=observed)
+        c.confidence, c.why_now_sentence = t.confidence, t.why_now_sentence
+        c.recent_change, c.sources_count = t.recent_change, t.sources_count
+
+
 # ── sparklines ───────────────────────────────────────────────────────────────
 
 
@@ -731,14 +909,15 @@ def company_cards(session: Session, companies: Sequence[Company], start_rank: in
     cards = []
     for i, c in enumerate(companies):
         snap = snaps.get(c.id)
-        ascore = anti_score_from_snapshot(snap) if snap else None
+        ascore = _with_gap_points(anti_score_from_snapshot(snap) if snap else None, snap)
         dn = display_name(c)
+        why = why_surfaced(snap, mets.get(c.id))
         cards.append(IntelCard(
             rank=start_rank + i, entity_type="company", id=str(c.id), slug=c.slug, name=dn.name,
             raw_name=dn.raw_if_changed, name_note=dn.note,
             kind_label=kind_label(c, tags.get(c.id, [])), one_liner=one_liner(c),
             score=round(snap.score) if snap else 0, delta_7d=d7.get(c.id), delta_30d=d30.get(c.id),
-            thesis_tags=tags.get(c.id, []), why_surfaced=why_surfaced(snap, mets.get(c.id)),
+            thesis_tags=tags.get(c.id, []), why_surfaced=why,
             why_anti=why_anti(c, tags.get(c.id, []), snap), why_anti_epistemic="INFERENCE",
             attention_gap=ascore.attention_gap if ascore else None,
             collision=ascore.collision if ascore else None,
@@ -747,6 +926,7 @@ def company_cards(session: Session, companies: Sequence[Company], start_rank: in
             watched=c.id in watched, is_demo=c.is_demo, data_note=data_note(c.is_demo),
             data_age=light_data_age(c),
         ))
+    _set_trust(session, cards)
     return cards
 
 
@@ -762,7 +942,7 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
     cards = []
     for i, p in enumerate(people):
         snap = snaps.get(p.id)
-        ascore = anti_score_from_snapshot(snap) if snap else None
+        ascore = _with_gap_points(anti_score_from_snapshot(snap) if snap else None, snap)
         why = [EvidenceItem.model_validate(e) for e in _person_evidence(snap)]
         domains = ", ".join(theme_label(d) for d in (p.domains or [])[:2])
         lines = []
@@ -786,6 +966,7 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
             watched=p.id in watched, is_demo=p.is_demo, data_note=data_note(p.is_demo),
             data_age=light_data_age(p),
         ))
+    _set_trust(session, cards)
     return cards
 
 

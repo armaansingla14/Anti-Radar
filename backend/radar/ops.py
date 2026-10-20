@@ -331,12 +331,14 @@ def refine_topics_with_llm(limit: int = 60) -> int:
 
 
 SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe",
-                                 "score", "meet", "brief")
+                                 "x", "score", "meet", "brief")
 # 'formation' (relationships + formation candidates) runs after 'score'. The default sweep does not list it
 # separately because 'score' (= recompute) already ends with it; `--only formation` refreshes just that part.
 # 'meet' stores the current ISO week's Who-Should-We-Meet ranking if it is missing (never reshuffles a stored week).
-ALL_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "score",
-                              "formation", "meet", "brief", "retention")
+ALL_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "x",
+                              "score", "formation", "meet", "brief", "retention")
+# 'x' runs official X API discovery (config/x_seeds.yaml) only when X_BEARER_TOKEN is set; otherwise it records a
+# 'skipped' run ("API access not configured") so status shows X as DISABLED with a reason.
 # 'talent' refreshes a rotating slice of the verified talent pool (frontier-lab contributors, weekly per org) and
 # checks the pool's recent activity (new repos, young orgs) daily; see config/talent_sources.yaml.
 ORGS_QUERIES_PER_RUN = 10
@@ -519,6 +521,10 @@ def _step_ingest(step: str) -> Any:
         return probe_attention()
     if step == "web":
         return crawl_company_sites(limit=15)
+    if step == "x":
+        from radar.providers.x.sweep import ingest_x_sweep
+
+        return ingest_x_sweep()
     raise ValueError(step)
 
 

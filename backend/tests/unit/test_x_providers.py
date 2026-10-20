@@ -219,3 +219,223 @@ def test_mock_serves_only_demo_fixtures(thesis):
         mock.recent_posts("elonmusk")
     with pytest.raises(NotADemoHandle):
         MockXProvider([{"handle": "realperson", "posts": [{"id": "1", "text": "hi", "created_at": "2026-01-01"}]}])
+
+
+# ── V2: names, seeds config, official discovery, sweep step ──
+from datetime import date  # noqa: E402
+
+from radar.providers.x.api import OfficialXProvider  # noqa: E402
+from radar.providers.x.discovery import (  # noqa: E402
+    XSeeds,
+    build_queries,
+    discover,
+    keep_post,
+    load_x_seeds,
+    matched_discovery_phrases,
+    rotate,
+)
+from radar.providers.x.manual import ManualXProvider  # noqa: E402
+
+SEARCH = "https://api.x.com/2/tweets/search/recent"
+NOW = datetime(2026, 10, 20, 12, tzinfo=UTC)
+DAY = date(2026, 10, 20)
+
+
+def test_v2_names_and_aliases():
+    assert XApiProvider is OfficialXProvider and ManualXSignalProvider is ManualXProvider
+    assert isinstance(get_x_provider(Settings(x_bearer_token="t")), OfficialXProvider)
+    assert isinstance(get_x_provider(Settings(x_bearer_token=None)), DisabledXProvider)
+
+
+def test_repo_x_seeds_config_builds_valid_queries():
+    seeds = load_x_seeds(FIXTURES.parents[2] / "config" / "x_seeds.yaml")
+    assert seeds.seed_accounts == []  # empty by default
+    for p in ("building something new", "starting something", "we're hiring", "founding engineer", "new company",
+              "left {company}", "new project", "new paper", "launching today", "stealth"):
+        assert p in seeds.phrases
+    qs = build_queries(seeds)
+    assert qs and all(len(q.text) <= seeds.limits.max_query_chars for q in qs)
+    assert {q.phrase for q in qs} == set(seeds.phrases)
+    left = next(q for q in qs if q.phrase == "left {company}")
+    assert '"left OpenAI"' in left.text and "{company}" not in left.text
+    assert all(q.text.endswith("-is:retweet -is:reply lang:en") for q in qs)
+    # every thesis term lands in at least one query of each phrase
+    for phrase in seeds.phrases:
+        joined = " ".join(q.text for q in qs if q.phrase == phrase)
+        assert all(t.split()[0] in joined for t in seeds.thesis_terms)
+
+
+def test_query_chunking_respects_length_limit():
+    seeds = XSeeds(phrases=["new paper"], thesis_terms=[f"term{i}" for i in range(60)],
+                   limits={"max_query_chars": 120}, query_suffix="-is:retweet")
+    qs = build_queries(seeds)
+    assert len(qs) > 1 and all(len(q.text) <= 120 for q in qs)
+    assert qs[0].text.startswith('"new paper" (term0 OR term1')
+
+
+def test_seed_accounts_are_validated():
+    assert XSeeds(seed_accounts=["@Some_Handle", "some_handle"]).seed_accounts == ["Some_Handle"]
+    with pytest.raises(ValueError):
+        XSeeds(seed_accounts=["not a handle!"])
+
+
+def test_rotate_covers_everything_over_days():
+    items = list(range(7))
+    seen: set[int] = set()
+    for d in range(4):
+        win = rotate(items, 2, date(2026, 10, 1 + d))
+        assert len(win) == 2
+        seen |= set(win)
+    assert seen == set(items) and rotate(items, 0, DAY) == [] and rotate(items[:2], 5, DAY) == items[:2]
+
+
+def test_discovery_phrase_matching_and_keep_rule(thesis):
+    seeds = XSeeds(phrases=["new paper", "left {company}"], departure_companies=["OpenAI"])
+    assert matched_discovery_phrases("Our NEW  paper on tactile sensing is out", seeds) == ["new paper"]
+    assert matched_discovery_phrases("I left OpenAI last week", seeds) == ["left OpenAI"]
+    assert matched_discovery_phrases("renewed papers", seeds) == []
+    mk = lambda t: XPost(id="1", author_username="a", text=t, created_at=NOW, url="https://x.com/a/status/1")  # noqa: E731
+    assert keep_post(mk("Our new paper on robot learning"), thesis, seeds) == (True, ["new paper"])
+    assert keep_post(mk("Working on something new in robotics"), thesis, seeds)[0] is True  # formation phrase
+    assert keep_post(mk("Great robotics talk today"), thesis, seeds) == (False, [])
+
+
+def _search_body(posts, users):
+    return {"data": posts, "includes": {"users": users}, "meta": {"result_count": len(posts)}}
+
+
+P1 = {"id": "2105674093163446272", "text": "Just left OpenAI. Building something new in robotics. Stealth for now.",
+      "created_at": "2026-10-18T15:00:00.000Z", "author_id": "11", "public_metrics": {"like_count": 40}}
+P2 = {"id": "2105674093163446273", "text": "Nice robotics demo at the conference",  # generic → dropped
+      "created_at": "2026-10-18T16:00:00.000Z", "author_id": "12"}
+P3 = {"id": "2105674093163446274", "text": "New paper: tactile world models for dexterous manipulation",
+      "created_at": "2026-10-19T09:00:00.000Z", "author_id": "11"}
+ORPHAN = {"id": "2105674093163446275", "text": "stealth robotics co", "created_at": "2026-10-19T09:00:00.000Z",
+          "author_id": "999"}
+U11 = {"id": "11", "username": "AdaBuilds", "name": "Ada", "description": "ex-OpenAI. robots.",
+       "public_metrics": {"followers_count": 812}}
+U12 = {"id": "12", "username": "confbot", "name": "Conf"}
+
+
+def _seeds(**kw):
+    base = {"phrases": ["stealth", "new paper", "building something new"], "thesis_terms": ["robotics", "tactile"],
+            "limits": {"request_budget": 3, "max_results": 10}}
+    base.update(kw)
+    return XSeeds.model_validate(base)
+
+
+@respx.mock
+def test_official_discovery_maps_posts_to_people_with_real_urls(thesis):
+    bodies = [_search_body([P1, P2, ORPHAN], [U11, U12]), _search_body([P3, P1], [U11]), _search_body([], [])]
+    route = respx.get(SEARCH).mock(side_effect=[
+        httpx.Response(200, json=b, headers={"x-rate-limit-remaining": str(400 - i), "x-rate-limit-reset": "1791000000"})
+        for i, b in enumerate(bodies)])
+    api = OfficialXProvider("tok", client=HttpClient(max_retries=0))
+    batch, info = discover(api, _seeds(), thesis=thesis, day=DAY, now=NOW)
+    assert route.call_count == 3 and info["requests"] == 3 and info["stopped"] == "request_budget"
+    req = route.calls[0].request
+    assert req.headers["Authorization"] == "Bearer tok"
+    assert req.url.params["start_time"] == "2026-10-13T12:01:00Z" and req.url.params["max_results"] == "10"
+    assert "username" in req.url.params["user.fields"] and "author_id" in req.url.params["expansions"]
+    # P1 deduped across queries, P2 generic dropped, orphan (no author expansion) never attributed
+    assert info["posts_seen"] == 3 and info["posts_kept"] == 2 and info["posts_dropped"] == 1
+    assert {s.entity.key for s in batch.signals} == {"x:adabuilds"}
+    urls = {s.source_url for s in batch.signals}
+    assert urls == {"https://x.com/AdaBuilds/status/2105674093163446272",
+                    "https://x.com/AdaBuilds/status/2105674093163446274"}
+    by_id = {s.metadata["post_id"]: s for s in batch.signals}
+    assert by_id[P1["id"]].signal_type == "x_formation_post" and by_id[P1["id"]].epistemic == "FACT"
+    assert by_id[P1["id"]].metadata["source"] == "x_api" and by_id[P1["id"]].metadata["ingest"] == "x_search"
+    assert by_id[P3["id"]].metadata["discovery_phrases"] == ["new paper"]
+    assert [p.ref.key for p in batch.people] == ["x:adabuilds"] and batch.people[0].followers == 812
+    assert len(batch.metrics) == 1 and batch.errors == [] and batch.provider == "x"
+    assert info["rate_limit_remaining"] == 398 and api.client.stats.rate_limit_remaining == 398
+
+
+@respx.mock
+def test_discovery_stops_cleanly_when_quota_exhausted(thesis):
+    route = respx.get(SEARCH).mock(return_value=httpx.Response(
+        200, json=_search_body([P1], [U11]), headers={"x-rate-limit-remaining": "0", "x-rate-limit-reset": "1791000000"}))
+    api = OfficialXProvider("tok", client=HttpClient(max_retries=0))
+    batch, info = discover(api, _seeds(), thesis=thesis, day=DAY, now=NOW)
+    assert route.call_count == 1  # data of the last allowed call is kept, nothing more is requested
+    assert info["stopped"] == "rate_limited" and info["rate_limited_until"].startswith("2026-")
+    assert len(batch.signals) == 1 and batch.errors == []
+
+
+@respx.mock
+def test_discovery_429_is_a_clean_stop_not_an_error(thesis):
+    route = respx.get(SEARCH).mock(return_value=httpx.Response(429, headers={"x-rate-limit-reset": "1791000000"}))
+    api = OfficialXProvider("tok", client=HttpClient(max_retries=0))
+    batch, info = discover(api, _seeds(), thesis=thesis, day=DAY, now=NOW)
+    assert route.call_count == 1 and info["stopped"] == "rate_limited"
+    assert batch.errors == [] and batch.signals == [] and api.client.stats.errors == 0
+
+
+@respx.mock
+def test_discovery_records_access_errors(thesis):
+    respx.get(SEARCH).mock(return_value=httpx.Response(403, json={"title": "Forbidden"}))
+    batch, info = discover(OfficialXProvider("tok", client=HttpClient(max_retries=0)), _seeds(), thesis=thesis,
+                           day=DAY, now=NOW)
+    assert len(batch.errors) == 3 and all("HTTP 403" in e for e in batch.errors) and info["stopped"] == "request_budget"
+
+
+@respx.mock
+def test_discovery_reads_seed_accounts_within_budget(thesis):
+    respx.get("https://api.x.com/2/users/by/username/testfounder").mock(
+        return_value=httpx.Response(200, json=_fx("api_user.json")))
+    respx.get("https://api.x.com/2/users/1500000000000000001/tweets").mock(
+        return_value=httpx.Response(200, json=_fx("api_tweets.json")))
+    search = respx.get(SEARCH).mock(return_value=httpx.Response(200, json=_search_body([], [])))
+    seeds = _seeds(seed_accounts=["testfounder"], limits={"request_budget": 4, "max_results": 10})
+    api = OfficialXProvider("tok", client=HttpClient(max_retries=0))
+    batch, info = discover(api, seeds, thesis=thesis, day=DAY, now=NOW)
+    assert info["seed_accounts"][0]["handle"] == "testfounder" and search.call_count == 2 and info["requests"] == 4
+    assert batch.signals and all(s.entity.key == "x:testfounder" for s in batch.signals)
+    assert all(s.metadata["ingest"] == "x_seed" for s in batch.signals)
+    assert all(s.signal_type != "x_post" or s.metadata["discovery_phrases"] for s in batch.signals)
+
+
+def test_x_step_is_in_sweep_and_cli_lists():
+    from radar import cli, ops
+
+    assert "x" in ops.SWEEP_STEPS and "x" in ops.ALL_STEPS and cli._ALL_STEPS == ops.ALL_STEPS
+    assert ops.ALL_STEPS.index("x") < ops.ALL_STEPS.index("score")
+
+
+def test_sweep_step_without_token_records_skipped_run(db, monkeypatch):
+    from sqlalchemy import select
+
+    from radar import ops
+    from radar.models import IngestionRun
+    from radar.providers.x import sweep as xsweep
+    from radar.services.status import system_status
+
+    monkeypatch.setattr(xsweep, "get_settings", lambda: Settings(x_bearer_token=None))
+    out = ops.run_step("x")
+    assert out["status"] == "skipped"
+    db.expire_all()
+    [run] = db.scalars(select(IngestionRun).where(IngestionRun.provider == "x")).all()
+    assert run.status == "skipped" and run.errors == ["API access not configured"] and run.finished_at
+    monkeypatch.setattr("radar.services.status.get_settings", lambda: Settings(x_bearer_token=None))
+    x = next(p for p in system_status(db).providers if p.provider == "x")
+    assert x.state == "disabled" and "not configured" in (x.reason or "")
+
+
+@respx.mock
+def test_sweep_step_with_token_runs_discovery(db, thesis):
+    from sqlalchemy import select
+
+    from radar.models import IngestionRun, Signal
+    from radar.providers.x.sweep import ingest_x_sweep
+
+    respx.get(SEARCH).mock(return_value=httpx.Response(200, json=_search_body([P1], [U11]),
+                                                       headers={"x-rate-limit-remaining": "120"}))
+    api = OfficialXProvider("tok", client=HttpClient(max_retries=0))
+    run, _ = ingest_x_sweep(Settings(x_bearer_token="tok"), seeds=_seeds(limits={"request_budget": 1}), provider=api)
+    assert run.status == "ok" and run.provider == "x" and run.request_count == 1 and run.rate_limit_remaining == 120
+    assert run.params["mode"] == "official_search" and run.params["posts_kept"] == 1
+    db.expire_all()
+    [sig] = db.scalars(select(Signal).where(Signal.source_type == "x")).all()
+    assert sig.source_url == "https://x.com/AdaBuilds/status/2105674093163446272"
+    assert db.scalars(select(IngestionRun)).one().status == "ok"

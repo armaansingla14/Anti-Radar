@@ -5,7 +5,9 @@ Candidates
 (a) **team** — a company of kind project/company/stealth whose GitHub organization (or
     first public repository) was created within ``YOUNG_DAYS`` and which has >= 2 linked
     people (listed members, or contributors with >= 3 commits). Labs, academic domains and
-    established stages (growth/public) are excluded.
+    established stages (growth/public) are excluded. A GitHub organization's own creation date
+    is its age even when a repository inside it is older (moved in — the evidence says so;
+    ``company_created_info``).
 (b) **person** — someone with their *own* formation_language / x_formation_post (self-reported,
     INFERRED) or affiliation_changed signal in the last ``PERSON_SIGNAL_DAYS`` days — or a
     **talent-pool** person (verified lab-repository commits, ``Person.attrs['lab_contributions']``)
@@ -17,21 +19,31 @@ Candidates
 
 Off-thesis team anchors (thesis fit < ``THESIS_GATE``) are excluded.
 
+A ``new_project`` counts only with traction (>= 25 stars, >= 5 forks or >= 2 other contributors) or, for a
+non-trivial repository by someone not creating repositories in series, thesis depth (>= 2 thesis
+subcategories) — ``extract.assess_new_project``. Traction adds its own evidence kind (``project_traction``),
+and a person's new repository's stars since creation stand in for the star rate when no 30-day delta is
+measurable; for teams the anchor repositories' lifetime star rate does (labelled as such).
+
+Every anchor considered and left out is recorded with a reason (``compute(..., rejected=[])``,
+``explain(session, ref)``, ``python -m radar.scoring.formation --explain <org|person>``); ``run`` reports
+counts by reason.
+
 Evidence scope: a candidate cites only signals about the anchor (the org/person and its own
 repositories) plus members' *own* formation signals (affiliation/bio change, formation
 language). A member's activity on unrelated repositories is never cited.
 
 FORMATION SCORE (/100, deterministic, every component carries its evidence)
 --------------------------------------------------------------------------
-* founder_quality    25  top-3 member Founder Scores (0.5/0.3/0.2) and best pedigree strength (verified lab
-                         commits / public org membership in full; listed/self-reported affiliation x 0.7)
+* founder_quality    25  60% top-3 member Founder Scores (0.5/0.3/0.2) + 40% best pedigree strength (verified
+                         lab commits / public org membership in full; listed/self-reported affiliation x 0.7)
 * team_convergence   25  ``scoring.convergence`` (prior ties that predate the anchor, incl. lab-alumni ties)
-* technical_activity 20  anchor commits / stars / new contributors / releases, percentiles vs
+* technical_activity 20  anchor commits / stars (or lifetime star rate) / new contributors / releases, percentiles vs
                          the day's candidate cohort; nothing measured -> 0 ("insufficient history")
 * formation_evidence 20  distinct kinds of formation evidence (org created, working team, founding
                          team = >= 2 members' first commits within 30 days of creation, first job
                          post, website, launch, formation language, affiliation change, young org,
-                         new repository of their own, lab-alumni cluster)
+                         new repository of their own, new repository with traction, lab-alumni cluster)
 * novelty_attention  10  first-seen recency (6) + attention gap where measured (4; unmeasured -> 0)
 
 Tiers: high (>= 70, >= 3 independent source families and convergence >= MEDIUM), emerging
@@ -82,13 +94,16 @@ from radar.scoring.convergence import (
     load_pair_relationships,
 )
 from radar.scoring.extract import (
+    NewProjectQuality,
     SignalIndex,
     _merge_topics,
     _topics,
+    assess_new_project_signals,
     load_signal_index,
     org_created_date,
     person_affiliation_tier,
     person_lab_contributions,
+    talent_theme_hints,
 )
 from radar.scoring.features import (
     FORMATION_EVENT_TYPES,
@@ -128,7 +143,7 @@ MAX_MEMBERS = 12
 TEAM_KINDS = frozenset({"project", "company", "stealth"})
 EXCLUDED_STAGES = frozenset({"growth", "public"})
 TOP_FOUNDER_WEIGHTS = (0.5, 0.3, 0.2)
-FQ_SCORE_SHARE, FQ_TIER_SHARE = 0.75, 0.25
+FQ_SCORE_SHARE, FQ_TIER_SHARE = 0.6, 0.4
 TECH_WEIGHTS = {"commits": 0.35, "stars": 0.30, "contributors": 0.20, "releases": 0.15}
 TECH_ANCHORS = {"commits": math.log1p(15), "stars": math.log1p(20), "contributors": math.log1p(1),
                 "releases": math.log1p(2)}
@@ -142,6 +157,7 @@ HIGH_MIN_FAMILIES = 3
 EMERGING_MIN_FAMILIES = 2
 HIGH_MIN_CONVERGENCE = ("MEDIUM", "HIGH")
 ESTABLISHED_FOLLOWERS = 50
+LAB_HINT_THEME_SCORE = 0.5  # thesis evidence of verified lab commits for an otherwise unclassified person
 # Source families shown to users (same vocabulary as services/freshness.py and the UI).
 FORMATION_FAMILY: dict[str, str] = {"github": "github", "arxiv": "research", "jobs": "hiring", "website": "web",
                                     "hackernews": "community", "x": "social"}
@@ -171,11 +187,28 @@ EVIDENCE_KIND_LABELS = {
     "affiliation_change": "affiliation/bio change",
     "young_org": "joined a young organization",
     "new_project": "new repository of their own",
+    "project_traction": "new repository with traction",
     "lab_alumni": "lab alumni committing together",
 }
 
 
 # ── Inputs ───────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Rejection:
+    """Why an anchor (young org / person) is not a formation candidate (``compute(..., rejected=[])``)."""
+
+    anchor_type: str  # company | person
+    anchor_id: uuid.UUID
+    slug: str
+    name: str
+    reason: str  # stable key: not_young, created_unknown, curated_list, too_few_members, off_thesis, ...
+    detail: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {"anchor_type": self.anchor_type, "anchor_id": str(self.anchor_id), "slug": self.slug,
+                "name": self.name, "reason": self.reason, "detail": self.detail}
 
 
 @dataclass
@@ -316,7 +349,9 @@ def founder_quality(members: Sequence[MemberInfo], kind: str = "team") -> dict[s
             sr = ", self-reported" if tier_member.self_reported else ""
             parts.append(f"{tier_member.name} lists {tier_member.tier_match} ({tier}{sr})")
         if len(lab_members) >= 2 and kind != "person":
-            parts.append(f"{number_word(len(lab_members), True)} members have verified lab-repository commits")
+            others = [m for m in lab_members if m.id != tier_member.id][:2]
+            parts.append("also " + "; ".join(f"{m.name}: {m.lab_contributions[0].phrase(verb=False)}" for m in others)
+                         + f" — {number_word(len(lab_members))} members with verified lab-repository commits")
     else:
         parts.append("no member affiliation on the thesis tier lists")
     evidence = []
@@ -372,12 +407,18 @@ def tech_row(metrics: dict[str, float | None], kind: str) -> dict[str, float | N
         return None if v is None else math.log1p(max(v, 0.0) * 7 / per_days)
 
     if kind == "person":
-        return {"commits": lv(metrics.get("commits_30d"), 30), "stars": lv(metrics.get("stars_30d"), 30),
+        stars = metrics.get("stars_30d")
+        if stars is None:
+            stars = metrics.get("new_project_stars_30d")  # type: ignore[assignment]
+        return {"commits": lv(metrics.get("commits_30d"), 30), "stars": lv(stars, 30),
                 "contributors": None, "releases": None}
     rel = metrics.get("releases_90d")
+    stars = metrics.get("stars_30d")
+    if stars is None:
+        stars = metrics.get("stars_rate_30d_lifetime")  # type: ignore[assignment]
     return {
         "commits": lv(metrics.get("commits_4w"), 28),
-        "stars": lv(metrics.get("stars_30d"), 30),
+        "stars": lv(stars, 30),
         "contributors": lv(metrics.get("new_contributors_30d"), 30),
         "releases": None if rel is None else math.log1p(max(rel, 0.0)),
     }
@@ -433,11 +474,17 @@ def technical_activity(inp: CandidateInput, cohort: dict[str, list[float]]) -> d
             bits.append(f"~{round(m['commits_30d'])} commits in 30 days (key-repo proxy)")
         if m.get("stars_30d") is not None:
             bits.append(f"+{round(m['stars_30d'])} stars in 30 days on key repos")
+        elif m.get("new_project_stars_30d") is not None:
+            bits.append(f"~{round(m['new_project_stars_30d'])} stars per 30 days on {m.get('new_project_repo')} "
+                        "since its creation")
     else:
         if m.get("commits_4w") is not None:
             bits.append(f"{round(m['commits_4w'])} commits in 4 weeks")
         if m.get("stars_30d") is not None:
             bits.append(f"+{round(m['stars_30d'])} stars in 30 days")
+        elif m.get("stars_rate_30d_lifetime") is not None:
+            bits.append(f"~{round(m['stars_rate_30d_lifetime'])} stars per 30 days averaged over the life of "
+                        f"{', '.join(m.get('stars_rate_repos') or [])} (no star history yet)")
         if m.get("new_contributors_30d") is not None:
             bits.append(f"{round(m['new_contributors_30d'])} new contributors in 30 days")
         if m.get("releases_90d") is not None:
@@ -673,20 +720,58 @@ class _Ctx:
     snaps: dict[uuid.UUID, ScoreSnapshot]
     # Filled by gather_teams: person -> young organizations (company id, name, created) they are linked to.
     young_links: dict[uuid.UUID, list[tuple[uuid.UUID, str, date]]] = field(default_factory=dict)
+    rejected: list[Rejection] = field(default_factory=list)
+    projects: dict[uuid.UUID, NewProjectQuality] = field(default_factory=dict)  # new_project signal -> quality
+
+    def reject(self, anchor_type: str, anchor_id: uuid.UUID, slug: str, name: str, reason: str, detail: str) -> None:
+        self.rejected.append(Rejection(anchor_type, anchor_id, slug, name, reason, detail))
+        log.debug("formation: %s %s rejected — %s: %s", anchor_type, slug, reason, detail)
+
+    def project_counts(self, x: SignalLite) -> bool:
+        """A formation event that counts: anything but a new repository without traction / thesis depth."""
+        if x.signal_type != "new_project":
+            return True
+        q = self.projects.get(x.id)
+        return q is not None and q.counts
 
 
-def _company_created(c: Company, repos: Sequence[Repository]) -> date | None:
+def _gh_org_created(c: Company) -> date | None:
+    raw = (c.attrs or {}).get("gh_org_created_at")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def company_created_info(c: Company, repos: Sequence[Repository]) -> tuple[date | None, str, list[Repository]]:
+    """(creation date, basis, repositories older than the organization).
+
+    * ``young_org_basis = first_public_repo_created_at`` (a user-owned project): the first public repository.
+    * A GitHub organization's own creation date is authoritative for the organization: a repository created
+      before the organization existed was moved in (transferred) — the moment a project gets its own
+      organization is itself a formation step. Those older repositories are returned so the evidence says so.
+      A founding date from another source (not the GitHub org) that is earlier still wins.
+    * Otherwise: the earliest of the founding date and the repositories' creation dates."""
     attrs = c.attrs or {}
     repo_dates = [r.gh_created_at for r in repos]
     if attrs.get("young_org_basis") == "first_public_repo_created_at":
-        return org_created_date(None, repo_dates)
-    founded = c.founded_date
-    if founded is None and attrs.get("gh_org_created_at"):
-        try:
-            founded = datetime.fromisoformat(str(attrs["gh_org_created_at"]).replace("Z", "+00:00")).date()
-        except ValueError:
-            founded = None
-    return org_created_date(founded, repo_dates)
+        return org_created_date(None, repo_dates), "first_public_repo_created_at", []
+    gh = _gh_org_created(c)
+    if gh is not None:
+        founded = c.founded_date
+        if founded is not None and founded < gh and attrs.get("founded_date_basis") != "github_org_created_at":
+            return founded, str(attrs.get("founded_date_basis") or "founded_date"), []
+        older = sorted((r for r in repos if r.gh_created_at is not None and _aware(r.gh_created_at).date() < gh),
+                       key=lambda r: (r.gh_created_at, r.full_name))
+        return gh, "github_org_created_at", older
+    return org_created_date(c.founded_date, repo_dates), ("founded_date" if c.founded_date else
+                                                          "first_public_repo_created_at"), []
+
+
+def _company_created(c: Company, repos: Sequence[Repository]) -> date | None:
+    return company_created_info(c, repos)[0]
 
 
 def curated_list_anchor(c: Company, repos: Sequence[Repository]) -> str | None:
@@ -722,11 +807,21 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
     for r in s.scalars(select(Repository).where(Repository.company_id.in_(cids))):
         repos_by[r.company_id].append(r)
     young: list[tuple[Company, date]] = []
+    older_repos: dict[uuid.UUID, list[Repository]] = {}
     for c in companies:
-        created = _company_created(c, repos_by.get(c.id, []))
-        if created is not None and 0 <= (day - created).days <= YOUNG_DAYS:
+        created, basis, older = company_created_info(c, repos_by.get(c.id, []))
+        if created is None:
+            ctx.reject("company", c.id, c.slug, c.name, "created_unknown",
+                       "no GitHub organization creation date, founding date or repository creation date")
+        elif not 0 <= (day - created).days <= YOUNG_DAYS:
+            ctx.reject("company", c.id, c.slug, c.name, "not_young",
+                       f"created {created.isoformat()} ({(day - created).days} days ago, basis {basis}); "
+                       f"young means <= {YOUNG_DAYS} days")
+        elif (why := curated_list_anchor(c, repos_by.get(c.id, []))) is not None:
+            ctx.reject("company", c.id, c.slug, c.name, "curated_list", why)
+        else:
             young.append((c, created))
-    young = [(c, created) for c, created in young if curated_list_anchor(c, repos_by.get(c.id, [])) is None]
+            older_repos[c.id] = older
     if not young:
         return []
     yids = [c.id for c, _ in young]
@@ -769,12 +864,21 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
                       and not _is_org_account(people[pid], own_keys)
                       and (pid in listed.get(c.id, set()) or commits.get(pid, 0) >= MIN_MEMBER_COMMITS)]
         if len(member_ids) < MIN_MEMBERS:
+            n_listed = len(listed.get(c.id, set()))
+            n_commit = sum(1 for n in commits.values() if n >= MIN_MEMBER_COMMITS)
+            ctx.reject("company", c.id, c.slug, c.name, "too_few_members",
+                       f"{len(member_ids)} qualifying member(s) (listed members {n_listed}, contributors with >= "
+                       f"{MIN_MEMBER_COMMITS} commits {n_commit}, {len(commits)} contributors in total, after "
+                       f"removing automation and brand accounts); needs {MIN_MEMBERS}")
             continue
         repos = repos_by.get(c.id, [])
         theme_rows = [row for eid in (c.id, *(r.id for r in repos)) for row in topics.get(eid, [])]
         topic_scores, theme_scores, _ = _merge_topics(theme_rows)
         fit, theme, sub = _fit(theme_scores, topic_scores, thesis)
         if fit < THESIS_GATE:
+            ctx.reject("company", c.id, c.slug, c.name, "off_thesis",
+                       f"thesis fit {fit:.2f} < {THESIS_GATE} (themes: "
+                       f"{', '.join(f'{k} {v:.2f}' for k, v in sorted(theme_scores.items())) or 'none classified'})")
             continue
         members = [_member_info(people[pid], ctx.snaps.get(pid), thesis) for pid in member_ids]
         members.sort(key=lambda m: (-(m.founder_score or -1), m.name))
@@ -785,24 +889,43 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
         member_sigs = member_signals(ctx.index.for_entities(list(mids)), mids, _anchor_terms(c, name))
         sigs = sorted({x.id: x for x in [*anchor_sigs, *member_sigs]}.values(), key=lambda x: x.event_at,
                       reverse=True)
-        facts = _team_facts(c, created, repos, jobs_by.get(c.id, []), anchor_sigs, member_sigs, mids, day)
+        facts = _team_facts(c, created, repos, jobs_by.get(c.id, []), anchor_sigs, member_sigs, mids, day,
+                            older_repos.get(c.id, []))
         joined = {m.id: first_commit.get(c.id, {}).get(m.id) for m in members}
         founding = _founding_fact(c, name, created, joined, {m.id: m.name for m in members})
         if founding is not None:
             facts.append(founding)
         m = metrics.get(c.id, {})
+        team_metrics: dict[str, Any] = {k: m.get(k) for k in ("commits_4w", "stars_30d", "new_contributors_30d",
+                                                              "releases_90d")}
+        if team_metrics["stars_30d"] is None:
+            team_metrics.update(lifetime_star_rate(repos, day))
         pushed = [r.pushed_at for r in repos if r.pushed_at]
         latest = max([*(x.event_at for x in sigs), *(_aware(p) for p in pushed)], default=None)
         out.append(CandidateInput(
             kind="team", anchor_type="company", anchor_id=c.id, anchor_name=name, anchor_slug=c.slug,
             created=created, first_seen_at=c.first_seen_at, members=members,
-            metrics={k: m.get(k) for k in ("commits_4w", "stars_30d", "new_contributors_30d", "releases_90d")},
-            facts=facts, signals=sigs, attention=_attention_of(ctx.snaps.get(c.id), "team"),
+            metrics=team_metrics, facts=facts, signals=sigs, attention=_attention_of(ctx.snaps.get(c.id), "team"),
             thesis_fit=round(fit, 4), theme=theme, subtopic=sub, latest_activity_at=latest,
             is_demo=bool(c.is_demo or any(mm.is_demo for mm in members)), joined=joined,
         ))
     _attach_convergence(ctx, out, {c.id: c for c, _ in young}, repos_by)
     return out
+
+
+def lifetime_star_rate(repos: Sequence[Repository], day: date) -> dict[str, Any]:
+    """Stars per 30 days over each repository's whole life (sum over repositories), used only when no 30-day star
+    delta is measurable yet (single-day history). {} when no repository has stars and a creation date."""
+    rate, used = 0.0, []
+    for r in repos:
+        if r.gh_created_at is None or not r.stars:
+            continue
+        age = max((day - _aware(r.gh_created_at).date()).days, 30)  # type: ignore[union-attr]
+        rate += r.stars * 30 / age
+        used.append(r.full_name)
+    if not used:
+        return {}
+    return {"stars_rate_30d_lifetime": round(rate, 1), "stars_rate_repos": used[:3]}
 
 
 def _anchor_terms(c: Company, name: str) -> set[str]:
@@ -847,10 +970,15 @@ def _founding_fact(c: Company, name: str, created: date, joined: dict[uuid.UUID,
 
 def _team_facts(c: Company, created: date, repos: Sequence[Repository], jobs: Sequence[Job],
                 anchor_sigs: Sequence[SignalLite], member_sigs: Sequence[SignalLite], member_ids: set[uuid.UUID],
-                day: date) -> list[EvidenceFact]:
+                day: date, older_repos: Sequence[Repository] = ()) -> list[EvidenceFact]:
     facts: list[EvidenceFact] = []
     attrs = c.attrs or {}
     basis = attrs.get("young_org_basis") or ("github_org_created_at" if c.github_org else "earliest record")
+    if older_repos:
+        first = older_repos[0]
+        more = f" and {len(older_repos) - 1} more" if len(older_repos) > 1 else ""
+        basis += (f"; repository {first.full_name}{more} predates the organization (created "
+                  f"{_aware(first.gh_created_at).date().isoformat()}) and was moved in")  # type: ignore[union-attr]
     org_url = f"https://github.com/{c.github_org}" if c.github_org else c.website
     what = ("first public repository" if basis == "first_public_repo_created_at"
             else ("GitHub organization" if c.github_org else "organization"))
@@ -992,11 +1120,22 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
                 clusters[eid].append(x)
     # Qualifying: the person's own formation language/post or affiliation change (bio edits alone do not);
     # for talent-pool people (verified lab commits) also their own new project / young-org event or a cluster.
+    # New repositories without traction or thesis depth (trivial utilities, serial hobby repos) do not count.
     pids = {pid for pid, xs in own.items() if any(x.signal_type in PERSON_QUALIFYING_TYPES for x in xs)} - exclude
-    talent_ids = ({pid for pid, xs in own.items() if any(x.signal_type in FORMATION_EVENT_TYPES for x in xs)}
+    event_ids = {pid for pid, xs in own.items() if any(x.signal_type in FORMATION_EVENT_TYPES for x in xs)}
+    talent_ids = ({pid for pid in event_ids if any(x.signal_type in FORMATION_EVENT_TYPES and ctx.project_counts(x)
+                                                   for x in own[pid])}
                   | set(clusters)) - exclude - pids
-    if talent_ids:
-        for p in s.scalars(select(Person).where(Person.id.in_(list(talent_ids)))):
+    weak_ids = event_ids - talent_ids - exclude - pids
+    if talent_ids or weak_ids:
+        for p in s.scalars(select(Person).where(Person.id.in_(list(talent_ids | weak_ids)))):
+            if p.id in weak_ids:
+                if person_lab_contributions(p):
+                    why = "; ".join(f"{q.repo}: {q.reason}" for x in own[p.id]
+                                    if (q := ctx.projects.get(x.id)) is not None)
+                    ctx.reject("person", p.id, p.slug, _display(p), "new_project_not_counted",
+                               why or "no qualifying formation event")
+                continue
             if person_lab_contributions(p):
                 pids.add(p.id)
     if not pids:
@@ -1031,18 +1170,39 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
             topic_scores[fit_raw["topic"]] = float(theme_scores.get(fit_raw.get("theme"), 0.0))
         if not theme_scores:
             _, theme_scores, _ = _merge_topics(_topics(s, [pid]).get(pid, []))
+        member = _member_info(p, snap, thesis)
+        if not theme_scores and member.lab_contributions:
+            # Unclassified is not off-thesis: verified commits to a lab repository carry that lab's primary
+            # theme (config/talent_sources.yaml theme_hint) at a moderate strength.
+            hints = talent_theme_hints()
+            for c in member.lab_contributions:
+                for th in hints.get(c.org.lower(), [])[:1]:
+                    theme_scores = {**theme_scores, th: max(theme_scores.get(th, 0.0), LAB_HINT_THEME_SCORE)}
         fit, theme, sub = _fit(theme_scores, topic_scores, thesis)
         young = ctx.young_links.get(pid, [])
-        member = _member_info(p, snap, thesis)
         talent = bool(member.lab_contributions)
-        mine = [x for x in own.get(pid, []) if talent or x.signal_type not in FORMATION_EVENT_TYPES]
+        mine = [x for x in own.get(pid, []) if (talent or x.signal_type not in FORMATION_EVENT_TYPES)
+                and ctx.project_counts(x)]
         my_clusters = clusters.get(pid, []) if talent else []
         joined_sig = any(x.signal_type == "joined_young_org" for x in mine)
         if fit < THESIS_GATE and not young and not team_sigs.get(pid) and not joined_sig and not my_clusters:
+            ctx.reject("person", pid, p.slug, member.name, "off_thesis",
+                       f"thesis fit {fit:.2f} < {THESIS_GATE} and not linked to a young organization")
             continue
         facts: list[EvidenceFact] = []
+        projects: list[NewProjectQuality] = []
         for x in mine:
-            facts.append(_signal_fact(x, _PERSON_FACT_KIND.get(x.signal_type, "formation_language")))
+            kind = _PERSON_FACT_KIND.get(x.signal_type, "formation_language")
+            fact = _signal_fact(x, kind)
+            q = ctx.projects.get(x.id) if x.signal_type == "new_project" else None
+            if q is not None:
+                projects.append(q)
+                fact.detail = f"{q.traction_text()}; counts: {q.reason}"
+            facts.append(fact)
+            if q is not None and q.traction:
+                facts.append(EvidenceFact("project_traction", f"{q.repo}: {q.traction_text()}",
+                                          detail="Observed public repository counts (GitHub)", source_url=q.url,
+                                          source_type="github", event_at=None))
         for x in my_clusters:
             facts.append(_signal_fact(x, "lab_alumni"))
         for x in team_sigs.get(pid, []):
@@ -1056,7 +1216,9 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
         if generic_founder_only(facts, mine, phrases):
             emp = _established_employer(s, p, young_ids)
             if emp is not None:
-                log.debug("formation: %s left out — generic founder bio at established %s", p.slug, emp.slug)
+                ctx.reject("person", pid, p.slug, member.name, "generic_founder_bio",
+                           f"only evidence is a 'founder' self-description while at an established organization "
+                           f"({emp.name})")
                 continue
         allowed = scope.get(pid, {pid}) | {cid for cid, _, _ in young}
         cited = [x for x in ctx.index.for_entities([pid]) if x.entity_id in allowed
@@ -1065,13 +1227,20 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
             if x.signal_type == "x_launch_post" and x.entity_id == pid:
                 facts.append(_signal_fact(x, "launch"))
         tech_raw = (comps.get("technical_output") or {}).get("raw") or {}
+        metrics: dict[str, Any] = {"commits_30d": tech_raw.get("commits_30d_proxy"),
+                                   "stars_30d": tech_raw.get("recent_repo_stars_30d")}
+        best = max((q for q in projects if q.traction), key=lambda q: (q.stars, q.repo), default=None)
+        if best is not None:
+            # Stars per 30 days since the new repository was created (its whole life is inside the window).
+            age = max(best.age_days or 0, 30)
+            metrics["new_project_stars_30d"] = round(best.stars * 30 / age, 1)
+            metrics["new_project_repo"] = best.repo
         all_sigs = sorted({x.id: x for x in [*cited, *team_sigs.get(pid, []), *my_clusters]}.values(),
                           key=lambda x: x.event_at, reverse=True)
         out.append(CandidateInput(
             kind="person", anchor_type="person", anchor_id=pid, anchor_name=member.name, anchor_slug=p.slug,
             created=None, first_seen_at=p.first_seen_at, members=[member],
-            metrics={"commits_30d": tech_raw.get("commits_30d_proxy"), "stars_30d": tech_raw.get("recent_repo_stars_30d")},
-            facts=facts, signals=all_sigs,
+            metrics=metrics, facts=facts, signals=all_sigs,
             attention=_attention_of(snap, "person"), thesis_fit=round(fit, 4), theme=theme, subtopic=sub,
             latest_activity_at=max((x.event_at for x in all_sigs), default=None), is_demo=bool(p.is_demo),
         ))
@@ -1087,11 +1256,19 @@ def _snapshots(session: Session, day: date) -> dict[uuid.UUID, ScoreSnapshot]:
     return out
 
 
-def compute(session: Session, day: date | None = None, thesis: Thesis | None = None) -> list[Scored]:
-    """Score every formation candidate for ``day`` (pure read; nothing persisted)."""
+def compute(session: Session, day: date | None = None, thesis: Thesis | None = None,
+            rejected: list[Rejection] | None = None) -> list[Scored]:
+    """Score every formation candidate for ``day`` (pure read; nothing persisted).
+
+    ``rejected`` (optional list) receives every anchor that was considered and left out, with the reason
+    (``Rejection``); scored candidates below the EARLY tier are included as ``below_threshold``."""
     day = day or clock.today()
     thesis = thesis or get_thesis()
-    ctx = _Ctx(session, day, thesis, load_signal_index(session, day, PERSON_SIGNAL_DAYS), _snapshots(session, day))
+    index = load_signal_index(session, day, PERSON_SIGNAL_DAYS)
+    ctx = _Ctx(session, day, thesis, index, _snapshots(session, day))
+    ctx.projects = assess_new_project_signals(
+        session, {x.id: x for sigs in index.by_entity.values() for x in sigs.values()
+                  if x.signal_type == "new_project"}.values(), day)
     teams = gather_teams(ctx)
     in_team = {m.id for t in teams for m in t.members}
     people = gather_people(ctx, in_team)
@@ -1102,7 +1279,54 @@ def compute(session: Session, day: date | None = None, thesis: Thesis | None = N
     out = [score_candidate(t, team_cohort, day) for t in teams]
     out += [score_candidate(p, person_cohort, day) for p in people]
     out.sort(key=lambda x: (-x.score, x.inp.anchor_slug))
+    for x in out:
+        if x.tier is None:
+            comps = ", ".join(f"{COMPONENT_LABELS[k]} {x.components[k]['value']:g}" for k in ORDER)
+            ctx.reject(x.inp.anchor_type, x.inp.anchor_id, x.inp.anchor_slug, x.inp.anchor_name, "below_threshold",
+                       f"Formation Score {x.score:g} < {TIER_EARLY} ({comps})")
+    if rejected is not None:
+        rejected.extend(ctx.rejected)
     return out
+
+
+def explain(session: Session, ref: str, day: date | None = None) -> dict[str, Any]:
+    """Debug: why ``ref`` (company/person slug, GitHub login/org, or id) is or is not a formation candidate.
+
+    ``python -m radar.scoring.formation --explain smg-project``"""
+    rejected: list[Rejection] = []
+    scored = compute(session, day, rejected=rejected)
+    key = ref.strip().lower()
+    ids: set[uuid.UUID] = set()
+    try:
+        ids.add(uuid.UUID(key))
+    except ValueError:
+        pass
+    for cid in session.scalars(select(Company.id).where((func.lower(Company.slug) == key)
+                                                        | (func.lower(Company.github_org) == key))):
+        ids.add(cid)
+    for p in session.scalars(select(Person).where((func.lower(Person.slug) == key)
+                                                  | (func.lower(Person.github_handle) == key))):
+        ids.add(p.id)
+    out: dict[str, Any] = {"ref": ref, "day": (day or clock.today()).isoformat(), "candidates": [], "rejected": []}
+    for x in scored:
+        if x.inp.anchor_id in ids or any(m.id in ids for m in x.inp.members):
+            out["candidates"].append({
+                "slug": _slug(x), "kind": x.inp.kind, "score": x.score, "tier": x.tier, "label": x.label,
+                "families": x.families, "members": [m.name for m in x.inp.members],
+                "convergence": x.inp.convergence.explanation if x.inp.convergence else None,
+                "components": {k: {"value": v["value"], "explanation": v["explanation"]}
+                               for k, v in x.components.items()}})
+    out["rejected"] = [r.to_json() for r in rejected if r.anchor_id in ids]
+    if not ids:
+        out["error"] = f"no company or person matches {ref!r}"
+    return out
+
+
+def rejection_summary(rejected: Iterable[Rejection]) -> dict[str, int]:
+    out: dict[str, int] = defaultdict(int)
+    for r in rejected:
+        out[f"{r.anchor_type}:{r.reason}"] += 1
+    return dict(sorted(out.items()))
 
 
 def _slug(sc: Scored) -> str:
@@ -1112,7 +1336,8 @@ def _slug(sc: Scored) -> str:
 def run(session: Session, day: date | None = None, thesis: Thesis | None = None) -> dict[str, Any]:
     """Compute and persist formation candidates (upsert by anchor; delete those no longer qualifying)."""
     day = day or clock.today()
-    scored = compute(session, day, thesis)
+    rejected: list[Rejection] = []
+    scored = compute(session, day, thesis, rejected=rejected)
     keep = [x for x in scored if x.tier is not None]
     existing = {fc.anchor_id: fc for fc in session.scalars(select(FormationCandidate))}
     now = clock.now()
@@ -1152,11 +1377,28 @@ def run(session: Session, day: date | None = None, thesis: Thesis | None = None)
     counts = {t: sum(1 for x in keep if x.tier == t) for t in ("high", "emerging", "early")}
     summary = {"day": day.isoformat(), "considered": len(scored), "stored": len(keep), **counts,
                "teams": sum(1 for x in keep if x.inp.kind == "team"),
-               "people": sum(1 for x in keep if x.inp.kind == "person"), "deleted": len(stale)}
+               "people": sum(1 for x in keep if x.inp.kind == "person"), "deleted": len(stale),
+               "rejected": rejection_summary(rejected)}
     log.info("formation.run %s", summary)
     return summary
 
 
-__all__ = ["FORMATION_MAX", "CandidateInput", "EvidenceFact", "MemberInfo", "Scored", "compute", "founder_quality",
+__all__ = ["FORMATION_MAX", "CandidateInput", "EvidenceFact", "MemberInfo", "Rejection", "Scored", "compute",
+           "company_created_info", "explain", "founder_quality", "rejection_summary",
            "formation_evidence", "label_for", "novelty_attention", "run", "score_candidate", "team_convergence",
            "technical_activity", "tier_for"]
+
+
+if __name__ == "__main__":  # pragma: no cover — debug entry point
+    import argparse
+    import json
+
+    from radar.db import session_scope
+
+    ap = argparse.ArgumentParser(description="Explain why an anchor is / is not a formation candidate.")
+    ap.add_argument("--explain", required=True, help="company/person slug, GitHub login/org, or id")
+    ap.add_argument("--day", default=None, help="YYYY-MM-DD (default: the data clock's today)")
+    a = ap.parse_args()
+    with session_scope() as _s:
+        print(json.dumps(explain(_s, a.explain, date.fromisoformat(a.day) if a.day else None), indent=2,
+                         default=str))

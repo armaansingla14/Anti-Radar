@@ -77,7 +77,7 @@ def parse_oembed(data: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-class ManualXSignalProvider:
+class ManualXProvider:
     name = "x_manual"
 
     def __init__(self, client: HttpClient | None = None, thesis: Thesis | None = None) -> None:
@@ -142,3 +142,7 @@ class ManualXSignalProvider:
         info.update(handle=handle, canonical_url=canonical, entity_key=ref.key,
                     signal_type=batch.signals[0].signal_type)
         return batch, info
+
+
+# Backwards-compatible name (V1).
+ManualXSignalProvider = ManualXProvider

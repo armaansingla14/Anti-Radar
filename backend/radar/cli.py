@@ -35,8 +35,8 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 # Same as ops.ALL_STEPS (asserted in tests); duplicated so `--help` does not import the pipeline.
-_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "score", "formation",
-              "meet", "brief", "retention")
+_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "x", "score",
+              "formation", "meet", "brief", "retention")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ANTI RADAR — Conviction Before Consensus.")
 ingest_app = typer.Typer(no_args_is_help=True, help="Pull signals from a source.")
@@ -67,7 +67,7 @@ def _banner(title: str) -> None:
 
 def _report(result) -> None:
     run = result[0]
-    color = {"ok": "green", "partial": "yellow"}.get(run.status, "red")
+    color = {"ok": "green", "partial": "yellow", "skipped": "dim"}.get(run.status, "red")
     console.print(
         f"  [{color}]{run.status.upper()}[/] {run.provider}: {run.records_fetched} fetched · "
         f"{run.records_accepted} accepted · {run.records_rejected} rejected · {run.signals_created} new signals"
@@ -205,7 +205,7 @@ def _sweep(steps: list[str]) -> dict:
             continue
         res = ops.run_step(st)
         out[st] = res
-        color = {"ok": "green", "partial": "yellow"}.get(res.get("status"), "red")
+        color = {"ok": "green", "partial": "yellow", "skipped": "dim"}.get(res.get("status"), "red")
         detail = " · ".join(f"{k}={v}" for k, v in res.items() if k not in ("status", "result", "error"))
         console.print(f"  [{color}]{str(res.get('status', '?')).upper():<7}[/] {st:<9} [dim]{detail}[/dim]")
         if res.get("error"):

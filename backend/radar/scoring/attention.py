@@ -21,17 +21,143 @@ class AttentionResult:
     flagged: bool
     coverage: str  # good | partial | low
     sources: list[dict[str, Any]] = field(default_factory=list)
+    # What drives the technical side ("repo acceleration", "new contributors") — measured facts only.
+    drivers: list[str] = field(default_factory=list)
+    hn_threads: int | None = None  # measured HN stories (90d); None = not measured
+    points: float | None = None  # Attention Gap component points (set by gap_points); None = no gap claimed
+
+    @property
+    def social_available(self) -> bool:
+        return social_available(self.sources)
+
+    @property
+    def unavailable(self) -> list[str]:
+        return unavailable_sources(self.sources)
+
+    @property
+    def explanation(self) -> str:
+        return gap_explanation(self.technical, self.attention, self.sources, self.drivers, self.hn_threads)
 
     def to_api(self) -> dict[str, Any]:
         """AttentionGap-shaped dict (schemas/api.py)."""
+        attention = round(self.attention, 1) if self.attention is not None else None
         return {
             "technical": round(self.technical, 1),
-            "attention": round(self.attention, 1) if self.attention is not None else None,
+            "attention": attention,
             "gap": round(self.gap, 1),
             "flagged": self.flagged,
             "coverage": self.coverage,
             "sources": self.sources,
+            "technical_score": round(self.technical, 1),
+            "attention_score": attention,
+            "gap_points": None if self.attention is None or self.points is None else round(self.points, 2),
+            "explanation": self.explanation,
+            "social_available": self.social_available,
+            "unavailable": self.unavailable,
+            "drivers": self.drivers,
+            "hn_threads": self.hn_threads,
         }
+
+
+SOCIAL_KEYS = ("x_followers",)
+PRESS_KEYS = ("press",)
+HN_KEYS = ("hn_points", "hn_mentions")
+
+
+def social_available(sources: list[dict[str, Any]]) -> bool:
+    """True only when an X / social source was actually measured."""
+    return any(s.get("key") in SOCIAL_KEYS and s.get("available") for s in sources)
+
+
+def unavailable_sources(sources: list[dict[str, Any]]) -> list[str]:
+    """Labels of attention sources that could not be measured (never shown as zero)."""
+    return [str(s.get("label") or s.get("key")) for s in sources if not s.get("available")]
+
+
+def _fmt(v: float) -> str:
+    return f"{int(round(v)):,}"
+
+
+def _attention_phrases(sources: list[dict[str, Any]], hn_threads: int | None, low: bool) -> list[str]:
+    by_key = {s.get("key"): s for s in sources}
+    out: list[str] = []
+    only = "only " if low else ""
+    hn = next((by_key[k] for k in HN_KEYS if k in by_key), None)
+    if hn_threads is not None:
+        out.append("no Hacker News threads" if hn_threads == 0 else
+                   f"{only}{hn_threads} HN thread{'s' if hn_threads != 1 else ''}")
+    elif hn is not None and hn.get("available") and hn.get("value") is not None:
+        v = float(hn["value"])
+        noun = "HN points" if hn.get("key") == "hn_points" else "HN mentions"
+        out.append(f"no {noun}" if v <= 0 else f"{only}{_fmt(v)} {noun}")
+    stars = by_key.get("stars_total")
+    if stars is not None and stars.get("available") and stars.get("value") is not None:
+        out.append(f"{_fmt(float(stars['value']))} GitHub stars in total")
+    fol = by_key.get("followers")
+    if fol is not None and fol.get("available") and fol.get("value") is not None:
+        out.append(f"{_fmt(float(fol['value']))} GitHub followers")
+    press = next((by_key[k] for k in PRESS_KEYS if k in by_key), None)
+    if press is not None:
+        if press.get("available") and press.get("value") is not None:
+            v = float(press["value"])
+            out.append("no press" if v <= 0 else f"{_fmt(v)} press mention{'s' if v != 1 else ''}")
+        else:
+            out.append("press not measured")
+    return out
+
+
+def _join(parts: list[str]) -> str:
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def gap_explanation(
+    technical: float,
+    attention: float | None,
+    sources: list[dict[str, Any]],
+    drivers: list[str] | tuple[str, ...] = (),
+    hn_threads: int | None = None,
+) -> str:
+    """'Technical momentum 88 vs public attention 29 — repo acceleration and new contributors with only
+    2 HN threads and no press; social attention unavailable'. Built only from measured values; an
+    unmeasured attention side is said to be unmeasured (no gap is claimed)."""
+    social = "" if social_available(sources) else "; social attention unavailable"
+    drv = _join(list(drivers))
+    if attention is None:
+        head = f"Technical momentum {technical:.0f}; public attention not measured — no gap claimed"
+        return head + (f" ({drv})" if drv else "") + social
+    head = f"Technical momentum {technical:.0f} vs public attention {attention:.0f}"
+    att = _join(_attention_phrases(sources, hn_threads, low=attention <= 40))
+    if drv and att:
+        body = f" — {drv} with {att}"
+    elif drv:
+        body = f" — {drv}"
+    elif att:
+        body = f" — {att}"
+    else:
+        body = ""
+    return head + body + social
+
+
+def technical_drivers(f: EntityFeatures) -> list[str]:
+    """Measured technical drivers, strongest-evidence first (thresholds match presenters.why_surfaced)."""
+    out: list[str] = []
+    if f.stars_7d is not None and f.stars_prev_28d and f.stars_prev_28d > 0 and (f.stars_30d or 0) >= 20:
+        if (f.stars_7d / 7) / (f.stars_prev_28d / 28) >= 1.5:
+            out.append("repo acceleration")
+    elif (f.stars_30d or 0) >= 100:
+        out.append("fast star growth")
+    if f.commits_4w and f.commits_prev_4w and f.commits_prev_4w > 0 and f.commits_4w >= 15 \
+            and f.commits_4w / f.commits_prev_4w >= 1.5:
+        out.append("rising commit activity")
+    if f.new_contributors_30d and f.new_contributors_30d >= 2:
+        out.append("new contributors")
+    if f.releases_90d and f.releases_90d >= 1 and len(out) < 3:
+        out.append("recent releases")
+    if f.technical_roles_30d and f.technical_roles_30d >= 2 and len(out) < 3:
+        out.append("technical hiring")
+    return out[:3]
 
 
 def _log(v: float | None) -> float | None:
@@ -96,16 +222,23 @@ def attention_gap(
                 "note": None if p is not None else note,
             }
         )
-    return gap_result(technical, sources, cfg)
+    res = gap_result(technical, sources, cfg)
+    res.drivers = technical_drivers(f)
+    res.hn_threads = f.hn_mentions_90d
+    return res
 
 
 def gap_points(res: AttentionResult, cfg: AttentionCfg, max_points: float) -> float:
-    """Points for a measured gap; 0 when attention was not measured (unknown is not 'unnoticed')."""
+    """Points for a measured gap; 0 when attention was not measured (unknown is not 'unnoticed').
+
+    Also records the value on ``res.points`` (None when unmeasured) for the API's ``gap_points``."""
     if res.attention is None:
+        res.points = None
         return 0.0
     value = max_points * min(max(res.gap / 100, 0.0), 1.0)
     if res.coverage == "low":
         value *= cfg.low_coverage_penalty
+    res.points = value
     return value
 
 

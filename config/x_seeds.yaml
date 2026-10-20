@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ANTI RADAR — X (Twitter) discovery seeds
+#
+# Used ONLY by the official X API v2 provider (OfficialXProvider), i.e. only when
+# X_BEARER_TOKEN is configured. Without a token the sweep step `x` records a
+# `skipped` run ("API access not configured") and nothing here is used; manual
+# post-URL ingest (oEmbed / pasted text) keeps working regardless.
+#
+# Access rules (enforced in code, restated here):
+#   * official API only — recent search (last 7 days) and user timelines; no scraping;
+#   * every stored post keeps its real URL https://x.com/<handle>/status/<id> and is
+#     attributed to `x:<handle>` exactly as the API returned it (never guessed);
+#   * only posts that match a formation / launch / hiring pattern or one of the
+#     discovery phrases below are kept; generic chatter is dropped, not stored;
+#   * the run stops cleanly when the API says the rate limit is exhausted
+#     (x-rate-limit-remaining: 0 or HTTP 429) — that is not an error.
+#
+# Query shape (one search request each):
+#   <phrase group> (<thesis term> OR <thesis term> …) <query_suffix>
+# Phrase × thesis-term-chunk combinations rotate across runs so `request_budget`
+# stays small while every phrase is covered over a few days.
+# ─────────────────────────────────────────────────────────────────────────────
+
+limits:
+  request_budget: 8          # max X API requests per run (searches + seed lookups/timelines)
+  max_results: 25            # posts per search request (API allows 10..100)
+  lookback_days: 7           # recent search covers at most the last 7 days
+  max_query_chars: 512       # X recent-search query length limit (self-serve tiers)
+  seed_posts_per_account: 10 # timeline posts read per seed account (API min 5)
+  max_posts_per_run: 150     # hard cap on posts kept per run
+
+query_suffix: "-is:retweet -is:reply lang:en"
+
+# Discovery phrases. `{company}` expands to every entry of `departure_companies`
+# (one OR group of quoted alternatives), e.g. ("left OpenAI" OR "left Google DeepMind" …).
+phrases:
+  - building something new
+  - starting something
+  - we're hiring
+  - founding engineer
+  - new company
+  - left {company}
+  - new project
+  - new paper
+  - launching today
+  - stealth
+
+departure_companies:
+  - OpenAI
+  - Anthropic
+  - DeepMind
+  - Google
+  - Meta
+  - Tesla
+  - SpaceX
+  - Anduril
+  - NVIDIA
+  - Apple
+  - Waymo
+  - Boston Dynamics
+
+# Thesis vocabulary (kept short: it is OR-ed into every query and must fit max_query_chars).
+thesis_terms:
+  - robotics
+  - robot
+  - humanoid
+  - manipulation
+  - "embodied ai"
+  - "physical ai"
+  - "world model"
+  - inference
+  - "foundation model"
+  - agents
+  - "ai infra"
+  - gpu
+  - cuda
+  - compiler
+  - silicon
+  - chip
+  - fpga
+  - defense
+  - autonomy
+  - drone
+  - "counter-uas"
+  - hypersonic
+  - fusion
+  - "rocket engine"
+  - satellite
+  - manufacturing
+
+# Public technical accounts to read directly (user timeline), in addition to search.
+# EMPTY BY DEFAULT. To add one:
+#   1. only public accounts of people / projects with verifiable technical work
+#      (e.g. the X handle linked from a GitHub profile or a paper's author page);
+#   2. add the bare handle (no @, 1–15 chars of A–Z a–z 0–9 _), one per line:
+#        seed_accounts:
+#          - some_handle
+#   3. each seed costs 2 requests from `request_budget` (profile + timeline); seeds
+#      rotate across runs when they do not all fit in one run.
+# Signals land on `x:<handle>`; nothing is inferred about the account beyond its posts.
+seed_accounts: []

@@ -1,19 +1,19 @@
 import type { Metadata } from "next";
 import clsx from "clsx";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { connection } from "next/server";
 import { DemoBadge, EpistemicBadge } from "@/components/Badges";
+import { Confidence } from "@/components/Confidence";
 import { Delta } from "@/components/Delta";
 import { EmptyState } from "@/components/EmptyState";
 import { SectionLabel } from "@/components/SectionLabel";
-import { DigestRow } from "@/components/feed/DigestRow";
+import { SourcesButton } from "@/components/SourceDrawer";
 import { GeneratorNote } from "@/components/feed/GeneratorNote";
-import { NewEntityList } from "@/components/feed/NewEntityList";
-import { PaperCard } from "@/components/feed/PaperCard";
-import { StrangeSignalDispatch } from "@/components/feed/StrangeSignalDispatch";
 import { longDate } from "@/components/feed/prose";
-import { getDaily } from "@/lib/api";
-import { fmtDateTime, hrefFor } from "@/lib/format";
+import { ApiError } from "@/lib/api";
+import { DAILY_SECTIONS, type DailyRadarV2, type DailyRow, dailyRows, getDailyV2 } from "@/lib/api-pages";
+import { fmtDate, fmtDateTime, pad2 } from "@/lib/format";
+import { ageShort } from "@/lib/labels";
 
 export const metadata: Metadata = { title: "Daily" };
 
@@ -24,34 +24,81 @@ const WINDOWS = [
   { key: "7", label: "7 days" },
 ];
 
-/** ISO instant N days before now (request time). */
-function sinceDaysAgo(days: number): string {
-  return new Date(Date.now() - days * 86_400_000).toISOString();
-}
-
-function Section({ n, title, right, children, id }: { n: number; title: string; right?: ReactNode; children: ReactNode; id: string }) {
+function Row({ row, index, now }: { row: DailyRow; index: number; now: Date }) {
+  const external = row.href && /^https?:\/\//.test(row.href);
+  const title = <span className="font-serif text-[19px] leading-tight text-ink">{row.headline}</span>;
   return (
-    <section aria-labelledby={id} className="mt-16">
-      <SectionLabel index={n} id={id} right={right}>
-        {title}
-      </SectionLabel>
-      <div className="mt-5">{children}</div>
-    </section>
+    <li className="grid grid-cols-[28px_minmax(0,1fr)] gap-x-3 border-t border-rule py-3.5 sm:grid-cols-[28px_minmax(0,1fr)_200px]">
+      <span className="tnum pt-[5px] font-mono text-[10.5px] text-ink-3">{pad2(index)}</span>
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+          {row.href ? (
+            external ? (
+              <a href={row.href} target="_blank" rel="noopener noreferrer nofollow" className="decoration-accent underline-offset-4 hover:underline">
+                {title}
+                <span aria-hidden className="ml-1 text-[12px] text-ink-3">↗</span>
+              </a>
+            ) : (
+              <Link href={row.href} className="decoration-accent underline-offset-4 hover:underline">
+                {title}
+              </Link>
+            )
+          ) : (
+            title
+          )}
+          {row.label && <span className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-2">{row.label}</span>}
+          {row.isDemo && <DemoBadge />}
+        </p>
+        {row.whyNow && (
+          <p className="mt-1 max-w-[78ch] text-[13.5px] leading-snug text-ink">
+            <span className="label mr-2 text-ink-3">Why now</span>
+            {row.whyNow}
+          </p>
+        )}
+      </div>
+      <div className="col-start-2 mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 sm:col-start-3 sm:mt-0 sm:flex-col sm:items-end sm:gap-y-1.5">
+        {row.at ? (
+          <time dateTime={row.at} title={fmtDateTime(row.at)} className="tnum font-mono text-[10.5px] uppercase text-ink-2" suppressHydrationWarning>
+            {fmtDate(row.at, { year: false })} · {ageShort(row.at, now) ?? ""}
+          </time>
+        ) : (
+          <span className="font-mono text-[10.5px] uppercase text-ink-3">undated</span>
+        )}
+        <SourcesButton claim={row.headline} evidence={row.evidence} count={row.sources} demo={row.isDemo} />
+        <Confidence value={row.confidence} />
+        {row.delta !== null && <Delta value={row.delta} period="7d" size="xs" />}
+      </div>
+    </li>
   );
 }
 
-function Quiet({ children }: { children: ReactNode }) {
-  return <p className="border-t border-rule py-5 text-[13.5px] text-ink-3">{children}</p>;
+async function loadDaily(since?: string): Promise<DailyRadarV2 | { error: string }> {
+  try {
+    return await getDailyV2(since ? { since } : undefined);
+  } catch (err) {
+    if (err instanceof ApiError) return { error: err.status === 404 ? "The Daily Radar v2 endpoint is not available on this backend yet." : err.detail };
+    throw err;
+  }
 }
 
 export default async function DailyPage({ searchParams }: PageProps<"/daily">) {
+  await connection();
   const sp = await searchParams;
   const raw = Array.isArray(sp.window) ? sp.window[0] : sp.window;
   const win = WINDOWS.find((w) => w.key && w.key === raw)?.key ?? "";
-  const since = win ? sinceDaysAgo(Number(win)) : undefined;
+  const now = new Date();
+  const since = win ? new Date(now.getTime() - Number(win) * 86_400_000).toISOString() : undefined;
 
-  const daily = await getDaily(since ? { since } : undefined);
-  const llm = daily.summary?.generator === "llm" || daily.summary?.generator === "cached";
+  const daily = await loadDaily(since);
+  if ("error" in daily) {
+    return (
+      <EmptyState title="Daily Radar unavailable.">
+        {daily.error} Nothing is shown rather than a partial or reconstructed edition.
+      </EmptyState>
+    );
+  }
+  const sections = DAILY_SECTIONS.map((s) => ({ ...s, rows: dailyRows(daily[s.key]) }));
+  const snapshotNote = daily.is_snapshot ? `Data as of ${longDate(daily.data_as_of)} (snapshot)` : null;
 
   return (
     <div className="pb-24">
@@ -61,6 +108,7 @@ export default async function DailyPage({ searchParams }: PageProps<"/daily">) {
           <h1 className="font-serif text-[48px] leading-[1.02] tracking-[-0.018em] text-ink md:text-[58px]">What changed since yesterday?</h1>
           <p className="mt-4 font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-2">
             Changes since <time dateTime={daily.since}>{fmtDateTime(daily.since)}</time>
+            {snapshotNote && <span className="text-accent"> · {snapshotNote}</span>}
           </p>
           <nav aria-label="Time window" className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
             {WINDOWS.map((w) => {
@@ -80,20 +128,13 @@ export default async function DailyPage({ searchParams }: PageProps<"/daily">) {
               );
             })}
           </nav>
-          <ol aria-label="In this edition" className="mt-8 grid max-w-[640px] grid-cols-2 gap-x-8 border-t border-rule pt-3 sm:grid-cols-3">
-            {[
-              ["d-founders", "Founders", daily.founders.length],
-              ["d-companies", "Companies", daily.companies.length],
-              ["d-papers", "Papers", daily.papers.length],
-              ["d-strange", "Strange signals", daily.strange_signals.length],
-              ["d-watch", "Watchlist", daily.watchlist_changes.length],
-              ["d-new", "New this week", daily.new_entities.length],
-            ].map(([id, label, n], i) => (
-              <li key={id as string}>
-                <a href={`#${id}`} className="group flex items-baseline gap-2 py-1 text-[13px] text-ink-2 hover:text-ink">
-                  <span className="tnum font-mono text-[10.5px] text-ink-3">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="group-hover:underline group-hover:decoration-accent group-hover:underline-offset-4">{label}</span>
-                  <span className={clsx("tnum ml-auto font-mono text-[11px]", n ? "text-ink" : "text-ink-3")}>{n}</span>
+          <ol aria-label="In this edition" className="mt-8 grid max-w-[700px] grid-cols-2 gap-x-8 border-t border-rule pt-3 sm:grid-cols-3">
+            {sections.map((s, i) => (
+              <li key={s.key}>
+                <a href={`#d-${s.key}`} className="group flex items-baseline gap-2 py-1 text-[13px] text-ink-2 hover:text-ink">
+                  <span className="tnum font-mono text-[10.5px] text-ink-3">{pad2(i + 1)}</span>
+                  <span className="group-hover:underline group-hover:decoration-accent group-hover:underline-offset-4">{s.title}</span>
+                  <span className={clsx("tnum ml-auto font-mono text-[11px]", s.rows.length ? "text-ink" : "text-ink-3")}>{s.rows.length}</span>
                 </a>
               </li>
             ))}
@@ -101,7 +142,7 @@ export default async function DailyPage({ searchParams }: PageProps<"/daily">) {
         </div>
         <div className="min-w-0 lg:border-l lg:border-rule lg:pl-8">
           <p className="label mb-2 flex items-center gap-2 text-ink">
-            The short version {daily.summary && <EpistemicBadge value={daily.summary.epistemic} />}
+            The short version {daily.summary && <EpistemicBadge value={daily.summary.generator === "template" ? daily.summary.epistemic : "MODEL_OPINION"} />}
           </p>
           {daily.summary ? (
             <>
@@ -111,104 +152,51 @@ export default async function DailyPage({ searchParams }: PageProps<"/daily">) {
           ) : (
             <p className="text-[13.5px] text-ink-3">No summary — nothing on the radar changed enough to narrate.</p>
           )}
+          <p className="mt-5 border-t border-rule pt-3 text-[12px] leading-snug text-ink-3">
+            Every entry states why now, when it happened, the sources behind it and how broad the evidence is. Headlines are built from
+            stored records, not written by a model.
+          </p>
         </div>
       </header>
 
-      <Section n={1} id="d-founders" title="Five founders to know" right={<span className="tnum">{daily.founders.length}</span>}>
-        {daily.founders.length > 0 ? (
-          daily.founders.map((c, i) => <DigestRow key={c.id} card={c} index={i + 1} />)
-        ) : (
-          <Quiet>No founder&apos;s score rose and no new founder signals arrived in this window.</Quiet>
-        )}
-      </Section>
-
-      <Section n={2} id="d-companies" title="Five companies accelerating" right={<span className="tnum">{daily.companies.length}</span>}>
-        {daily.companies.length > 0 ? (
-          daily.companies.map((c, i) => <DigestRow key={c.id} card={c} index={i + 1} />)
-        ) : (
-          <Quiet>No company accelerated in this window.</Quiet>
-        )}
-      </Section>
-
-      <Section n={3} id="d-papers" title="Three research papers that matter" right={<span className="tnum">{daily.papers.length}</span>}>
-        {daily.papers.length > 0 ? (
-          <div className="grid gap-x-8 gap-y-10 md:grid-cols-3">
-            {daily.papers.map((p, i) => (
-              <PaperCard key={p.id} paper={p} index={i + 1} whyEpistemic={llm ? "MODEL_OPINION" : "INFERENCE"} />
-            ))}
+      {sections.map((s, i) => (
+        <section key={s.key} aria-labelledby={`d-${s.key}`} className="mt-14">
+          <SectionLabel index={i + 1} id={`d-${s.key}`} right={<span className="tnum">{s.rows.length}</span>}>
+            {s.title}
+          </SectionLabel>
+          <div className="mt-4">
+            {s.rows.length > 0 ? (
+              <ol className="border-b border-rule">
+                {s.rows.map((r, j) => (
+                  <Row key={r.key} row={r} index={j + 1} now={now} />
+                ))}
+              </ol>
+            ) : s.key === "watchlist_changes" ? (
+              <EmptyState
+                title="Nothing on your watchlist moved."
+                action={
+                  <Link href="/watchlist" className="link font-mono text-[11px] uppercase tracking-[0.08em] text-ink">
+                    Open watchlist →
+                  </Link>
+                }
+              >
+                Watched companies and founders report score moves, new signals and role changes here. Press W on any card to watch it.
+              </EmptyState>
+            ) : (
+              <p className="border-t border-rule py-5 text-[13.5px] text-ink-3">{s.empty}</p>
+            )}
           </div>
-        ) : (
-          <Quiet>No papers in the tracked arXiv categories matched an Anti Fund thesis area in the last 30 days.</Quiet>
-        )}
-      </Section>
+        </section>
+      ))}
 
-      <Section n={4} id="d-strange" title="Three strange signals" right={<span className="tnum">{daily.strange_signals.length}</span>}>
-        {daily.strange_signals.length > 0 ? (
-          <div className="grid gap-x-10 gap-y-10 md:grid-cols-3">
-            {daily.strange_signals.map((s, i) => (
-              <StrangeSignalDispatch key={s.id} signal={s} index={i + 1} className="border-t border-ink pt-3" />
-            ))}
-          </div>
-        ) : (
-          <Quiet>No unusual patterns detected in this window.</Quiet>
-        )}
-      </Section>
-
-      <Section n={5} id="d-watch" title="Watchlist changes" right={<span className="tnum">{daily.watchlist_changes.length}</span>}>
-        {daily.watchlist_changes.length > 0 ? (
-          <ul>
-            {daily.watchlist_changes.map((w) => (
-              <li key={w.entity_id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 border-t border-rule py-3.5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-baseline gap-x-2">
-                    <Link
-                      href={hrefFor(w.entity_type, w.slug)}
-                      className="font-serif text-[19px] leading-tight text-ink decoration-accent underline-offset-4 hover:underline"
-                    >
-                      {w.name}
-                    </Link>
-                    {w.is_demo && <DemoBadge />}
-                  </div>
-                  <ul className="mt-1.5 space-y-0.5">
-                    {w.changes.map((ch, i) => (
-                      <li key={i} className="grid grid-cols-[14px_1fr] text-[13px] leading-snug text-ink">
-                        <span aria-hidden className="text-ink-3">→</span>
-                        {ch}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className="tnum font-serif text-[26px] leading-none text-ink">{w.score ?? "—"}</span>
-                  <Delta value={w.delta} size="xs" />
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyState
-            title="Nothing on your watchlist moved."
-            action={
-              <Link href="/watchlist" className="link font-mono text-[11px] uppercase tracking-[0.08em] text-ink">
-                Open watchlist →
-              </Link>
-            }
-          >
-            Watched companies and founders report score moves, new signals and role changes here. Press W on any card to watch it.
-          </EmptyState>
-        )}
-      </Section>
-
-      <Section n={6} id="d-new" title="Entered the radar this week" right={<span className="tnum">{daily.new_entities.length}</span>}>
-        {daily.new_entities.length > 0 ? (
-          <NewEntityList entities={daily.new_entities} />
-        ) : (
-          <Quiet>No new companies or founders were first observed this week.</Quiet>
-        )}
-        <Link href="/?new=1" className="label mt-4 inline-block text-ink hover:text-accent">
-          See everything Unknown Yesterday on the radar →
+      <p className="mt-12 flex flex-wrap gap-x-6 gap-y-2">
+        <Link href="/?new=week" className="label text-ink hover:text-accent">
+          Everything Unknown Yesterday →
         </Link>
-      </Section>
+        <Link href="/brief/today" className="label text-ink hover:text-accent">
+          Today&apos;s stored brief →
+        </Link>
+      </p>
     </div>
   );
 }

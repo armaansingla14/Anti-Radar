@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { fmtNum, fmtSigned } from "@/lib/format";
-import { ATTENTION_NOT_MEASURED, attentionMeasured, attentionSentence, attentionTitle } from "@/lib/attention";
+import { ATTENTION_NOT_MEASURED, attentionSentence, attentionTitle } from "@/lib/attention";
+import { attentionView } from "@/lib/labels";
 import type { AttentionGap } from "@/lib/types";
 
 export interface AttentionGapPlotProps {
@@ -47,14 +48,44 @@ function Row({ label, value, tone }: { label: string; value: number | null; tone
  * the gap between them, and which attention sources were actually measured.
  */
 export function AttentionGapPlot({ gap, hideSources, className }: AttentionGapPlotProps) {
-  const measured = attentionMeasured(gap);
-  const lo = measured ? Math.min(gap.technical, gap.attention) : 0;
-  const hi = measured ? Math.max(gap.technical, gap.attention) : 0;
+  const v = attentionView(gap);
+  const measured = v.attention !== null;
+  const lo = measured ? Math.min(v.technical, v.attention!) : 0;
+  const hi = measured ? Math.max(v.technical, v.attention!) : 0;
   return (
     <div className={clsx("space-y-3", className)}>
-      <div className="space-y-2">
-        <Row label="Technical" value={gap.technical} tone="ink" />
-        <Row label="Attention" value={measured ? gap.attention : null} tone="muted" />
+      <dl className="grid grid-cols-3 gap-x-4 border-b border-rule pb-3">
+        <div>
+          <dt className="label">Technical momentum</dt>
+          <dd className="tnum mt-1 font-serif text-[30px] leading-none tracking-[-0.01em] text-ink">{fmtNum(v.technical, 0)}</dd>
+        </div>
+        <div>
+          <dt className="label">Public attention</dt>
+          <dd className={clsx("tnum mt-1 font-serif leading-none tracking-[-0.01em]", measured ? "text-[30px] text-ink" : "pt-2 font-mono text-[11px] uppercase text-ink-3")}>
+            {measured ? fmtNum(v.attention, 0) : "Unmeasured"}
+          </dd>
+        </div>
+        <div>
+          <dt className="label">Attention gap</dt>
+          <dd
+            className={clsx(
+              "tnum mt-1 leading-none tracking-[-0.01em]",
+              v.gap === null ? "pt-2 font-mono text-[11px] uppercase text-ink-3" : "font-serif text-[30px]",
+              v.gap !== null && (gap.flagged ? "text-accent" : "text-ink"),
+            )}
+          >
+            {v.gap === null ? "Not claimed" : fmtSigned(v.gap, 0)}
+          </dd>
+        </div>
+      </dl>
+      <p className="text-[12.5px] leading-snug text-ink-2">{v.explanation ?? attentionSentence(gap)}</p>
+      {!v.socialAvailable && (
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-3">Social attention unavailable — X is not measured for this entity</p>
+      )}
+
+      <div className="space-y-2 pt-1">
+        <Row label="Technical" value={v.technical} tone="ink" />
+        <Row label="Attention" value={v.attention} tone="muted" />
         {/* gap bracket on the same 0–100 scale — only when both ends were measured */}
         {measured && (
           <div className="grid grid-cols-[92px_1fr_40px] items-center gap-3">
@@ -74,14 +105,10 @@ export function AttentionGapPlot({ gap, hideSources, className }: AttentionGapPl
 
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-rule pt-2">
         <p className={clsx("font-mono text-[11px] uppercase tracking-[0.08em]", gap.flagged ? "text-accent" : "text-ink")}>
-          {gap.flagged ? "◆ Attention gap " : "Gap "}
-          {measured ? <span className="tnum">{fmtSigned(gap.gap, 0)} pts</span> : <span className="text-ink-3">not measurable</span>}
+          {gap.flagged ? "◆ Attention gap flagged" : "Gap below flag threshold"}
         </p>
         <p className={clsx("label", gap.coverage === "low" ? "text-accent" : "text-ink-3")}>{COVERAGE_COPY[gap.coverage]}</p>
       </div>
-      <p className="text-[12.5px] leading-snug text-ink-2">
-        {attentionSentence(gap)}
-      </p>
 
       {!hideSources && gap.sources.length > 0 && (
         <ul className="divide-y divide-rule border-y border-rule">
@@ -100,7 +127,7 @@ export function AttentionGapPlot({ gap, hideSources, className }: AttentionGapPl
                   ? [s.value !== null && s.value !== undefined ? fmtNum(s.value, 1) : null, s.percentile !== null && s.percentile !== undefined ? `p${fmtNum(s.percentile, 0)}` : null]
                       .filter(Boolean)
                       .join(" · ") || "measured"
-                  : "not available"}
+                  : "unavailable"}
               </span>
             </li>
           ))}
@@ -117,31 +144,29 @@ export interface AttentionGapMiniProps {
 
 /** Compact two-bar indicator for cards. */
 export function AttentionGapMini({ gap, className }: AttentionGapMiniProps) {
-  const measured = attentionMeasured(gap);
+  const v = attentionView(gap);
+  const measured = v.attention !== null;
   return (
-    <div
-      className={clsx("inline-flex items-center gap-2.5", className)}
-      title={attentionTitle(gap)}
-    >
+    <div className={clsx("inline-flex items-center gap-2.5", className)} title={attentionTitle(gap)}>
       <div className="flex w-14 flex-col gap-[3px]" aria-hidden>
         <div className="h-[3px] bg-rule">
-          <div className="h-full bg-ink" style={{ width: `${Math.max(0, Math.min(100, gap.technical))}%` }} />
+          <div className="h-full bg-ink" style={{ width: `${Math.max(0, Math.min(100, v.technical))}%` }} />
         </div>
         {measured ? (
           <div className="h-[3px] bg-rule">
-            <div className="h-full bg-ink-3" style={{ width: `${Math.max(0, Math.min(100, gap.attention))}%` }} />
+            <div className="h-full bg-ink-3" style={{ width: `${Math.max(0, Math.min(100, v.attention!))}%` }} />
           </div>
         ) : (
           <div className="h-[3px] border-t border-dashed border-ink-3" />
         )}
       </div>
       <span className={clsx("tnum font-mono text-[10px] uppercase tracking-[0.08em]", gap.flagged ? "text-accent" : "text-ink-2")}>
-        {measured ? (
+        Tech {fmtNum(v.technical, 0)} · Attn {measured ? fmtNum(v.attention, 0) : "unmeasured"}
+        {v.gap !== null && (
           <>
-            {gap.flagged && "◆ "}Gap {fmtSigned(gap.gap, 0)}
+            {" "}
+            · {gap.flagged && "◆ "}Gap {fmtSigned(v.gap, 0)}
           </>
-        ) : (
-          "Attention not measured"
         )}
         {gap.coverage === "low" && <span className="text-ink-3"> · low cov.</span>}
       </span>

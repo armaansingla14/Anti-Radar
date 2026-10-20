@@ -7,7 +7,9 @@ Two views:
 
   ========== ==================================================================
   github     signals with source_type=github, observed (not backfilled) metric
-             snapshots on the entity or — for companies — its repositories
+             snapshots on the entity or — for companies — its repositories; for people
+             also their contributed repositories' observed metrics / GitHub signals and
+             the recorded GitHub profile / commit-history checks (Person.attrs)
   research   arxiv signals; papers first seen (authored / linked to company)
   hiring     jobs signals; job postings first seen
   web        website signals; company web pages last fetched
@@ -43,6 +45,7 @@ from radar.models import (
     MetricSnapshot,
     PaperAuthor,
     Person,
+    RepoContributor,
     Repository,
     ResearchPaper,
     Signal,
@@ -59,6 +62,20 @@ SOURCE_FAMILY = {"github": "github", "arxiv": "research", "jobs": "hiring", "web
 PSEUDO_PROVIDERS = frozenset({"snapshot", "demo"})
 
 EntityType = Literal["company", "person"]
+
+
+# Person.attrs timestamps written when GitHub was queried about the person (providers/github.py).
+PERSON_GITHUB_CHECKS = ("talent_pool_observed_at", "activity_checked_at", "github_orgs_checked_at")
+
+
+def _parse_dt(v: object) -> datetime | None:
+    if not isinstance(v, str) or not v:
+        return None
+    try:
+        d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
 def _at(d: date) -> datetime:
@@ -118,6 +135,29 @@ def family_last_observed(session: Session, entity_type: EntityType, ids: Iterabl
     for eid, d in ms:
         if d is not None:
             _bump(out, eid, "github", _at(d))
+    if entity_type == "person":
+        # Key repositories (the person is a recorded contributor): observed metric snapshots and GitHub
+        # signals on those repos are GitHub observations of the person's work.
+        for pid, d in session.execute(
+                select(RepoContributor.person_id, func.max(MetricSnapshot.day))
+                .join(MetricSnapshot, MetricSnapshot.entity_id == RepoContributor.repository_id)
+                .where(RepoContributor.person_id.in_(ids), MetricSnapshot.source == "observed",
+                       MetricSnapshot.day <= today)
+                .group_by(RepoContributor.person_id)):
+            if d is not None:
+                _bump(out, pid, "github", _at(d))
+        for pid, at in session.execute(
+                select(RepoContributor.person_id, func.max(Signal.detected_at))
+                .join(Signal, Signal.entity_id == RepoContributor.repository_id)
+                .where(RepoContributor.person_id.in_(ids), Signal.source_type == "github", Signal.detected_at <= now)
+                .group_by(RepoContributor.person_id)):
+            _bump(out, pid, "github", at)
+        # Direct GitHub profile / commit-history checks recorded on the person (talent pool, activity check).
+        for pid, attrs in session.execute(select(Person.id, Person.attrs).where(Person.id.in_(ids))):
+            for key in PERSON_GITHUB_CHECKS:
+                at = _parse_dt((attrs or {}).get(key))
+                if at is not None and at <= now:
+                    _bump(out, pid, "github", at)
 
     if entity_type == "company":
         for cid, at in session.execute(

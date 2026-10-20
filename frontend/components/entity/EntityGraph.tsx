@@ -58,7 +58,9 @@ function layout(nodes: GraphNode[], edges: GraphEdge[], focalId: string): SimNod
     group.forEach((n, i) => {
       const angle = (i / group.length) * Math.PI * 2 + d * 0.7;
       const r = d === 0 ? 0 : 70 + d * 75;
-      sim.push({ ...n, x: cx + Math.cos(angle) * r * 1.35, y: cy + Math.sin(angle) * r * 0.8, vx: 0, vy: 0, depth: d, degree: adj.get(n.id)?.size ?? 0 });
+      // Round the trig seed: Math.sin/cos may differ in the last ulp between the server (Node) and the browser,
+      // and the simulation would amplify that into a hydration mismatch. Everything after is exact IEEE math.
+      sim.push({ ...n, x: Math.round((cx + Math.cos(angle) * r * 1.35) * 1000) / 1000, y: Math.round((cy + Math.sin(angle) * r * 0.8) * 1000) / 1000, vx: 0, vy: 0, depth: d, degree: adj.get(n.id)?.size ?? 0 });
     });
   }
   const index = new Map(sim.map((n, i) => [n.id, i]));
@@ -126,8 +128,8 @@ function layout(nodes: GraphNode[], edges: GraphEdge[], focalId: string): SimNod
   const fx = Math.min(2.4, (W - PAD * 2 - 160) / Math.max(1, x1 - x0));
   const fy = Math.min(2.4, (H - PAD * 2) / Math.max(1, y1 - y0));
   for (const n of sim) {
-    n.x = W / 2 + (n.x - (x0 + x1) / 2) * fx;
-    n.y = H / 2 + (n.y - (y0 + y1) / 2) * fy;
+    n.x = Math.round((W / 2 + (n.x - (x0 + x1) / 2) * fx) * 100) / 100;
+    n.y = Math.round((H / 2 + (n.y - (y0 + y1) / 2) * fy) * 100) / 100;
   }
   return sim;
 }

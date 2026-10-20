@@ -537,7 +537,8 @@ def _signal_phrase(t: str, n: int) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def watchlist_changes(session: Session, *, include_demo: bool, limit: int = 3) -> list[WatchChange]:
+def _watch_changes(session: Session, *, include_demo: bool) -> list[tuple[WatchChange, list[Signal]]]:
+    """[(WatchChange, signals since the item was last reviewed)] — unsorted, unlimited."""
     items = list(session.scalars(select(WatchlistItem).join(Watchlist).where(
         WatchlistItem.entity_id.is_not(None), WatchlistItem.entity_type.in_(("company", "person")))))
     if not items:
@@ -579,19 +580,23 @@ def watchlist_changes(session: Session, *, include_demo: bool, limit: int = 3) -
             pct = s30 / (total - s30) * 100
             if pct >= 5:
                 changes.append(f"GitHub stars +{pct:.0f}% (30d)")
-        sigs = [s for s in act.get(e.id, {}).get("signals", []) if s.event_at >= seen
-                and s.signal_type not in ("job_posted", "hiring_active")]
+        since_seen = [s for s in act.get(e.id, {}).get("signals", []) if s.event_at >= seen]
+        sigs = [s for s in since_seen if s.signal_type not in ("job_posted", "hiring_active")]
         by_type: dict[str, int] = defaultdict(int)
         for s in sigs:
             by_type[s.signal_type] += 1
         changes += [_signal_phrase(t, n) for t, n in sorted(by_type.items(), key=lambda kv: -kv[1])[:3]]
         if not changes:
             continue
-        out.append(WatchChange(entity_type=it.entity_type, entity_id=str(e.id), slug=e.slug, name=e.name,
-                               changes=changes, score=round(snap.score) if snap else None, delta=delta,
-                               is_demo=e.is_demo))
-    out.sort(key=lambda w: (-len(w.changes), -(w.score or 0)))
-    return out[:limit]
+        out.append((WatchChange(entity_type=it.entity_type, entity_id=str(e.id), slug=e.slug, name=e.name,
+                                changes=changes, score=round(snap.score) if snap else None, delta=delta,
+                                is_demo=e.is_demo), since_seen))
+    out.sort(key=lambda t: (-len(t[0].changes), -(t[0].score or 0)))
+    return out
+
+
+def watchlist_changes(session: Session, *, include_demo: bool, limit: int = 3) -> list[WatchChange]:
+    return [w for w, _s in _watch_changes(session, include_demo=include_demo)[:limit]]
 
 
 def new_entity_summaries(session: Session, *, include_demo: bool, limit: int = 10
@@ -646,3 +651,210 @@ def daily_radar(session: Session, *, since: datetime | None = None, include_demo
         summary=Narrative.model_validate(narratives.morning_brief_summary(items)),
     )
 
+
+
+# ── /api/daily/v2 ────────────────────────────────────────────────────────────
+#
+# Same "since" window as /api/daily (resolve_since: earlier of now − 24h and the previous visit).
+# Every item carries a deterministic headline + why_now, a timestamp (newest backing evidence),
+# its sources (EvidenceItem with source_url) and a confidence label from evidence breadth
+# (independent source families: 3+ HIGH, 2 MEDIUM, else EARLY SIGNAL). WHAT CHANGED is the top of
+# all sections ranked importance × recency (services.home.select_changes; kinds interleaved).
+
+DAILY_SECTION_LIMIT = 5
+DAILY_WHAT_CHANGED = 8
+DAILY_RECENT_DAYS = 14  # WHAT CHANGED ignores items whose newest evidence predates since − 14 days
+_DAILY_IMPORTANCE = {"person": 0.7, "company": 0.5, "research": 0.4, "watch": 0.75}
+
+
+def _since_phrase(a: dict[str, Any], since: datetime) -> str | None:
+    n = a.get("count", 0)
+    sigs = a.get("signals") or []
+    if not n or not sigs:
+        return None
+    return f"{_plural(n, 'new signal')} since {since:%b} {since.day}: {sigs[0].title}"
+
+
+def _signal_sources(signals: Sequence[Signal], limit: int = 4) -> list[Any]:
+    return [P.evidence_from_signal(s) for s in signals[:limit]]
+
+
+def _daily_people(session: Session, *, include_demo: bool, since: datetime, anchor: datetime) -> list[Any]:
+    from radar.schemas.api import EntityRef
+    from radar.schemas.feeds_v2 import DailyItem
+    from radar.services import home as H
+    from radar.services import meet
+
+    people = candidate_people(session, include_demo=include_demo, floor=0)
+    changed = _changed(session, people, since, use_7d=False)[:DAILY_SECTION_LIMIT]
+    cards = P.founder_intel_cards(session, [e for e, _k, _a in changed])
+    out: list[H.Cand] = []
+    for card, (_e, _k, a) in zip(cards, changed, strict=True):
+        sources = _signal_sources(a.get("signals") or []) or [e for e in card.why_surfaced[:4]]
+        why = _since_phrase(a, since) or (f"Founder score up +{card.delta_7d:g} over 7 days"
+                                          if card.delta_7d and card.delta_7d > 0 else f"Founder score rose since {since:%b} {since.day}")
+        conf = H.card_confidence(card, sources)
+        at = a.get("latest") or H.newest(sources)
+        delta = f" ({card.delta_7d:+g} 7d)" if card.delta_7d else ""
+        item = DailyItem(kind="person", headline=f"{card.name}: founder score {card.score}{delta}",
+                         why_now=why, at=at, sources=sources, confidence=conf,
+                         entity=EntityRef(type="person", id=card.id, slug=card.slug, name=card.name),
+                         score=card.score, delta=card.delta_7d, is_demo=card.is_demo)
+        out.append(H.Cand(item, (_DAILY_IMPORTANCE["person"] + H.CONF_BONUS[conf]) * H.recency(at, anchor)))
+    # This week's meet list: people whose dated evidence falls inside the window.
+    listed = {c.item.entity.id for c in out}
+    for mc in meet.meet_feed(session, "current", include_demo=include_demo).people:
+        recent = [e for e in mc.why_now if e.event_at and e.event_at >= since]
+        if not recent or mc.person.id in listed:
+            continue
+        cand = H.meet_change(mc, anchor)
+        ci = cand.item
+        latest = max(recent, key=lambda e: e.event_at)
+        why = f"{H.short_date(latest.event_at)}: {latest.title}"
+        out.append(H.Cand(DailyItem(kind="person", headline=ci.headline, why_now=why, at=latest.event_at,
+                                    sources=recent[:4], confidence=ci.confidence, entity=ci.entity, label=ci.label,
+                                    score=round(mc.score), is_demo=ci.is_demo), cand.rank))
+    out.sort(key=lambda c: -c.rank)
+    return out[:DAILY_SECTION_LIMIT]
+
+
+def _daily_companies(session: Session, *, include_demo: bool, since: datetime, anchor: datetime) -> list[Any]:
+    from radar.schemas.feeds_v2 import DailyItem
+    from radar.services import home as H
+
+    companies = candidate_companies(session, include_demo=include_demo)
+    changed = _changed(session, companies, since, use_7d=True)
+    snaps = P.latest_snapshots(session, [e.id for e, _k, _a in changed])
+    d7 = P.score_deltas(session, snaps, 7)
+    acc = {i: a for i, s in snaps.items() if (a := H.acceleration_pct(s)) is not None and a >= H.ACCEL_PCT}
+    keep = [t for t in changed if (d7.get(t[0].id) or 0) > 0 or t[0].id in acc][:DAILY_SECTION_LIMIT]
+    cards = P.company_cards(session, [e for e, _k, _a in keep])
+    out = []
+    for card, (e, _k, a) in zip(cards, keep, strict=True):
+        cand = H.company_change(card, acc.get(e.id), a.get("latest"), anchor)
+        ci = cand.item
+        sources = _signal_sources(a.get("signals") or []) or ci.evidence
+        why = _since_phrase(a, since) or ci.why_now
+        conf = H.card_confidence(card, sources)
+        item = DailyItem(kind="company", headline=ci.headline, why_now=why, at=a.get("latest") or ci.at,
+                         sources=sources, confidence=conf, entity=ci.entity, label=ci.label, score=card.score,
+                         delta=card.delta_7d, is_demo=card.is_demo)
+        out.append(H.Cand(item, cand.rank))
+    return out
+
+
+def _daily_formations(session: Session, *, include_demo: bool, since: datetime, anchor: datetime) -> list[Any]:
+    from sqlalchemy import case
+
+    from radar.models import FormationCandidate
+    from radar.schemas.feeds_v2 import DailyItem
+    from radar.services import formation as F
+    from radar.services import home as H
+
+    q = select(FormationCandidate).where(
+        or_(FormationCandidate.first_detected_at >= since, FormationCandidate.latest_activity_at >= since))
+    if not include_demo:
+        q = q.where(FormationCandidate.is_demo.is_(False))
+    tier_rank = case({"high": 0, "emerging": 1}, value=FormationCandidate.tier, else_=2)
+    rows = list(session.scalars(q.order_by(tier_rank, FormationCandidate.score.desc(), FormationCandidate.slug)
+                                .limit(DAILY_SECTION_LIMIT)))
+    out = []
+    for card in F.formation_cards(session, rows):
+        cand = H.formation_change(card, anchor)
+        ci = cand.item
+        new = card.first_detected_at is not None and card.first_detected_at >= since
+        out.append(H.Cand(DailyItem(kind="formation", headline=ci.headline,
+                                    why_now=("Newly detected · " if new else "") + ci.why_now, at=ci.at,
+                                    sources=ci.evidence, confidence=ci.confidence, entity=ci.entity, label=ci.label,
+                                    score=card.score, is_demo=ci.is_demo), cand.rank, cand.also))
+    return out
+
+
+def _daily_research(session: Session, *, include_demo: bool, since: datetime, anchor: datetime) -> list[Any]:
+    from radar.schemas.api import EntityRef, EvidenceItem
+    from radar.schemas.feeds_v2 import DailyItem
+    from radar.services import home as H
+
+    days = max(14, (clock.now() - since).days + 1)
+    out = []
+    for p in recent_papers(session, include_demo=include_demo, days=days, limit=3, with_why=False):
+        sources = [EvidenceItem(title=p.title, source_type="arxiv", source_url=p.url, event_at=p.published_at)]
+        sources += [EvidenceItem(title=f"Code: {u}", source_type="github", source_url=u) for u in p.code_urls[:1]]
+        bits = [f"Published {H.short_date(p.published_at)}" + (f" in {', '.join(p.categories[:2])}"
+                                                                 if p.categories else "")]
+        if p.code_urls:
+            bits.append("code released")
+        if p.linked_entities:
+            bits.append("linked to " + ", ".join(str(e.get("name")) for e in p.linked_entities[:2]))
+        conf = H.confidence_for(len(H.evidence_families(sources)))
+        item = DailyItem(kind="research", headline=p.title, why_now=" · ".join(bits), at=p.published_at,
+                         sources=sources, confidence=conf,
+                         entity=EntityRef(type="paper", id=p.id, slug=p.arxiv_id, name=p.title), label="RESEARCH",
+                         score=p.score, is_demo=p.is_demo)
+        out.append(H.Cand(item, (_DAILY_IMPORTANCE["research"] + H.CONF_BONUS[conf]) * H.recency(p.published_at,
+                                                                                                anchor)))
+    return out
+
+
+def _daily_strange(session: Session, *, include_demo: bool, anchor: datetime) -> list[Any]:
+    from radar.schemas.feeds_v2 import DailyItem
+    from radar.services import home as H
+
+    out = []
+    for s in strange_signals(session, include_demo=include_demo, limit=3):
+        cand = H.strange_change(s, anchor)
+        if cand is None:
+            continue
+        ci = cand.item
+        out.append(H.Cand(DailyItem(kind="strange", headline=ci.headline, why_now=ci.why_now, at=ci.at,
+                                    sources=ci.evidence, confidence=ci.confidence, entity=ci.entity, label=ci.label,
+                                    is_demo=ci.is_demo), cand.rank))
+    return out
+
+
+def _daily_watch(session: Session, *, include_demo: bool, anchor: datetime) -> list[Any]:
+    from radar.schemas.api import EntityRef
+    from radar.schemas.feeds_v2 import DailyItem
+    from radar.services import home as H
+
+    out = []
+    for w, sigs in _watch_changes(session, include_demo=include_demo)[:DAILY_SECTION_LIMIT]:
+        sources = _signal_sources(sigs)
+        conf = H.confidence_for(len(H.evidence_families(sources)))
+        at = sigs[0].event_at if sigs else None
+        item = DailyItem(kind="watch", headline=w.name, why_now="; ".join(w.changes), at=at, sources=sources,
+                         confidence=conf, entity=EntityRef(type=w.entity_type, id=w.entity_id, slug=w.slug,
+                                                           name=w.name),
+                         label="WATCHLIST", score=w.score, delta=w.delta, is_demo=w.is_demo)
+        out.append(H.Cand(item, (_DAILY_IMPORTANCE["watch"] + H.CONF_BONUS[conf]) * H.recency(at, anchor)))
+    return out
+
+
+def daily_radar_v2(session: Session, *, since: datetime | None = None, include_demo: bool | None = None) -> Any:
+    from radar.schemas.feeds_v2 import DailyRadarV2
+    from radar.services import home as H
+
+    include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
+    since = resolve_since(session, since)
+    as_of = freshness.feed_as_of(session)
+    anchor = as_of.anchor
+    kw = {"include_demo": include_demo, "anchor": anchor}
+    sections = {
+        "people": _daily_people(session, since=since, **kw),
+        "formations": _daily_formations(session, since=since, **kw),
+        "companies_accelerating": _daily_companies(session, since=since, **kw),
+        "research": _daily_research(session, since=since, **kw),
+        "strange_signals": _daily_strange(session, **kw),
+        "watchlist_changes": _daily_watch(session, **kw),
+    }
+    # WHAT CHANGED only takes items whose newest evidence is recent (undated items stay in their section).
+    floor = since - timedelta(days=DAILY_RECENT_DAYS)
+    top = H.select_changes([c for cs in sections.values() for c in cs if c.item.at is None or c.item.at >= floor],
+                           limit=DAILY_WHAT_CHANGED)
+    brief_items = [{"n": n, "text": i.headline if i.headline.endswith(".") else i.headline + ".",
+                    "evidence": [e.signal_id for e in i.sources if e.signal_id]} for n, i in enumerate(top[:6], 1)]
+    return DailyRadarV2(
+        date=clock.today(), since=since, data_as_of=as_of.data_as_of, is_snapshot=as_of.is_snapshot,
+        summary=Narrative.model_validate(narratives.morning_brief_summary(brief_items)), what_changed=top,
+        **{k: [c.item for c in v] for k, v in sections.items()},
+    )

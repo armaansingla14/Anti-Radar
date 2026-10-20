@@ -1,6 +1,48 @@
 import clsx from "clsx";
 import { daysBetween, fmtDate, fmtNum, parseDate, sourceLabel } from "@/lib/format";
+import { collisionView, type StrengthWord } from "@/lib/labels";
 import type { Collision } from "@/lib/types";
+
+const STRENGTH_CLS: Record<StrengthWord, string> = {
+  HIGH: "border border-ink text-ink",
+  MEDIUM: "border border-rule-strong text-ink-2",
+  LOW: "border border-dotted border-ink-3 text-ink-3",
+};
+
+/** "HIGH" / "MEDIUM" / "LOW" collision-strength chip. */
+export function StrengthWordBadge({ value, className }: { value: StrengthWord; className?: string }) {
+  return (
+    <span
+      className={clsx(
+        "inline-flex items-center px-1.5 py-[1px] font-mono text-[9.5px] uppercase leading-[14px] tracking-[0.08em] whitespace-nowrap",
+        STRENGTH_CLS[value],
+        className,
+      )}
+      title={`${value.charAt(0)}${value.slice(1).toLowerCase()} collision strength — independent source families converging in a short window`}
+    >
+      {value}
+    </span>
+  );
+}
+
+export interface CollisionLineProps {
+  collision: Pick<Collision, "families" | "summary" | "strength" | "family_labels" | "sentence">;
+  className?: string;
+}
+
+/** One line: STRENGTH · GitHub · Research — "4 independent sources within 17 days". */
+export function CollisionLine({ collision, className }: CollisionLineProps) {
+  const v = collisionView(collision);
+  return (
+    <p className={clsx("flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] leading-snug text-ink-2", className)}>
+      {v.strength && <StrengthWordBadge value={v.strength} />}
+      {v.families.length > 0 && (
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink">{v.families.join(" · ")}</span>
+      )}
+      <span>{v.sentence}</span>
+    </p>
+  );
+}
 
 export interface CollisionStripProps {
   collision: Collision;
@@ -30,7 +72,7 @@ export function CollisionStrip({ collision, asOf, className }: CollisionStripPro
   return (
     <div className={clsx("space-y-3", className)}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[13.5px] text-ink">{collision.summary}</p>
+        <CollisionLine collision={collision} className="text-[13.5px] text-ink" />
         <p className="label tnum">
           Collision <span className="text-ink">{fmtNum(collision.score, 2)}</span>
           {collision.span_days !== null && <> · span {fmtNum(collision.span_days, 0)}d</>} · {collision.signal_count} signals

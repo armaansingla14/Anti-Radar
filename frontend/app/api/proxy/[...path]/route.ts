@@ -26,6 +26,7 @@ const ALLOWED_SECTIONS = new Set([
   "health",
   "session",
   "radar",
+  "home",
   "daily",
   "brief",
   "companies",

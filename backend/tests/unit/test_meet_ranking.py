@@ -38,7 +38,9 @@ def test_priority_and_confidence_need_breadth():
 
 
 def test_weights_sum_to_100_and_score_floors_at_zero():
-    assert sum(meet.WEIGHTS.values()) == 100
+    assert sum(meet.WEIGHTS.values()) + meet.TALENT_POINTS == 100  # talent is the second-largest term
+    assert meet.WEIGHTS["founder"] == max(meet.WEIGHTS.values())
+    assert meet.WEIGHTS["formation"] < meet.TALENT_POINTS  # membership never outweighs verified history
     assert meet.meet_score({"founder": 5.0, "obviousness": -25.0}) == 0.0
     assert meet.meet_score({"founder": 21.0, "formation": 17.5, "feedback": -6}) == 32.5
 
@@ -108,8 +110,9 @@ def test_talent_points_prefer_a_recent_formation_event():
     assert meet.talent_points(labs, False) == meet.TALENT_POINTS * meet.TALENT_NO_EVENT_SHARE
     assert meet.talent_points([], True) == 0
     assert meet.talent_points(_labs(commits=5, tier=2), True) < meet.talent_points(labs, True)
-    assert meet.meet_score({"founder": 30, "formation": 25, "thesis": 10, "recency": 10, "attention": 10,
-                            "collision": 15, "talent": 8}) == 100.0  # capped
+    assert meet.talent_points(labs, 0.5) == pytest.approx(meet.TALENT_POINTS * 0.5)  # event strength scales
+    assert meet.meet_score({"founder": 40, "formation": 25, "thesis": 10, "recency": 10, "attention": 10,
+                            "collision": 15, "talent": 17}) == 100.0  # capped
 
 
 def _ranked(labs, signals, comps=None):

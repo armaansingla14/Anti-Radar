@@ -451,16 +451,64 @@ def morning_brief_template(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
     return narrative(text, citations=[e for i in used for e in (i.get("evidence") or [])])
 
 
+# Internal ids the model must never show the reader: item ids (I2), source ids (S1, G3, P1), "item 2",
+# bracketed numbers ([2]) and UUIDs (signal ids).
+_SEP = r"\s*(?:,|;|&|and|/|–|-)\s*"
+_BRIEF_BRACKET_REF = re.compile(
+    r"\s*(?:"
+    rf"[\[(]\s*(?:items?\s*#?\s*)?[IGSP]\d{{1,3}}(?:{_SEP}[IGSP]?\d{{1,3}})*\s*[\])]"  # (I2) [S1, S3]
+    rf"|[\[(]\s*items?\s*#?\s*\d{{1,3}}(?:{_SEP}#?\d{{1,3}})*\s*[\])]"  # (item 2) (items 1 and 3)
+    rf"|\[\s*#?\d{{1,3}}(?:{_SEP}#?\d{{1,3}})*\s*\]"  # [2] [1, 3]
+    r")", re.I)
+_BRIEF_ID_TOKEN = re.compile(r"\b[IGSP]\d{1,3}\b")
+_BRIEF_ITEM_WORD = re.compile(r"\bitems?\s*#?\s*\d+\b", re.I)
+_UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+
+
+def clean_brief_summary(text: str, items: Sequence[dict[str, Any]]) -> str | None:
+    """Post-validate a model-written brief summary. Bracketed id references ("(I2)", "[items 1, 3]") are
+    stripped; any id that remains in the prose ("I2 says …", "item 3", a UUID, a <source> tag) rejects the
+    text (→ None, the caller falls back to the template). Tokens that genuinely occur in an item's own
+    text (e.g. a product called "G1") are allowed."""
+    corpus = " ".join(str(i.get("text") or "") for i in items)
+    allowed = set(_BRIEF_ID_TOKEN.findall(corpus))
+
+    def _strip(m: re.Match[str]) -> str:
+        inner = m.group(0)
+        toks = _BRIEF_ID_TOKEN.findall(inner)
+        if toks and all(t in allowed for t in toks):
+            return inner  # e.g. "(G1)" quoted from an item: not an id reference
+        return ""
+
+    out = _BRIEF_BRACKET_REF.sub(_strip, text or "")
+    out = re.sub(r"\s+([.,;:!?])", r"\1", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    if not out or "<source" in out.lower() or _UUID_RE.search(out) or _BRIEF_ITEM_WORD.search(out):
+        return None
+    if any(t not in allowed for t in _BRIEF_ID_TOKEN.findall(out)):
+        return None
+    return out
+
+
 def morning_brief_summary(items: Sequence[dict[str, Any]], *, provider: BaseProvider | None = None) -> dict[str, Any]:
-    """``items`` are BriefItem-like dicts: {n, text, evidence: [signal ids]}."""
+    """``items`` are BriefItem-like dicts: {n, text, evidence: [signal ids]}.
+
+    The model sees the items as numbered sources and must cite them only in ``item_numbers``. Its text is
+    post-validated (``clean_brief_summary``): leaked ids are stripped or the answer is rejected, and an
+    answer that cites no provided item is rejected — both fall back to the deterministic template."""
     if not items:
         return morning_brief_template(items)
     by_n = {int(i["n"]): i for i in items}
     blocks = "\n".join(wrap_source(f"I{i['n']}", None, "system", i["text"], 600) for i in items)
-    user = f"Date: {clock.today().isoformat()}\nItems:\n{blocks}"
+    user = (f"Date: {clock.today().isoformat()}\nItems (ids are for item_numbers only — never write them in "
+            f"text):\n{blocks}")
     res = _llm(provider, "narrative.morning_brief", "standard", "morning_brief", user, _MorningOut, 1000)
     if res is None or not res.parsed.text.strip():
         return morning_brief_template(items)
-    used = [by_n[n] for n in res.parsed.item_numbers if n in by_n]
-    return narrative(res.parsed.text.strip(), epistemic="MODEL_OPINION", generator=_gen(res), model=res.model,
+    used = [by_n[n] for n in dict.fromkeys(res.parsed.item_numbers) if n in by_n]
+    text = clean_brief_summary(res.parsed.text.strip(), items)
+    if text is None or not used:
+        log.info("morning brief summary rejected (leaked ids or no valid item cited); using template")
+        return morning_brief_template(items)
+    return narrative(text, epistemic="MODEL_OPINION", generator=_gen(res), model=res.model,
                      citations=[e for i in used for e in (i.get("evidence") or [])])

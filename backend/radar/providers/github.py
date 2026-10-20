@@ -94,6 +94,12 @@ BOT_LOGINS = {
     "devin-ai-integration", "cursoragent", "cursor-agent", "cursor", "codex", "chatgpt-codex-connector",
     "openai-codex", "gemini-code-assist", "google-labs-jules", "jules", "sweep-ai", "coderabbitai",
     "sourcery-ai", "ellipsis-dev", "aider", "aider-chat", "cline", "openhands-agent", "amazon-q-developer",
+    # Monorepo export / merge / CLA automation at large labs (commit as plain users, not "[bot]").
+    "copybara-service", "copybara", "copybara-bot", "copybara-github", "tensorflow-copybara", "google-cla", "googlebot",
+    "google-ml-butler", "tensorflower-gardener", "gcf-owl-bot", "pytorchbot", "pytorchmergebot",
+    "pytorchupdatebot", "facebook-github-bot", "facebook-github-tools", "meta-codesync", "nvidia-merlin-bot",
+    "mergify[bot]", "github-merge-queue", "bors", "bors-ng", "k8s-ci-robot", "k8s-merge-robot", "llvmbot",
+    "changeset-bot", "release-please", "imgbotapp",
 }
 
 SeriesPoint = tuple[date, float]

@@ -2,17 +2,11 @@
 
 import clsx from "clsx";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { FEEDBACK_GROUPS, FEEDBACK_ITEMS, feedbackText } from "@/lib/labels";
 import type { FeedbackLabel } from "@/lib/types";
 
-export const FEEDBACK_OPTIONS: { label: FeedbackLabel; text: string; hint: string }[] = [
-  { label: "useful", text: "Useful", hint: "More like this" },
-  { label: "not_interesting", text: "Not interesting", hint: "Less like this" },
-  { label: "too_obvious", text: "Too obvious", hint: "Already consensus" },
-  { label: "too_early", text: "Too early", hint: "Revisit later" },
-  { label: "wrong_thesis", text: "Wrong thesis", hint: "Outside Anti Fund focus" },
-  { label: "bad_data", text: "Bad data", hint: "Something here is wrong" },
-  { label: "already_known", text: "Already known", hint: "In our pipeline" },
-];
+/** Menu order: INTERESTING (+ reasons), NOT INTERESTING (+ reasons). */
+export const FEEDBACK_OPTIONS = FEEDBACK_ITEMS;
 
 export interface FeedbackMenuProps {
   onSelect: (label: FeedbackLabel) => void | Promise<void>;
@@ -22,7 +16,7 @@ export interface FeedbackMenuProps {
   className?: string;
 }
 
-/** "Feedback" disclosure menu with the seven analyst labels. */
+/** "Feedback" disclosure menu: INTERESTING / NOT INTERESTING, each with optional reasons. */
 export function FeedbackMenu({ onSelect, selected = null, align = "left", className }: FeedbackMenuProps) {
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState<FeedbackLabel | null>(selected);
@@ -38,7 +32,7 @@ export function FeedbackMenu({ onSelect, selected = null, align = "left", classN
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
-    const idx = Math.max(0, FEEDBACK_OPTIONS.findIndex((o) => o.label === current));
+    const idx = Math.max(0, FEEDBACK_ITEMS.findIndex((o) => o.label === current));
     itemRefs.current[idx]?.focus();
     return () => document.removeEventListener("mousedown", onDown);
   }, [open, current]);
@@ -75,7 +69,7 @@ export function FeedbackMenu({ onSelect, selected = null, align = "left", classN
     }
   };
 
-  const currentText = FEEDBACK_OPTIONS.find((o) => o.label === current)?.text;
+  const currentText = feedbackText(current);
 
   return (
     <div ref={rootRef} className={clsx("relative inline-block", className)}>
@@ -102,28 +96,43 @@ export function FeedbackMenu({ onSelect, selected = null, align = "left", classN
           aria-label="Rate this signal"
           onKeyDown={onMenuKey}
           className={clsx(
-            "absolute z-40 mt-2 w-56 animate-rise border border-ink bg-paper py-1 rule-b",
+            "absolute z-40 mt-2 w-64 animate-rise border border-ink bg-paper py-1 rule-b",
             align === "right" ? "right-0" : "left-0",
           )}
         >
-          {FEEDBACK_OPTIONS.map((o, i) => (
-            <button
-              key={o.label}
-              ref={(el) => {
-                itemRefs.current[i] = el;
-              }}
-              type="button"
-              role="menuitemradio"
-              aria-checked={current === o.label}
-              onClick={() => choose(o.label)}
-              className="flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left outline-none hover:bg-panel focus-visible:bg-panel"
-            >
-              <span className={clsx("text-[13px]", current === o.label ? "text-accent" : "text-ink")}>
-                {current === o.label && "✓ "}
-                {o.text}
-              </span>
-              <span className="font-mono text-[9.5px] uppercase tracking-[0.04em] text-ink-3">{o.hint}</span>
-            </button>
+          {FEEDBACK_GROUPS.map((g, gi) => (
+            <div key={g.key} role="group" aria-label={g.head.text} className={clsx(gi > 0 && "mt-1 border-t border-rule pt-1")}>
+              {[g.head, ...g.reasons].map((o, j) => {
+                const i = FEEDBACK_ITEMS.indexOf(o);
+                const head = j === 0;
+                return (
+                  <button
+                    key={o.label}
+                    ref={(el) => {
+                      itemRefs.current[i] = el;
+                    }}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={current === o.label}
+                    onClick={() => choose(o.label)}
+                    className={clsx(
+                      "flex w-full items-baseline gap-2 py-1.5 pr-3 text-left outline-none hover:bg-panel focus-visible:bg-panel",
+                      head ? "pl-3" : "pl-7",
+                    )}
+                  >
+                    <span
+                      className={clsx(
+                        head ? "font-mono text-[10.5px] uppercase tracking-[0.08em]" : "text-[13px]",
+                        current === o.label ? "text-accent" : head ? "text-ink" : "text-ink-2",
+                      )}
+                    >
+                      {current === o.label && "✓ "}
+                      {o.text}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           ))}
         </div>
       )}

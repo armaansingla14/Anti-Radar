@@ -136,7 +136,7 @@ export function WhyDrawer({ open, onClose, score, entityName, scoreLabel = "Anti
 
           {score.collision && (
             <div>
-              <SectionLabel as="h3">Signal collision</SectionLabel>
+              <SectionLabel as="h3">Independent signals</SectionLabel>
               <CollisionStrip collision={score.collision} asOf={score.computed_on} className="mt-4" />
               {score.collision.evidence.length > 0 && <EvidenceList items={score.collision.evidence} limit={6} dense className="mt-4" demo={isDemo} />}
             </div>

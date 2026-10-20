@@ -1,6 +1,8 @@
 """Learned preference multipliers from analyst feedback.
 
-Keys: ``thesis:<theme>``, ``signal:<signal_type>``, ``stage:<stage>``, ``attention:known``.
+Keys: ``thesis:<theme>``, ``signal:<signal_type>``, ``stage:<stage>``, ``attention:known``, plus the
+v2 aggregate keys ``signal:founder`` (founder / formation signals), ``signal:team`` (team-formation
+signals) and ``person:<uuid>`` (an analyst's "strong founder" call on one person).
 Multipliers are bounded to ``[min_multiplier, max_multiplier]`` and their effect
 on any total is capped at ``±max_point_shift`` points, so feedback nudges the
 ranking but can never rewrite it.
@@ -8,6 +10,14 @@ ranking but can never rewrite it.
 Where each key acts (each exactly once, no double counting):
 * ``thesis:*``  -> Thesis Fit component (thesis_fit.py)
 * ``signal:*``, ``stage:*``, ``attention:known`` -> post-sum feedback adjustment here.
+* ``person:<uuid>`` -> ``person_boost`` (people rankings, e.g. Who Should We Meet); bounded like the rest.
+
+Label -> weights (v2; existing labels unchanged):
+* ``interesting``       ≈ ``useful`` (thesis + dominant signal types up one step)
+* ``strong_founder``    -> ``signal:founder`` up, and ``person:<id>`` up for the person (or a company's
+  founders)
+* ``interesting_shift`` -> ``signal:<dominant signal type>`` up (only the single dominant type)
+* ``weak_team``         -> ``signal:team`` down (team / formation-cluster signals)
 """
 
 from __future__ import annotations
@@ -21,7 +31,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from radar import clock
-from radar.models.core import Company, EntityTopic, Person, PreferenceWeight, Repository, Signal, Topic
+from radar.models.core import (
+    Company,
+    CompanyPerson,
+    EntityTopic,
+    Person,
+    PreferenceWeight,
+    Repository,
+    Signal,
+    Topic,
+)
+from radar.scoring.features import FORMATION_SIGNAL_TYPES, LAB_ALUMNI_CLUSTER
 from radar.thesis.loader import FeedbackCfg, Thesis, get_thesis
 
 THEME_MIN_SCORE = 0.3
@@ -29,6 +49,16 @@ MAX_THEMES = 2
 MAX_SIGNAL_TYPES = 3
 CONTEXT_WINDOW_DAYS = 120
 KNOWN_ATTENTION_MIN = 50.0  # attention percentile above which 'attention:known' applies
+FOUNDER_KEY = "signal:founder"
+TEAM_KEY = "signal:team"
+# Signal types behind the aggregate keys. Founder = someone forming something new (transitions, new
+# projects, joining a young org, lab-alumni clusters); team = several people converging on one org.
+FOUNDER_SIGNAL_TYPES = FORMATION_SIGNAL_TYPES | {LAB_ALUMNI_CLUSTER}
+TEAM_SIGNAL_TYPES = frozenset({"young_org_team", "joined_young_org", LAB_ALUMNI_CLUSTER})
+FEEDBACK_LABELS = (
+    "useful", "not_interesting", "too_obvious", "too_early", "wrong_thesis", "bad_data", "already_known", "dismiss",
+    "interesting", "strong_founder", "interesting_shift", "weak_team",
+)
 
 
 @dataclass
@@ -57,6 +87,10 @@ def feedback_adjustment(
 
 def adjustment_keys(signal_types: list[str], stage: str | None, attention: float | None) -> list[str]:
     keys = [f"signal:{t}" for t in signal_types]
+    if any(t in FOUNDER_SIGNAL_TYPES for t in signal_types):
+        keys.append(FOUNDER_KEY)
+    if any(t in TEAM_SIGNAL_TYPES for t in signal_types):
+        keys.append(TEAM_KEY)
     if stage:
         keys.append(f"stage:{stage}")
     if attention is not None and attention >= KNOWN_ATTENTION_MIN:
@@ -66,6 +100,16 @@ def adjustment_keys(signal_types: list[str], stage: str | None, attention: float
 
 def dominant_signal_types(signal_types: list[str], limit: int = MAX_SIGNAL_TYPES) -> list[str]:
     return [t for t, _ in Counter(signal_types).most_common(limit)]
+
+
+def person_key(person_id: uuid.UUID | str) -> str:
+    return f"person:{person_id}"
+
+
+def person_boost(prefs: dict[str, float], person_id: uuid.UUID | str, cfg: FeedbackCfg | None = None) -> float:
+    """Bounded multiplier from 'strong founder' calls on this person (1.0 when none)."""
+    m = prefs.get(person_key(person_id), 1.0)
+    return clamp_multiplier(m, cfg) if cfg else m
 
 
 def load_prefs(session: Session) -> dict[str, float]:
@@ -95,6 +139,15 @@ def entity_context(session: Session, entity_type: str, entity_id: uuid.UUID, day
         session.scalars(select(Signal.signal_type).where(Signal.entity_id.in_(ids), Signal.event_at >= since))
     )
     return {"themes": themes, "signal_types": dominant_signal_types(types), "stage": stage}
+
+
+def _founder_ids(session: Session, entity_type: str, entity_id: uuid.UUID) -> list[uuid.UUID]:
+    if entity_type == "person":
+        return [entity_id]
+    if entity_type == "company":
+        return list(session.scalars(select(CompanyPerson.person_id).where(
+            CompanyPerson.company_id == entity_id, CompanyPerson.is_founder.is_(True))))
+    return []
 
 
 def _bump(session: Session, key: str, delta: float, cfg: FeedbackCfg) -> PreferenceWeight:
@@ -128,6 +181,17 @@ def apply_feedback(
     elif label == "too_early":
         if ctx["stage"]:
             changes = [(f"stage:{ctx['stage']}", -step / 2)]
+    elif label == "interesting":
+        changes = [(k, step) for k in thesis_keys + signal_keys]
+    elif label == "strong_founder":
+        changes = [(FOUNDER_KEY, step)] + [
+            (person_key(pid), step) for pid in _founder_ids(session, entity_type, entity_id)
+        ]
+    elif label == "interesting_shift":
+        if signal_keys:
+            changes = [(signal_keys[0], step)]
+    elif label == "weak_team":
+        changes = [(TEAM_KEY, -step)]
     elif label == "already_known":
         changes = [("attention:known", -step / 2)]
     elif label == "bad_data":

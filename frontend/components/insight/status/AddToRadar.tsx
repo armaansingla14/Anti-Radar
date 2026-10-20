@@ -4,7 +4,7 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { ingestGithub, ingestUrl, ingestX } from "@/lib/api";
+import { ingestGithub, ingestUrl } from "@/lib/api";
 import { hrefFor, humanize } from "@/lib/format";
 import type { IngestOut } from "@/lib/types";
 import { describeApiError } from "../apiError";
@@ -267,69 +267,12 @@ function WebsiteForm() {
   );
 }
 
-function XForm() {
-  const { pending, result, run, fail } = useRun();
-  const [url, setUrl] = useState("");
-  const [text, setText] = useState("");
-  return (
-    <Panel
-      n="C"
-      title="X post"
-      description="Records a post as a signal. Text comes from the public embed when available — or from what you paste below."
-      cta="Ingest post"
-      pending={pending}
-      result={result}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!/^https?:\/\/(www\.|mobile\.)?(x|twitter)\.com\/[^/]+\/status\/\d+/i.test(url.trim()))
-          return fail("Enter an x.com or twitter.com post URL, e.g. https://x.com/handle/status/123….");
-        void run(() => ingestX({ url: url.trim(), pasted_text: text.trim() || null }));
-      }}
-    >
-      <div>
-        <label htmlFor="x-url" className={fieldLabel}>
-          Post URL
-        </label>
-        <input
-          id="x-url"
-          className={input}
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://x.com/handle/status/…"
-          inputMode="url"
-          autoComplete="off"
-          spellCheck={false}
-          maxLength={500}
-        />
-      </div>
-      <div>
-        <label htmlFor="x-text" className={fieldLabel}>
-          Pasted text <span className="text-ink-3">· optional</span>
-        </label>
-        <textarea
-          id="x-text"
-          rows={2}
-          className={clsx(input, "resize-y font-sans text-[13px]")}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={5000}
-          placeholder="Paste the post text if the embed is unavailable"
-        />
-        <p className="mt-1 text-[11px] leading-snug text-ink-3">
-          Stored as <span className="font-mono">user_provided</span> — never shown as verified source text.
-        </p>
-      </div>
-    </Panel>
-  );
-}
-
-/** Three manual ingest forms wired to POST /api/ingest/{github,url,x}. */
+/** Manual ingest forms wired to POST /api/ingest/{github,url}. X posts are pasted in the X INTELLIGENCE panel. */
 export function AddToRadar() {
   return (
-    <div className="grid gap-x-10 gap-y-10 md:grid-cols-3">
+    <div className="grid gap-x-10 gap-y-10 md:grid-cols-2">
       <GithubForm />
       <WebsiteForm />
-      <XForm />
     </div>
   );
 }

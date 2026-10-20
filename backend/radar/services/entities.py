@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from sqlalchemy import Select, and_, case, false, func, not_, null, or_, select, union
@@ -43,6 +43,7 @@ from radar.models import (
     MetricSnapshot,
     PaperAuthor,
     Person,
+    Relationship,
     RepoContributor,
     Repository,
     ResearchPaper,
@@ -61,6 +62,7 @@ from radar.schemas.api import (
     PaperCard,
     PersonCard,
     PersonDetail,
+    RelationshipOut,
     RepoCard,
     ReportOut,
     ScorePoint,
@@ -422,6 +424,39 @@ def _timeline_signals(session: Session, ids: Iterable[uuid.UUID], limit: int = T
                                 .order_by(Signal.event_at.desc(), Signal.id).limit(limit)))
 
 
+def company_scope_signal_ids(session: Session, own_ids: Iterable[uuid.UUID], person_ids: Iterable[uuid.UUID],
+                             since: datetime | None = None) -> set[uuid.UUID]:
+    """Signals that belong on a company page: on the company / its repos / its papers (directly or via an
+    explicit SignalEntity link to one of them), plus signals *about* its linked people (person is the
+    primary entity) that are not linked to another organization or repository. A person's 'related' links
+    — e.g. being a new contributor to another org's repo — are evidence about that other org, not this one."""
+    own, pids = set(own_ids), set(person_ids)
+    if not own and not pids:
+        return set()
+    sids = {r.sid for r in related_signal_rows(session, own, since, include_repos=False)} if own else set()
+    if pids:
+        q = select(Signal.id).where(Signal.entity_id.in_(pids))
+        if since is not None:
+            q = q.where(Signal.event_at >= since)
+        cand = set(session.scalars(q)) - sids
+        if cand:
+            foreign = set(session.scalars(
+                select(SignalEntity.signal_id).where(
+                    SignalEntity.signal_id.in_(cand), SignalEntity.entity_type.in_(("company", "repository")),
+                    SignalEntity.entity_id.not_in(own))))
+            sids |= cand - foreign
+    return sids
+
+
+def company_timeline_signals(session: Session, own_ids: Iterable[uuid.UUID], person_ids: Iterable[uuid.UUID],
+                             limit: int = TIMELINE_LIMIT) -> list[Signal]:
+    sids = company_scope_signal_ids(session, own_ids, person_ids)
+    if not sids:
+        return []
+    return list(session.scalars(select(Signal).where(Signal.id.in_(sids))
+                                .order_by(Signal.event_at.desc(), Signal.id).limit(limit)))
+
+
 def _sources(prov: Sequence[FieldProvenance], signals: Sequence[Signal], extra: Iterable[tuple[str, str, str]] = ()
              ) -> list[SourceRef]:
     """Distinct source URLs behind displayed facts and timeline signals."""
@@ -667,8 +702,8 @@ def company_detail(session: Session, id_or_slug: str) -> CompanyDetail | None:
                                 .order_by(Job.posted_at.desc().nulls_last(), Job.first_seen_at.desc())))
     hiring = hiring_summary(session, c.id, today)
     prov_rows = _provenance(session, c.id)
-    timeline_ids = [c.id] + [r.id for r in repos] + [pp.id for pp in papers] + person_ids
-    tl_signals = _timeline_signals(session, timeline_ids)
+    tl_signals = company_timeline_signals(session, [c.id, *(r.id for r in repos), *(pp.id for pp in papers)],
+                                          person_ids)
 
     repo_ids = [r.id for r in repos]
     star_notes = {"backfill": "Star history from GitHub star-history API",
@@ -860,9 +895,34 @@ def _collaborators(session: Session, p: Person, limit: int = 8) -> list[PersonCa
         overlap[pid] += n
     if not overlap:
         return []
-    people = {x.id: x for x in session.scalars(select(Person).where(Person.id.in_(list(overlap))))}
+    people = {x.id: x for x in session.scalars(select(Person).where(Person.id.in_(list(overlap)),
+                                                                   *human_person_conditions()))}
     ranked = sorted(people.values(), key=lambda x: (-overlap[x.id], x.name))[:limit]
     return P.person_cards(session, ranked)
+
+
+PERSON_RELATIONSHIP_LIMIT = 40
+
+
+def person_relationships(session: Session, p: Person, limit: int = PERSON_RELATIONSHIP_LIMIT
+                         ) -> list[RelationshipOut]:
+    """Stored relationships touching the person (``relationships`` table, epistemic as stored),
+    VERIFIED first; edges to automation / AI-agent accounts are dropped."""
+    from radar.providers.github import is_bot
+    from radar.services.formation import KIND_ORDER, relationship_outs
+
+    rels = list(session.scalars(select(Relationship).where(
+        or_(Relationship.src_id == p.id, Relationship.dst_id == p.id))))
+    others = {r.dst_id if r.src_id == p.id else r.src_id for r in rels
+              if (r.dst_type if r.src_id == p.id else r.src_type) == "person"}
+    bots = {pid for pid, h in session.execute(select(Person.id, Person.github_handle).where(Person.id.in_(others)))
+            if h and is_bot(h)} if others else set()
+    rels = [r for r in rels if r.src_id not in bots and r.dst_id not in bots]
+    rank = {k: i for i, k in enumerate(KIND_ORDER)}
+    far = datetime.min.replace(tzinfo=UTC)
+    rels.sort(key=lambda r: (r.epistemic != "VERIFIED", rank.get(r.kind, len(rank)),
+                             -(r.last_seen_at or far).timestamp(), str(r.id)))
+    return relationship_outs(session, rels[:limit])
 
 
 def person_detail(session: Session, id_or_slug: str) -> PersonDetail | None:
@@ -895,6 +955,7 @@ def person_detail(session: Session, id_or_slug: str) -> PersonDetail | None:
         companies=P.company_summaries(session, companies), repositories=repo_cards(session, repos),
         papers=paper_cards(session, papers), collaborators=_collaborators(session, p),
         sources=_sources(prov_rows, tl, extra), watched=p.id in P.watched_ids(session),
+        relationships=person_relationships(session, p),
         data_note=P.data_note(p.is_demo), data_age=data_age(session, "person", [p.id]).get(p.id),
     )
 

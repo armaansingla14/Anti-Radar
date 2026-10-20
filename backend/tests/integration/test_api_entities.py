@@ -429,3 +429,83 @@ def test_clean_company_name_and_labels():
     assert P.clean_label("Fran{\\c c}ois Labs") == "François Labs"
     assert P.is_handle_only("OctoCat", "octocat") and not P.is_handle_only("Octo Cat", "octocat")
     assert P.display_name(Person(slug="x", name="", x_handle="@xhandle")).name == "@xhandle"
+
+
+def test_person_detail_serves_stored_relationships_without_bots(db, client):
+    from radar.models import Relationship
+
+    a = Person(slug="rel-a", name="Rel A", github_handle="rela")
+    b = Person(slug="rel-b", name="Rel B", github_handle="relb")
+    bot = Person(slug="copybara", name="copybara-service", github_handle="copybara-service")
+    db.add_all([a, b, bot])
+    db.flush()
+    lo, hi = sorted([a, b], key=lambda x: str(x.id))
+    db.add_all([
+        Relationship(src_type="person", src_id=lo.id, dst_type="person", dst_id=hi.id, kind="WORKED_WITH",
+                     epistemic="INFERRED", evidence=[{"title": "Both list Acme", "source_type": "github"}]),
+        Relationship(src_type="person", src_id=lo.id, dst_type="person", dst_id=hi.id, kind="COAUTHORED_WITH",
+                     epistemic="VERIFIED", evidence=[{"title": "Paper", "source_type": "arxiv",
+                                                      "source_url": "https://arxiv.org/abs/2610.00001"}]),
+        Relationship(src_type="person", src_id=a.id, dst_type="person", dst_id=bot.id, kind="CONTRIBUTED_WITH",
+                     epistemic="VERIFIED"),
+    ])
+    db.commit()
+    rels = client.get("/api/founders/rel-a").json()["relationships"]
+    assert [(r["kind"], r["epistemic"]) for r in rels] == [("COAUTHORED_WITH", "VERIFIED"),
+                                                           ("WORKED_WITH", "INFERRED")]
+    assert {r["src"]["name"] for r in rels} | {r["dst"]["name"] for r in rels} == {"Rel A", "Rel B"}
+    assert rels[0]["evidence"][0]["source_url"] == "https://arxiv.org/abs/2610.00001"
+
+
+def test_company_timeline_excludes_other_orgs_signals_via_shared_contributors(db, client):
+    """A shared contributor's 'related' link to another org's repo signal must not leak into this company."""
+    from radar.models import CompanyPerson, Repository, SignalEntity
+
+    now = clock.now()
+    mine, other = Company(slug="deep-co", name="Deep Co"), Company(slug="droid-co", name="Droid Co")
+    dev = Person(slug="shared-dev", name="Shared Dev", github_handle="shareddev")
+    db.add_all([mine, other, dev])
+    db.flush()
+    r_mine = Repository(full_name="deep-co/utopia", owner="deep-co", company_id=mine.id)
+    r_other = Repository(full_name="droid-co/deck", owner="droid-co", company_id=other.id)
+    db.add_all([r_mine, r_other, CompanyPerson(company_id=mine.id, person_id=dev.id, role="Contributor",
+                                               confidence=0.5)])
+    db.flush()
+
+    def sig(eid, etype, title, st="github"):
+        s = Signal(entity_id=eid, entity_type=etype, signal_type="test", source_type=st, title=title,
+                   source_url=f"https://example.test/{title.replace(' ', '-')}", event_at=now - timedelta(days=1),
+                   detected_at=now - timedelta(days=1), dedup_key=title)
+        db.add(s)
+        db.flush()
+        return s
+
+    sig(r_mine.id, "repository", "utopia release")
+    leak = sig(r_other.id, "repository", "deck new contributors")
+    db.add(SignalEntity(signal_id=leak.id, entity_id=dev.id, entity_type="person", relation="related"))
+    sig(dev.id, "person", "shared dev paper", st="arxiv")  # about the person: belongs
+    elsewhere = sig(dev.id, "person", "shared dev joined droid")  # about the person but linked to another org
+    db.add(SignalEntity(signal_id=elsewhere.id, entity_id=other.id, entity_type="company", relation="related"))
+    db.commit()
+
+    d = client.get("/api/companies/deep-co").json()
+    titles = {t["title"] for t in d["timeline"]}
+    assert titles == {"utopia release", "shared dev paper"}
+    assert not any("deck" in (s["title"] or "") or "droid" in (s["title"] or "") for s in d["sources"])
+    # the other org still sees its own signal
+    assert "deck new contributors" in {t["title"] for t in client.get("/api/companies/droid-co").json()["timeline"]}
+    # Scoring sees the same scope: the company's features carry its own + about-the-person signals only.
+    from radar.scoring.extract import build_company_features
+
+    feats = {f.entity_id: f for f in build_company_features(db, clock.today(), reconstruct=True)}
+    got = {s.title for s in feats[mine.id].signals}
+    assert {"utopia release", "shared dev paper"} <= got and "deck new contributors" not in got, got
+
+
+def test_lab_automation_logins_are_bots():
+    from radar.providers.github import is_bot
+
+    for login in ("copybara-service", "copybara-github", "google-cla", "tensorflow-copybara", "pytorchbot",
+                  "facebook-github-bot", "meta-codesync", "nvidia-merlin-bot", "mergify[bot]", "Copybara-Service"):
+        assert is_bot(login), login
+    assert not is_bot("kevinzakka")

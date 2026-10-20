@@ -5,13 +5,17 @@ import Link from "next/link";
 import { useState } from "react";
 import { postFeedback } from "@/lib/api";
 import { fmtDate, hrefFor, pad2 } from "@/lib/format";
-import type { AntiScore, FeedbackLabel, IntelCard as IntelCardData } from "@/lib/types";
+import { isCollision } from "@/lib/labels";
+import type { AntiScore, EvidenceItem, FeedbackLabel, IntelCard as IntelCardData } from "@/lib/types";
 import { AttentionGapMini } from "./AttentionGapPlot";
 import { DemoBadge, EpistemicBadge, NewBadge } from "./Badges";
+import { CollisionLine } from "./CollisionStrip";
+import { Confidence } from "./Confidence";
+import { DataAge } from "./DataAge";
 import { Delta } from "./Delta";
-import { EvidenceList } from "./EvidenceList";
 import { FeedbackMenu } from "./FeedbackMenu";
-import { ScoreNumeral } from "./ScoreNumeral";
+import { SourceGlyph } from "./SourceLink";
+import { SourcesButton } from "./SourceDrawer";
 import { Sparkline } from "./Sparkline";
 import { ThesisTag } from "./ThesisTag";
 import { useToast } from "./Toast";
@@ -37,6 +41,32 @@ export interface IntelCardProps {
   /** Max evidence bullets under "Why it surfaced". */
   evidenceLimit?: number;
   className?: string;
+}
+
+/** why_surfaced first, then collision evidence not already listed. */
+function mergeEvidence(a: EvidenceItem[], b: EvidenceItem[]): EvidenceItem[] {
+  const seen = new Set(a.map((e) => e.signal_id ?? `${e.source_url}|${e.title}`));
+  return [...a, ...b.filter((e) => !seen.has(e.signal_id ?? `${e.source_url}|${e.title}`))];
+}
+
+/** Evidence as dated bullets: date · source · claim. Undated (computed) items say so. */
+export function DatedBullets({ items, limit = 4 }: { items: EvidenceItem[]; limit?: number }) {
+  if (items.length === 0) return <p className="text-[13px] text-ink-3">No dated evidence recorded.</p>;
+  const shown = items.slice(0, limit);
+  return (
+    <ul className="space-y-1">
+      {shown.map((e, i) => (
+        <li key={e.signal_id ?? `${e.title}-${i}`} className="grid grid-cols-[52px_26px_1fr] items-baseline gap-x-2">
+          <span className="tnum font-mono text-[10.5px] uppercase text-ink-3" title={e.event_at ? fmtDate(e.event_at) : "Computed from stored history"}>
+            {e.event_at ? fmtDate(e.event_at, { year: false }) : "—"}
+          </span>
+          <SourceGlyph sourceType={e.source_type} className="translate-y-[1px]" />
+          <span className="text-[13px] leading-snug text-ink">{e.title}</span>
+        </li>
+      ))}
+      {items.length > limit && <li className="label pl-[86px] text-ink-3">+ {items.length - limit} more</li>}
+    </ul>
+  );
 }
 
 const action =
@@ -74,15 +104,19 @@ export function IntelCard({
     }
   };
 
+  const evidence = mergeEvidence(card.why_surfaced, card.collision?.evidence ?? []);
+  const why = card.why_now_sentence?.trim();
+  const hasAge = Object.keys(card.data_age?.families ?? {}).length > 0;
+
   return (
     <article
       data-card
       data-href={target}
       tabIndex={0}
       aria-labelledby={`card-${card.id}-name`}
-      className={clsx("grid animate-rise grid-cols-12 gap-x-8 gap-y-5 border-t border-ink pb-8 pt-4", className)}
+      className={clsx("relative grid animate-rise grid-cols-12 gap-x-8 gap-y-5 border-t border-ink pb-7 pt-4 focus-within:z-20", className)}
     >
-      {/* ── left: editorial body ── */}
+      {/* ── left: ENTITY → WHY NOW → RECENT CHANGE → INDEPENDENT SIGNALS ── */}
       <div className="col-span-12 min-w-0 md:col-span-8">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="tnum font-mono text-[12px] text-ink">{pad2(card.rank)}</span>
@@ -90,41 +124,57 @@ export function IntelCard({
           <span className="label">{card.kind_label}</span>
           {card.is_new && <NewBadge />}
           {card.is_demo && <DemoBadge note={card.data_note} />}
+          <Confidence value={card.confidence} className="ml-auto" />
         </div>
 
-        <h3 id={`card-${card.id}-name`} className="mt-3 font-serif text-[30px] leading-[1.08] tracking-[-0.01em] text-ink">
+        <h3 id={`card-${card.id}-name`} className="mt-2.5 font-serif text-[28px] leading-[1.08] tracking-[-0.01em] text-ink">
           <Link href={target} className="decoration-accent decoration-1 underline-offset-4 hover:underline" tabIndex={-1}>
             {card.name}
           </Link>
         </h3>
-        {card.one_liner && <p className="mt-2 max-w-[62ch] text-[15px] leading-relaxed text-ink-2">{card.one_liner}</p>}
+        {card.one_liner && <p className="mt-1.5 max-w-[62ch] text-[14.5px] leading-relaxed text-ink-2">{card.one_liner}</p>}
 
-        <div className="mt-6 grid gap-x-8 gap-y-6 lg:grid-cols-2">
-          <div>
-            <h4 className="label mb-3 text-ink">Why it surfaced</h4>
-            <EvidenceList items={card.why_surfaced} limit={evidenceLimit} dense demo={card.is_demo} />
-          </div>
-          <div>
-            <h4 className="label mb-3 flex items-center gap-2 text-ink">
-              Why Anti Fund might care <EpistemicBadge value={card.why_anti_epistemic} />
-            </h4>
-            {card.why_anti.length > 0 ? (
-              <ul className="space-y-1.5">
-                {card.why_anti.map((line, i) => (
-                  <li key={i} className="grid grid-cols-[14px_1fr] text-[13px] leading-snug text-ink">
-                    <span aria-hidden className="text-ink-3">→</span>
-                    {line}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-[13px] text-ink-3">No thesis rationale recorded.</p>
-            )}
-          </div>
+        <section className="mt-5" aria-label="Why now">
+          <h4 className="label mb-2 text-ink">Why now</h4>
+          {why && <p className="mb-2.5 max-w-[60ch] font-serif text-[18px] leading-[1.3] text-ink">{why}</p>}
+          <DatedBullets items={card.why_surfaced} limit={evidenceLimit} />
+        </section>
+
+        {card.recent_change && (
+          <p className="mt-4 grid grid-cols-[auto_1fr] items-baseline gap-x-3 text-[13.5px] leading-snug text-ink">
+            <span className="label text-ink">Recent change</span>
+            <span>{card.recent_change}</span>
+          </p>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-rule pt-3">
+          <span className="label text-ink">Independent signals</span>
+          {card.collision && isCollision(card.collision) ? (
+            <CollisionLine collision={card.collision} />
+          ) : (
+            <span className="text-[12.5px] text-ink-3">Single source family — no collision yet</span>
+          )}
+          <SourcesButton claim={`Why ${card.name} surfaced`} evidence={evidence} count={card.sources_count} demo={card.is_demo} className="ml-auto" />
         </div>
 
+        {card.why_anti.length > 0 && (
+          <div className="mt-4">
+            <h4 className="label mb-1.5 flex items-center gap-2 text-ink">
+              Why Anti Fund might care <EpistemicBadge value={card.why_anti_epistemic} />
+            </h4>
+            <ul className="space-y-1">
+              {card.why_anti.map((line, i) => (
+                <li key={i} className="grid grid-cols-[14px_1fr] text-[13px] leading-snug text-ink-2">
+                  <span aria-hidden className="text-ink-3">→</span>
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {card.thesis_tags.length > 0 && (
-          <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2" aria-label="Thesis tags">
+          <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2" aria-label="Thesis tags">
             {card.thesis_tags.map((t) => (
               <ThesisTag key={t.key} tag={t} />
             ))}
@@ -132,23 +182,27 @@ export function IntelCard({
         )}
       </div>
 
-      {/* ── right: score column ── */}
-      <aside className="col-span-12 flex flex-col gap-4 md:col-span-4 md:border-l md:border-rule md:pl-7" aria-label={`${scoreLabel} ${card.score}`}>
+      {/* ── right: the score, deliberately secondary ── */}
+      <aside className="col-span-12 flex flex-col gap-3.5 md:col-span-4 md:border-l md:border-rule md:pl-7" aria-label={`${scoreLabel} ${card.score}`}>
         <div className="flex items-end justify-between gap-4">
-          <ScoreNumeral value={card.score} size="lg" accent label={scoreLabel} />
-          <div className="flex flex-col items-end gap-1 pb-1">
-            <Delta value={card.delta_7d} period="this week" />
+          <div>
+            <p className="label mb-1">{scoreLabel}</p>
+            <p className="flex items-baseline gap-3">
+              <span className="tnum font-serif text-[32px] leading-none tracking-[-0.02em] text-ink">{card.score}</span>
+              <button type="button" className={action} data-action="why" onClick={openWhy} aria-haspopup="dialog">
+                Why {card.score}?
+              </button>
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-1 pb-0.5">
+            <Delta value={card.delta_7d} period="this week" size="xs" />
             {card.delta_30d !== null && <Delta value={card.delta_30d} period="30d" size="xs" accentAt={Infinity} />}
           </div>
         </div>
-        {card.sparkline.length > 1 && <Sparkline values={card.sparkline} width={200} height={34} label={card.sparkline_label} />}
+        {card.sparkline.length > 1 && <Sparkline values={card.sparkline} width={200} height={30} label={card.sparkline_label} />}
         {card.attention_gap && <AttentionGapMini gap={card.attention_gap} />}
-        {card.collision && (
-          <p className="font-mono text-[10.5px] leading-snug text-ink-2">
-            <span className="text-ink">{card.collision.families.length}</span> source families · {card.collision.summary}
-          </p>
-        )}
         {card.first_seen_at && <p className="label text-ink-3">First seen {fmtDate(card.first_seen_at)}</p>}
+        {hasAge && <DataAge age={card.data_age} now={new Date()} />}
       </aside>
 
       {/* ── actions ── */}
@@ -156,9 +210,6 @@ export function IntelCard({
         <Link href={target} className={clsx(action, "text-ink")} data-action="open">
           Open report →
         </Link>
-        <button type="button" className={action} data-action="why" onClick={openWhy} aria-haspopup="dialog">
-          Why {card.score}?
-        </button>
         {card.entity_type !== "paper" && (
           <WatchButton
             entityType={card.entity_type}

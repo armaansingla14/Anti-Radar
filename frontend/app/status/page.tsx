@@ -8,7 +8,10 @@ import { PageHeader } from "@/components/insight/PageHeader";
 import { relativeTime } from "@/components/insight/relativeTime";
 import { AddToRadar } from "@/components/insight/status/AddToRadar";
 import { ProviderTable, type ProviderRow } from "@/components/insight/status/ProviderTable";
+import { XIntelligence } from "@/components/entity/XIntelligence";
+import { xModeFromStatus } from "@/components/entity/entityLogic";
 import { getStatus } from "@/lib/api";
+import { getSession } from "@/lib/session";
 import { fmtCompact, fmtDate, fmtDateTime, fmtNum, humanize } from "@/lib/format";
 import type { JsonObject } from "@/lib/types";
 
@@ -53,7 +56,7 @@ function LlmPanel({ llm }: { llm: JsonObject }) {
         </p>
         <p className="mt-1 text-[12.5px] leading-snug text-ink-2">
           {enabled
-            ? "Narratives, memos and search parsing may use the models below; every generated claim is labelled Model opinion."
+            ? "Narratives, memos and search parsing may use the models below; every generated claim is labelled Analysis."
             : "Narratives, memos and briefs are rendered from deterministic templates and labelled “template”. Scores never depend on an LLM."}
         </p>
       </div>
@@ -152,8 +155,9 @@ function DatabasePanel({
 
 export default async function StatusPage() {
   await connection();
-  const status = await getStatus();
+  const [status, session] = await Promise.all([getStatus(), getSession()]);
   const now = new Date();
+  const xRow = status.providers.find((p) => p.provider === "x");
 
   const rows: ProviderRow[] = status.providers.map((p) => ({
     ...p,
@@ -246,8 +250,17 @@ export default async function StatusPage() {
         </section>
       </div>
 
+      <section className="mb-16" aria-labelledby="st-x">
+        <SectionLabel index={4} id="st-x" right={xRow ? humanize(xRow.state) : "status unavailable"}>
+          X intelligence
+        </SectionLabel>
+        <div className="mt-5">
+          <XIntelligence mode={xModeFromStatus(xRow)} reason={xRow?.reason} readOnly={session.read_only} />
+        </div>
+      </section>
+
       <section aria-labelledby="st-add">
-        <SectionLabel index={4} id="st-add" right="manual ingest">
+        <SectionLabel index={5} id="st-add" right="manual ingest">
           Add to radar
         </SectionLabel>
         <p className="mt-4 mb-6 max-w-[72ch] text-[13.5px] leading-relaxed text-ink-2">

@@ -21,13 +21,35 @@ export interface EntityHeaderProps {
   delta7d?: number | null;
   /** Fictional entity: evidence links never point at real hosts. */
   isDemo?: boolean;
+  /**
+   * Render the big score column beside the name. WHY NOW-first pages pass false and show the
+   * score later, smaller (see ScoreCompact) — the score is secondary to the reasons.
+   */
+  showScore?: boolean;
+  /** Right-hand column content used instead of the score when showScore is false. */
+  aside?: ReactNode;
 }
 
 /** Editorial entity header: big serif name on the left, the score column on the right. */
-export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, scoreLabel, history, delta7d, isDemo = false }: EntityHeaderProps) {
+export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, scoreLabel, history, delta7d, isDemo = false, showScore = true, aside }: EntityHeaderProps) {
   const total = score?.total ?? scoreValue ?? null;
   const d7 = score?.delta_7d ?? delta7d ?? null;
   const d30 = score?.delta_30d ?? null;
+  if (!showScore) {
+    return (
+      <header className="grid grid-cols-12 gap-x-10 gap-y-6 pb-7">
+        <div className={clsx("col-span-12 min-w-0", aside ? "lg:col-span-8" : "lg:col-span-10")}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">{eyebrow}</div>
+          <h1 className="mt-4 font-serif text-[56px] leading-[0.98] tracking-[-0.02em] text-ink max-md:text-[42px]">{name}</h1>
+          {lede && <p className="mt-4 max-w-[60ch] font-serif text-[20px] italic leading-snug text-ink-2">{lede}</p>}
+          {meta && <div className="mt-5">{meta}</div>}
+        </div>
+        {aside && (
+          <aside className="col-span-12 min-w-0 border-t border-rule pt-4 lg:col-span-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-1">{aside}</aside>
+        )}
+      </header>
+    );
+  }
   return (
     <header className="grid grid-cols-12 gap-x-10 gap-y-8 pb-7">
       <div className="col-span-12 min-w-0 lg:col-span-8">
