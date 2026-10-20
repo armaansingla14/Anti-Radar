@@ -564,8 +564,10 @@ def _fit(theme_scores: dict[str, float], topic_scores: dict[str, float], thesis:
 
 
 def _is_bot(p: Person) -> bool:
-    h = (p.github_handle or "").lower()
-    return h.endswith("[bot]") or h.endswith("-bot") or h.endswith("bot]")
+    """Automation and AI coding-agent accounts (shared list with the GitHub provider)."""
+    from radar.providers.github import is_bot
+
+    return bool(p.github_handle) and is_bot(p.github_handle)
 
 
 def _is_org_account(p: Person, own_keys: set[str]) -> bool:

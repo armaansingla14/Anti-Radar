@@ -675,3 +675,11 @@ def test_discover_young_orgs_stops_on_rate_limit(provider):
             headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999"})
         batch = provider.discover_young_orgs(["vla", "robot"])
     assert len(batch.errors) == 1 and "rate limit" in batch.errors[0]
+
+
+def test_ai_coding_agents_are_not_people():
+    from radar.providers.github import is_bot
+
+    for login in ("claude", "Copilot", "devin-ai-integration", "cursoragent", "google-labs-jules", "coderabbitai"):
+        assert is_bot(login), login
+    assert not is_bot("claudia") and not is_bot("torvalds")

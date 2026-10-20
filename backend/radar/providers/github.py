@@ -88,6 +88,11 @@ BOT_LOGINS = {
     "dependabot", "dependabot-preview", "renovate", "renovate-bot", "github-actions", "pre-commit-ci",
     "allcontributors", "all-contributors", "greenkeeper", "snyk-bot", "codecov", "imgbot", "mergify",
     "semantic-release-bot", "copilot", "web-flow", "actions-user", "deepsource-autofix",
+    # AI coding agents commit as GitHub users; they are tools, never team members or founders.
+    "claude", "claude-code", "claude-bot", "copilot-swe-agent", "copilot-pull-request-reviewer",
+    "devin-ai-integration", "cursoragent", "cursor-agent", "cursor", "codex", "chatgpt-codex-connector",
+    "openai-codex", "gemini-code-assist", "google-labs-jules", "jules", "sweep-ai", "coderabbitai",
+    "sourcery-ai", "ellipsis-dev", "aider", "aider-chat", "cline", "openhands-agent", "amazon-q-developer",
 }
 
 SeriesPoint = tuple[date, float]
