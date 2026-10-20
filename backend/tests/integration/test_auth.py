@@ -210,3 +210,17 @@ def test_search_rate_limit_answers_429(db, client, monkeypatch):
 
     codes = [client.get("/api/search", params={"q": "robotics"}).status_code for _ in range(SEARCH_PER_MINUTE + 1)]
     assert codes[:SEARCH_PER_MINUTE] == [200] * SEARCH_PER_MINUTE and codes[-1] == 429
+
+
+def test_rate_limit_keys_on_forwarded_client_ip_only_when_trusted(monkeypatch):
+    from starlette.requests import Request
+
+    from radar.api.ratelimit import client_id
+    from radar.settings import get_settings
+
+    scope = {"type": "http", "headers": [(b"x-radar-client-ip", b"203.0.113.7, 10.0.0.1")], "client": ("10.1.1.1", 1)}
+    req = Request(scope)
+    monkeypatch.setattr(get_settings(), "trust_proxy_client_ip", False)
+    assert client_id(req) == "10.1.1.1"
+    monkeypatch.setattr(get_settings(), "trust_proxy_client_ip", True)
+    assert client_id(req) == "203.0.113.7"

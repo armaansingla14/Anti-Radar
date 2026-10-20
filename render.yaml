@@ -16,6 +16,8 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: TRUST_PROXY_CLIENT_IP
+        value: "true"
       - key: SEED_ON_START
         value: none
       - key: DEMO_SYNTHETIC
@@ -55,6 +57,8 @@ services:
     envVars:
       - key: APP_ENV
         value: demo
+      - key: TRUST_PROXY_CLIENT_IP
+        value: "true"
       - key: DEMO_SNAPSHOT
         value: "true"
       - key: DEMO_SYNTHETIC

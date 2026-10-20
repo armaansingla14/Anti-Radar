@@ -21,12 +21,27 @@ def _now() -> float:  # indirection so tests can freeze the limiter's clock with
 _lock = threading.Lock()
 
 
+CLIENT_IP_HEADER = "x-radar-client-ip"
+
+
+def client_id(request: Request) -> str:
+    """Per-visitor key. Behind the Next.js proxy every request comes from the proxy's address, so the proxy
+    forwards the visitor IP in X-Radar-Client-IP; it is trusted only when TRUST_PROXY_CLIENT_IP is set."""
+    from radar.settings import get_settings
+
+    if get_settings().trust_proxy_client_ip:
+        forwarded = (request.headers.get(CLIENT_IP_HEADER) or "").split(",")[0].strip()
+        if forwarded:
+            return forwarded[:64]
+    return request.client.host if request.client else "local"
+
+
 def rate_limit(name: str, per_minute: int):
     capacity = float(per_minute)
     refill = per_minute / 60.0
 
     def dependency(request: Request) -> None:
-        client = request.client.host if request.client else "local"
+        client = client_id(request)
         key = (name, client)
         now = _now()
         with _lock:

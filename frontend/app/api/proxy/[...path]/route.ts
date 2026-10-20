@@ -57,6 +57,9 @@ async function proxy(request: NextRequest, ctx: { params: Promise<{ path: string
   const headers = new Headers({ Accept: request.headers.get("accept") ?? "application/json" });
   const admin = request.cookies.get(ADMIN_COOKIE)?.value;
   if (admin) headers.set(ADMIN_HEADER, admin);
+  // Per-visitor rate limiting upstream: forward the original client IP (Vercel sets x-forwarded-for).
+  const clientIp = (request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? "").split(",")[0].trim();
+  if (clientIp) headers.set("X-Radar-Client-IP", clientIp);
 
   let body: ArrayBuffer | undefined;
   if (request.method === "POST") {

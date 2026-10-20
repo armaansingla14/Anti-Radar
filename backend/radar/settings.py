@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     openai_deep_model: str = "gpt-5"
     llm_max_usd_per_investigation: float = 1.50
     # Global spend cap across all live LLM calls per UTC day (summed from llm_calls). 0 or less disables it.
+    # Trust X-Radar-Client-IP (set by the Next.js proxy) for per-visitor rate limits. Enable only when the
+    # API is reached through the proxy.
+    trust_proxy_client_ip: bool = False
     llm_daily_usd_cap: float = 10.0
     # Live (uncached) LLM query-parse calls allowed per minute from search, process-wide.
     llm_search_per_minute: int = 20
