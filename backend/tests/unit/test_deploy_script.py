@@ -24,7 +24,7 @@ TOKENS = {
     "RENDER_API_KEY": "rnd_key_0123456789",
     "VERCEL_TOKEN": "vercel-token-0123456789",
     "RADAR_GITHUB_TOKEN": "github_pat_0123456789",
-    "ANTHROPIC_API_KEY": "sk-ant-test-0123456789",
+    "PROD_ANTHROPIC_API_KEY": "sk-ant-test-0123456789",
     "PROD_ADMIN_TOKEN": ADMIN,
 }
 DBS = {
@@ -46,10 +46,10 @@ class FakeRunner:
         return subprocess.CompletedProcess(args, 0, self.stdout, "")
 
 
-def make_ctx(tmp_path: Path, runner: FakeRunner | None = None, **env):
+def make_ctx(tmp_path: Path, runner: FakeRunner | None = None, live: bool = True, **env):
     lines: list[str] = []
     ctx = deploy.Ctx(env={**TOKENS, **env}, root=tmp_path, sleep=lambda _s: None, out=lines.append,
-                     runner=runner or FakeRunner())
+                     runner=runner or FakeRunner(), live=live)
     for d in DBS.values():
         for uri in d.values():
             ctx.secret(httpx.URL(uri).password)
@@ -70,22 +70,33 @@ def test_load_env_parses_quotes_comments_and_export(tmp_path):
 
 
 def test_check_lists_each_missing_token_with_where_to_create_it():
-    ok, lines = deploy.check_tokens({"NEON_API_KEY": "x" * 20, "ANTHROPIC_API_KEY": "dummy"}, which=lambda _: "/bin/x")
+    ok, lines = deploy.check_tokens({"NEON_API_KEY": "x" * 20, "PROD_ANTHROPIC_API_KEY": "dummy"},
+                                    which=lambda _: "/bin/x", live=True)
     text = "\n".join(lines)
     assert not ok
     assert "ok       NEON_API_KEY" in text
     for name, link in (("RENDER_API_KEY", "dashboard.render.com"), ("VERCEL_TOKEN", "vercel.com/account/settings/tokens"),
                        ("RADAR_GITHUB_TOKEN", "github.com/settings/personal-access-tokens")):
         assert f"MISSING  {name}" in text and link in text
-    assert "optional ANTHROPIC_API_KEY" in text  # placeholder value "dummy" counts as missing
+    assert "optional PROD_ANTHROPIC_API_KEY" in text  # placeholder value "dummy" counts as missing
 
 
 def test_check_passes_with_required_tokens_and_tools():
-    ok, lines = deploy.check_tokens({k: v for k, v in TOKENS.items() if k != "ANTHROPIC_API_KEY"},
-                                    which=lambda _: "/usr/bin/tool")
+    ok, lines = deploy.check_tokens({k: v for k, v in TOKENS.items() if k != "PROD_ANTHROPIC_API_KEY"},
+                                    which=lambda _: "/usr/bin/tool", live=True)
     assert ok
     ok, lines = deploy.check_tokens(TOKENS, which=lambda t: None if t == "gh" else "/usr/bin/npx")
     assert not ok and any("`gh`" in line for line in lines)
+    ok, lines = deploy.check_tokens(TOKENS, which=lambda t: None if t == "docker" else "/usr/bin/x")
+    assert not ok and any("`docker`" in line for line in lines)
+
+
+def test_demo_deploy_needs_only_neon_render_and_vercel():
+    three = {k: TOKENS[k] for k in ("NEON_API_KEY", "RENDER_API_KEY", "VERCEL_TOKEN")}
+    ok, lines = deploy.check_tokens(three, which=lambda _: "/usr/bin/tool")
+    assert ok and not any("RADAR_GITHUB_TOKEN" in line or "ANTHROPIC" in line for line in lines)
+    assert not deploy.check_tokens(three, which=lambda _: "/usr/bin/tool", live=True)[0]
+    assert all(set(deploy.step_tokens(s, False)) <= three.keys() for s in deploy.STEPS)
 
 
 def test_redact_hides_tokens_and_url_passwords(tmp_path):
@@ -152,6 +163,17 @@ def test_neon_rerun_reuses_project_and_databases(tmp_path):
     assert not posts.called
 
 
+def test_neon_demo_only_creates_just_the_demo_database(tmp_path):
+    ctx, _ = make_ctx(tmp_path, live=False)
+    with respx.mock(assert_all_called=False) as m:
+        uri_route = _neon_common(m, projects=[{"id": "prj-1", "name": "anti-radar"}], databases=["neondb"])
+        create_db = m.post(host=NEON, path="/api/v2/projects/prj-1/branches/br-1/databases").respond(
+            201, json={"database": {}, "operations": []})
+        uris = deploy.neon_step(ctx)
+    assert [body(c)["database"]["name"] for c in create_db.calls] == ["radar_demo"]
+    assert set(uris) == {"demo"} and uri_route.call_count == 2
+
+
 def test_neon_multiple_orgs_requires_neon_org_id(tmp_path):
     ctx, _ = make_ctx(tmp_path)
     with respx.mock() as m:
@@ -179,7 +201,7 @@ def test_render_env_live_vs_demo(tmp_path):
     demo = deploy.render_env(ctx, "demo", DBS["demo"], "https://fe.vercel.app")
     assert live["APP_ENV"] == "production" and live["SEED_ON_START"] == "none" and live["DEMO_SNAPSHOT"] == "false"
     assert live["ADMIN_TOKEN"] == ADMIN and live["GITHUB_TOKEN"] == TOKENS["RADAR_GITHUB_TOKEN"]
-    assert live["ANTHROPIC_API_KEY"] == TOKENS["ANTHROPIC_API_KEY"] and live["LLM_PROVIDER"] == "anthropic"
+    assert live["ANTHROPIC_API_KEY"] == TOKENS["PROD_ANTHROPIC_API_KEY"] and live["LLM_PROVIDER"] == "anthropic"
     assert demo["APP_ENV"] == "demo" and demo["DEMO_SNAPSHOT"] == "true" and demo["SEED_ON_START"] == "snapshot"
     assert demo["LLM_PROVIDER"] == "none"
     assert not {"ANTHROPIC_API_KEY", "GITHUB_TOKEN", "ADMIN_TOKEN"} & demo.keys()
@@ -187,6 +209,14 @@ def test_render_env_live_vs_demo(tmp_path):
         assert env["DATABASE_URL"] == db["pooled"] and env["DATABASE_URL_DIRECT"] == db["direct"]
         assert (env["TRUST_PROXY_CLIENT_IP"], env["DB_POOL_SIZE"], env["DB_MAX_OVERFLOW"]) == ("true", "3", "2")
         assert env["FRONTEND_URL"] == "https://fe.vercel.app"
+
+
+def test_shell_anthropic_key_is_never_deployed(tmp_path):
+    """ANTHROPIC_API_KEY in the shell/.env may be a key for other work: never shipped."""
+    ctx, _ = make_ctx(tmp_path, PROD_ANTHROPIC_API_KEY="", ANTHROPIC_API_KEY="sk-ant-otherwork-0123456789")
+    live = deploy.render_env(ctx, "live", DBS["live"], "https://fe.vercel.app")
+    assert "ANTHROPIC_API_KEY" not in live and live["LLM_PROVIDER"] == "none"
+    assert "ANTHROPIC_API_KEY" not in {t.name for t in deploy.TOKENS}  # main() only picks up TOKENS from the shell
 
 
 def test_admin_token_is_generated_once_into_dotenv_as_prod_admin_token(tmp_path):
@@ -225,6 +255,21 @@ def test_render_creates_both_services_and_waits_for_live(tmp_path):
     assert ctx.state["render"]["live"]["id"] == "srv-radar-live"
     out = "\n".join(lines)
     assert ADMIN not in out and TOKENS["RADAR_GITHUB_TOKEN"] not in out
+
+
+def test_render_demo_only_creates_just_radar_demo(tmp_path):
+    ctx, _ = make_ctx(tmp_path, live=False)
+    with respx.mock(assert_all_called=True) as m:
+        m.get(host=RENDER, path="/v1/owners").respond(json=[{"owner": {"id": "own-1", "name": "me"}}])
+        m.get(host=RENDER, path="/v1/services").respond(json=[])
+        created = m.post(host=RENDER, path="/v1/services").respond(201, json={
+            "service": {"id": "srv-d", "name": "radar-demo", "serviceDetails": {"url": "https://radar-demo.onrender.com"}},
+            "deployId": "dep-d"})
+        m.get(host=RENDER, path="/v1/services/srv-d/deploys/dep-d").respond(json={"status": "live"})
+        assert deploy.render_step(ctx, {"demo": DBS["demo"]}) == {"demo": "https://radar-demo.onrender.com"}
+    env = {e["key"]: e["value"] for e in body(created.calls[0])["envVars"]}
+    assert body(created.calls[0])["name"] == "radar-demo" and env["DEMO_SNAPSHOT"] == "true"
+    assert not {"ADMIN_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY"} & env.keys()
 
 
 def test_render_repo_not_accessible_prints_one_click_fix(tmp_path):
@@ -313,6 +358,23 @@ def test_vercel_links_project_sets_env_deploys_and_updates_frontend_url(tmp_path
     assert ctx.state["frontend_url"] == url
 
 
+def test_vercel_demo_only_points_the_whole_site_at_the_snapshot_backend(tmp_path):
+    runner = FakeRunner(stdout="https://anti-radar-abc123-me.vercel.app\n")
+    ctx, _ = make_ctx(tmp_path, runner=runner, live=False)
+    ctx.state["render"] = {"demo": _render_state()["demo"]}
+    with respx.mock(assert_all_called=False) as m:
+        m.get(host=VERCEL, path="/v2/user").respond(json={"user": {"id": "u-1"}})
+        m.get(host=VERCEL, path="/v9/projects/anti-radar").respond(json={"id": "prj_1", "framework": "nextjs"})
+        env = m.post(host=VERCEL, path="/v10/projects/prj_1/env").respond(201, json={})
+        m.get(host=VERCEL, path="/v9/projects/prj_1/domains").respond(json={"domains": [{"name": "anti-radar.vercel.app"}]})
+        m.get(host=RENDER, path="/v1/services/srv-d/env-vars").respond(
+            json=[{"envVar": {"key": "FRONTEND_URL", "value": deploy.PROVISIONAL_FRONTEND_URL}}])
+        m.get(host=RENDER, path="/v1/services/srv-d/deploys").respond(json=[{"deploy": {"id": "d", "status": "live"}}])
+        deploy.vercel_step(ctx)
+    sent = {e["key"]: e["value"] for e in body(env.calls[0])}
+    assert sent["BACKEND_URL"] == sent["DEMO_BACKEND_URL"] == "https://radar-demo.onrender.com"
+
+
 def test_vercel_requires_render_urls(tmp_path):
     ctx, _ = make_ctx(tmp_path)
     with pytest.raises(deploy.DeployError, match="--step render"):
@@ -339,12 +401,13 @@ def test_github_sets_secrets_via_stdin_and_dispatches_first_capture_once(tmp_pat
     secrets = {c["args"][3]: c["input"] for c in runner.calls if c["args"][:3] == ["gh", "secret", "set"]}
     assert secrets == {"DATABASE_URL": DBS["live"]["pooled"], "DATABASE_URL_DIRECT": DBS["live"]["direct"],
                        "RADAR_GITHUB_TOKEN": TOKENS["RADAR_GITHUB_TOKEN"],
-                       "ANTHROPIC_API_KEY": TOKENS["ANTHROPIC_API_KEY"]}
+                       "ANTHROPIC_API_KEY": TOKENS["PROD_ANTHROPIC_API_KEY"]}
     for c in runner.calls:  # secret values never appear in argv or logs
         assert not any(v in " ".join(c["args"]) for v in secrets.values())
         assert "--repo" in c["args"] and "armaansingla14/Anti-Radar" in c["args"]
-    assert ["gh", "variable", "set", "BACKEND_URL_LIVE", "--body", "https://radar-live.onrender.com"] == \
-        runner.calls[-2]["args"][:6]
+    assert ["gh", "variable", "set", "KEEPWARM_URL", "--body", "https://radar-live.onrender.com"] == \
+        runner.calls[0]["args"][:6]
+    assert ["gh", "variable", "set", "RADAR_LIVE", "--body", "true"] == runner.calls[-2]["args"][:6]
     assert runner.calls[-1]["args"][:5] == ["gh", "workflow", "run", "radar-ingest.yml", "-f"]
     assert not any(TOKENS["RADAR_GITHUB_TOKEN"] in line or "pw-live-secret" in line for line in lines)
 
@@ -355,10 +418,40 @@ def test_github_sets_secrets_via_stdin_and_dispatches_first_capture_once(tmp_pat
 
 def test_github_skips_missing_optional_anthropic_key(tmp_path):
     runner = FakeRunner()
-    ctx, _ = make_ctx(tmp_path, runner=runner, ANTHROPIC_API_KEY="")
+    ctx, _ = make_ctx(tmp_path, runner=runner, PROD_ANTHROPIC_API_KEY="")
     ctx.state["render"] = _render_state()
     deploy.github_step(ctx, DBS)
     assert "ANTHROPIC_API_KEY" not in {c["args"][3] for c in runner.calls if c["args"][1] == "secret"}
+
+
+def test_github_demo_only_sets_keepwarm_and_leaves_ingestion_off(tmp_path):
+    runner = FakeRunner()
+    ctx, _ = make_ctx(tmp_path, runner=runner, live=False)
+    ctx.state["render"] = {"demo": _render_state()["demo"]}
+    deploy.github_step(ctx, None)
+    assert [c["args"][:6] for c in runner.calls] == [
+        ["gh", "variable", "set", "KEEPWARM_URL", "--body", "https://radar-demo.onrender.com"]]
+
+
+# ── Seed ──────────────────────────────────────────────────────────────────────
+
+def test_seed_replays_locally_then_restores_into_neon_via_stdin(tmp_path):
+    runner = FakeRunner(stdout="CREATE TABLE x ();\n")
+    ctx, lines = make_ctx(tmp_path, runner=runner, live=False)
+    deploy.seed_step(ctx, DBS)
+    cmds = [c["args"] for c in runner.calls]
+    assert cmds[1] == ["uv", "run", "alembic", "upgrade", "head"]
+    assert cmds[2] == ["uv", "run", "radar", "seed-demo", "--reset", "--no-fictional"]
+    for c in runner.calls[1:3]:  # offline, deterministic replay into the LOCAL database
+        assert c["env"]["DATABASE_URL"] == deploy.LOCAL_DB_URL and c["env"]["LLM_PROVIDER"] == "none"
+        assert c["env"]["DEMO_SNAPSHOT"] == "true" and c["env"]["ANTHROPIC_API_KEY"] == ""
+        assert c["cwd"].endswith("backend")
+    assert cmds[3][5] == "pg_dump" and "--no-owner" in cmds[3]
+    restore = runner.calls[4]
+    assert restore["args"][5] == "psql" and restore["input"] == "CREATE TABLE x ();\n"
+    assert restore["args"][6] == DBS["demo"]["direct"]  # direct (non-pooled) host, libpq scheme
+    assert not any("pw-demo-secret" in line for line in lines)
+    assert deploy.libpq_url("postgresql+psycopg://u:p@h/db") == "postgresql://u:p@h/db"
 
 
 # ── Verify + docs ─────────────────────────────────────────────────────────────
@@ -411,11 +504,23 @@ def test_dry_run_walks_every_step_without_network_or_writes(tmp_path, capsys):
     assert not ctx.runner.calls  # gh / npx were only printed
     assert not (tmp_path / "deploy").exists() and not (tmp_path / ".env").exists()
     out = "\n".join(lines)
-    for step in ("Neon", "Render", "Vercel", "GitHub", "Verify"):
+    for step in ("Neon", "Seed", "Render", "Vercel", "GitHub", "Verify"):
         assert f"== {step}" in out
     assert '"plan": "free"' in out and "vercel@latest deploy --prod" in out and "gh workflow run" in out
     for value in TOKENS.values():
         assert value not in out
+
+
+def test_dry_run_demo_profile_skips_live_resources(tmp_path):
+    (tmp_path / "docs").mkdir()
+    ctx, lines = make_ctx(tmp_path, runner=FakeRunner(), live=False,
+                          RADAR_GITHUB_TOKEN="", PROD_ANTHROPIC_API_KEY="")
+    ctx.dry_run, ctx.transport = True, deploy.dry_run_transport()
+    assert deploy.run_steps(ctx, list(deploy.STEPS)) is True
+    out = "\n".join(lines)
+    assert "radar-demo" in out and "radar_demo" in out
+    assert "radar-live" not in out and "radar_live" not in out and "gh secret" not in out
+    assert "gh workflow run" not in out and "KEEPWARM_URL" in out and "pg_dump" in out
 
 
 def test_main_dry_run_and_check_exit_codes(monkeypatch, capsys):

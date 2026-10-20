@@ -3,24 +3,36 @@
 ## Production URL
 
 <!-- deploy:urls:start -->
-_Not deployed yet. Run `make deploy`; this block is filled in automatically._
+_Not deployed yet. Run `scripts/deploy.py`; this block is filled in automatically._
 <!-- deploy:urls:end -->
 
 ## Deploy in one command
 
 `scripts/deploy.py` creates everything on free tiers. Re-running it is safe: it reuses what already exists and changes only what differs.
 
-### 1. Create the tokens (about 10 minutes, once)
+There are two shapes:
+
+| | Demo (default) | `--live` |
+|---|---|---|
+| What visitors see | The whole site and `/demo` serve the **verified real-data snapshot** (collected Oct 20, 2026), labelled as such | The site serves live data refreshed by GitHub Actions; `/demo` keeps the snapshot |
+| Backends | `radar-demo` | `radar-live` + `radar-demo` |
+| Databases | `radar_demo` | `radar_live` + `radar_demo` |
+| Scheduled ingestion | off | `radar-ingest.yml` on cron |
+| Tokens | `NEON_API_KEY`, `RENDER_API_KEY`, `VERCEL_TOKEN` | the same, plus `RADAR_GITHUB_TOKEN` (and optionally `PROD_ANTHROPIC_API_KEY`) |
+
+Start with the demo. `--live` can be added later on the same accounts without redoing anything.
+
+### 1. Create the tokens (about 5 minutes, once)
 
 | `.env` key | Where to create it | Notes |
 |---|---|---|
-| `NEON_API_KEY` | [console.neon.tech → Account settings → API keys](https://console.neon.tech/app/settings/api-keys) | Personal key. If it sees more than one organization, also set `NEON_ORG_ID`. |
-| `RENDER_API_KEY` | [dashboard.render.com → Account Settings → API Keys](https://dashboard.render.com/u/settings#api-keys) | **Sign up with GitHub**, so Render can read the repo (see [Troubleshooting](#troubleshooting)). |
+| `NEON_API_KEY` | [console.neon.tech → Account settings → API keys](https://console.neon.tech/app/settings/api-keys) | Sign up with GitHub. If the key sees more than one organization, also set `NEON_ORG_ID`. |
+| `RENDER_API_KEY` | [dashboard.render.com → Account Settings → API Keys](https://dashboard.render.com/u/settings#api-keys) | **Sign up with GitHub** and give Render access to the repo (see [Troubleshooting](#troubleshooting)). |
 | `VERCEL_TOKEN` | [vercel.com/account/settings/tokens](https://vercel.com/account/settings/tokens) | Scope: your personal account. Set `VERCEL_TEAM_ID` only if you deploy to a team. |
-| `RADAR_GITHUB_TOKEN` | [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new) | Fine-grained, *Public repositories (read-only)*, no extra permissions. The radar reads GitHub with it (5,000 req/h). |
-| `ANTHROPIC_API_KEY` | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) | Optional. Without it, text comes from deterministic templates and the deployment is strictly $0. |
+| `RADAR_GITHUB_TOKEN` | [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new) | `--live` only. Fine-grained, *Public repositories (read-only)*, no extra permissions (5,000 req/h). A local `GITHUB_TOKEN` is never used in its place. |
+| `PROD_ANTHROPIC_API_KEY` | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) | `--live` only, optional. Deliberately not `ANTHROPIC_API_KEY`, so a key exported in your shell for other work is never shipped. Without it, text comes from deterministic templates. |
 
-The script also needs `gh` (already authenticated to `armaansingla14/Anti-Radar`) and Node.js 20+ for `npx vercel`.
+The script also needs `gh` (authenticated to `armaansingla14/Anti-Radar`), Node.js 20+ for `npx vercel`, and Docker with the compose `db` service running (`docker compose up -d db`) for the seed step.
 
 ### 2. Paste the tokens into the repo-root `.env`
 
@@ -28,8 +40,6 @@ The script also needs `gh` (already authenticated to `armaansingla14/Anti-Radar`
 NEON_API_KEY=...
 RENDER_API_KEY=...
 VERCEL_TOKEN=...
-RADAR_GITHUB_TOKEN=github_pat_...
-ANTHROPIC_API_KEY=sk-ant-...      # optional
 ```
 
 `.env` is gitignored. The script never prints a token: every log line is redacted.
@@ -37,63 +47,52 @@ ANTHROPIC_API_KEY=sk-ant-...      # optional
 ### 3. Run it
 
 ```sh
-make deploy-check      # lists every missing token and where to create it (no network)
-make deploy            # takes 15–25 min the first time, mostly Render Docker builds
+cd backend && uv run python ../scripts/deploy.py --check     # lists every missing token and where to create it (no network)
+cd backend && uv run python ../scripts/deploy.py             # demo: ~15 min the first time, mostly the Render Docker build
+cd backend && uv run python ../scripts/deploy.py --live      # later, to add the live backend + ingestion
 ```
 
-Without `make`, run the same commands directly:
+With `make`: `make deploy-check`, `make deploy`, `make deploy ARGS=--live`.
 
-```sh
-cd backend && uv run python ../scripts/deploy.py --check
-cd backend && uv run python ../scripts/deploy.py
-```
+Useful flags:
 
-These flags are useful for previews and re-runs:
-
-- `make deploy ARGS=--dry-run` prints the plan and every request it would send, with secrets redacted. It makes no network calls and writes no files.
-- `make deploy ARGS="--step render"` runs a single step. The steps are `neon`, `render`, `vercel`, `github` and `verify`, and the flag can be repeated.
+- `--dry-run` prints the plan and every request it would send, with secrets redacted. It makes no network calls and writes no files.
+- `--step render` runs a single step. The steps are `neon`, `seed`, `render`, `vercel`, `github` and `verify`; the flag can be repeated.
+- `--step seed` on its own **resets the public demo** to the committed snapshot (visitor watchlist/feedback are discarded).
 
 What it does, in order:
 
-1. **neon.** Creates or reuses the project `anti-radar` in `aws-us-west-2`, then the databases `radar_live` and `radar_demo`. It then fetches a pooled URI (`DATABASE_URL`) and a direct URI (`DATABASE_URL_DIRECT`) for each database. The URIs are fetched again on every run and never written to disk.
-2. **render.** Creates or reuses two free Docker web services in `oregon`, built from `backend/Dockerfile` with the repo root as the build context:
-   - `radar-live`: `APP_ENV=production`, with the admin token, the GitHub token and the Anthropic key.
+1. **neon.** Creates or reuses the project `anti-radar` in `aws-us-west-2` and the database `radar_demo` (plus `radar_live` with `--live`). It fetches a pooled URI (`DATABASE_URL`) and a direct URI (`DATABASE_URL_DIRECT`) for each database. The URIs are fetched again on every run and never written to disk.
+2. **seed.** Replays the committed snapshot (`backend/radar/demo/snapshot/`) into the local docker-compose database `radar_demo` with `radar seed-demo --reset --no-fictional`: offline, `LLM_PROVIDER=none`, clock pinned to the snapshot date. It then copies that database into Neon's `radar_demo` with `pg_dump | psql` (dump on stdin). The replay takes about 2 minutes on a laptop; on Render's 0.1-CPU free instance it would take far longer, so the backend's own `SEED_ON_START=snapshot` is only a fallback for an empty database.
+3. **render.** Creates or reuses free Docker web services in `oregon`, built from `backend/Dockerfile` with the repo root as the build context:
    - `radar-demo`: `APP_ENV=demo`, `DEMO_SNAPSHOT=true`, `SEED_ON_START=snapshot`, `LLM_PROVIDER=none`.
+   - with `--live`, `radar-live`: `APP_ENV=production`, with the admin token, the GitHub token and the optional Anthropic key.
 
-   Both get `TRUST_PROXY_CLIENT_IP=true`, `DB_POOL_SIZE=3` and `DB_MAX_OVERFLOW=2`. The step waits until both deploys are live. On a re-run it updates only env vars that differ, never deletes a var you added in the dashboard, and redeploys only if something changed.
-3. **vercel.** Creates or reuses the project `anti-radar` (Next.js) and sets `BACKEND_URL`, `DEMO_BACKEND_URL` and `APP_ENV=production` for Production and Preview. It then runs `npx vercel@latest deploy --prod` on `frontend/` and records the production URL. Last, it sets `FRONTEND_URL` on both Render services and redeploys them only if the URL changed. On the first deploy the services boot with the provisional `https://anti-radar.vercel.app`, because startup validation needs an https `FRONTEND_URL`.
-4. **github.** Sets the secrets `DATABASE_URL`, `DATABASE_URL_DIRECT` (both for the live DB), `RADAR_GITHUB_TOKEN` and `ANTHROPIC_API_KEY` (if set), passing each value on stdin rather than argv. Then sets the variable `BACKEND_URL_LIVE` and dispatches `radar-ingest` once with `job=github` for the first live capture.
-5. **verify.** Checks that each of these returns 200:
-   - `<live>/api/ready`
-   - `<demo>/api/ready`
-   - `<frontend>/api/proxy/health`
-   - `<frontend>/demo`
-
-   Then it prints a summary and writes the URLs into [Production URL](#production-url) above.
+   Each gets `TRUST_PROXY_CLIENT_IP=true`, `DB_POOL_SIZE=3` and `DB_MAX_OVERFLOW=2`. The step waits until the deploys are live. On a re-run it updates only env vars that differ, never deletes a var you added in the dashboard, and redeploys only if something changed.
+4. **vercel.** Creates or reuses the project `anti-radar` (Next.js) and sets `BACKEND_URL`, `DEMO_BACKEND_URL` and `APP_ENV=production` for Production and Preview. In the demo shape both URLs point at `radar-demo`. It then runs `npx vercel@latest deploy --prod` on `frontend/`, records the production URL, and sets `FRONTEND_URL` on the Render service(s), redeploying only if the URL changed. On the first deploy the services boot with the provisional `https://anti-radar.vercel.app`, because startup validation needs an https `FRONTEND_URL`.
+5. **github.** Sets the repository variable `KEEPWARM_URL` to the main backend, so `keepwarm.yml` keeps it awake in US business hours. With `--live` it also sets the secrets `DATABASE_URL`, `DATABASE_URL_DIRECT` (live DB), `RADAR_GITHUB_TOKEN` and `ANTHROPIC_API_KEY` (from `PROD_ANTHROPIC_API_KEY`, if set) on stdin, sets `RADAR_LIVE=true` (which turns on `radar-ingest`'s schedules) and dispatches `radar-ingest` once with `job=github`.
+6. **verify.** Checks that `<backend>/api/ready` (each backend), `<frontend>/api/proxy/health` and `<frontend>/demo` return 200, prints a summary, and writes the URLs into [Production URL](#production-url) above.
 
 Ids and public URLs go to `deploy/state.json` (gitignored). No secrets are stored there.
 
-**Admin token.** The first run generates a 48-character token and appends it to `.env` as `PROD_ADMIN_TOKEN`; it is deployed as `ADMIN_TOKEN` on `radar-live`. It is deliberately not stored as `ADMIN_TOKEN`: the backend reads the same `.env`, and that name would make your local development stack read-only. Paste the token at `<frontend>/unlock` to enable writes.
+**Admin token (`--live`).** The first live run generates a 48-character token and appends it to `.env` as `PROD_ADMIN_TOKEN`; it is deployed as `ADMIN_TOKEN` on `radar-live`. It is deliberately not stored as `ADMIN_TOKEN`: the backend reads the same `.env`, and that name would make your local development stack read-only. Paste the token at `<frontend>/unlock` to enable writes. The demo backend has no token: harmless writes (watchlist, feedback) stay open and ingestion is always refused.
 
 ## Architecture and costs ($0/month)
 
 | Piece | Where | Free-tier notes |
 |---|---|---|
-| Frontend | Vercel Hobby, project `anti-radar` | Non-commercial use. Server-side proxy to the backends. |
-| Live backend `radar-live` | Render free web service | `APP_ENV=production`. Writes need `ADMIN_TOKEN`. |
+| Frontend | Vercel Hobby, project `anti-radar` | Non-commercial use. Server-side proxy to the backend(s). |
 | Demo backend `radar-demo` | Render free web service | `APP_ENV=demo`, `DEMO_SNAPSHOT=true`. Serves the verified snapshot only. |
-| Databases | Neon free: one project with two databases, `radar_live` and `radar_demo` | 0.5 GB storage. pgvector is supported. |
-| Scheduled ingestion | GitHub Actions cron (`radar-ingest.yml`) | Public repository, so standard runners are free. |
-| Keep-warm | GitHub Actions (`keepwarm.yml`) | Pings `radar-live /api/health` during US business hours. |
+| Live backend `radar-live` (`--live`) | Render free web service | `APP_ENV=production`. Writes need `ADMIN_TOKEN`. |
+| Database(s) | Neon free: project `anti-radar`, `radar_demo` (+ `radar_live`) | 0.5 GB storage. pgvector is supported. |
+| Scheduled ingestion (`--live`) | GitHub Actions cron (`radar-ingest.yml`), gated on `RADAR_LIVE=true` | Public repository, so standard runners are free. |
+| Keep-warm | GitHub Actions (`keepwarm.yml`) | Pings `KEEPWARM_URL/api/health` during US business hours. |
 
-The two Render services share the workspace's 750 free instance-hours per month. Keep-warm uses about 290 of them, and the demo service sleeps when idle.
+Render gives a workspace 750 free instance-hours per month. Keep-warm uses about 290 of them; outside those hours the service sleeps when idle.
 
-The only possible variable cost is the optional Anthropic key:
+The only possible variable cost is the optional Anthropic key on `radar-live`, capped at $3 per UTC day (`LLM_DAILY_USD_CAP=3`). Leave it empty for a strict $0 deployment.
 
-- On `radar-live` it is capped at $3 per UTC day (`LLM_DAILY_USD_CAP=3`).
-- Leave the key empty for a strict $0 deployment.
-
-Two backends are needed because the data clock is pinned per process. One process cannot serve the snapshot (pinned to its as-of date) and live data at the same time.
+With `--live` there are two backends because the data clock is pinned per process. One process cannot serve the snapshot (pinned to its as-of date) and live data at the same time.
 
 ## Manual setup (what the script automates)
 
@@ -127,7 +126,7 @@ The script creates both services through the Render API. `render.yaml` is the eq
 | `DATABASE_URL` | Neon pooled `radar_live` | Neon pooled `radar_demo` |
 | `DATABASE_URL_DIRECT` | Neon direct `radar_live` | Neon direct `radar_demo` |
 | `ADMIN_TOKEN` | **required** (`openssl rand -hex 24`) | not set: harmless writes stay open and ingestion is always refused |
-| `ANTHROPIC_API_KEY` | optional | not needed (`LLM_PROVIDER=none`) |
+| `ANTHROPIC_API_KEY` | optional (from `PROD_ANTHROPIC_API_KEY`) | not needed (`LLM_PROVIDER=none`) |
 | `GITHUB_TOKEN` / `RADAR_GITHUB_TOKEN` | fine-grained read-only PAT | — |
 | `FRONTEND_URL` | `https://<project>.vercel.app` | same |
 | `TRUST_PROXY_CLIENT_IP` | `true` | `true` |
@@ -193,7 +192,10 @@ Secrets:
 | `RADAR_GITHUB_TOKEN` | fine-grained PAT, read-only, public repositories (5,000 req/h; Actions' own token gets 1,000 req/h) |
 | `ANTHROPIC_API_KEY` | optional |
 
-Variable: `BACKEND_URL_LIVE` = the `radar-live` URL. Keep-warm uses it.
+Variables:
+
+- `KEEPWARM_URL` = the main backend URL (`radar-demo` for a demo deploy, `radar-live` with `--live`). Keep-warm uses it.
+- `RADAR_LIVE` = `true` only when the live backend exists. Without it, `radar-ingest`'s schedules are skipped (a manual dispatch still runs).
 
 Workflows:
 
@@ -216,7 +218,7 @@ Workflows:
   1. validates config with the `--cli` role, which needs no `FRONTEND_URL` or `ADMIN_TOKEN`;
   2. runs `alembic upgrade head`, which is idempotent;
   3. calls `uv run radar sweep --only <job>` for each job.
-- `keepwarm.yml` runs every 10 minutes, 12:00–01:00 UTC, on weekdays.
+- `keepwarm.yml` runs every 10 minutes, 12:00–01:00 UTC, on weekdays, and does nothing until `KEEPWARM_URL` is set.
 
 ## Cold starts
 
@@ -224,7 +226,7 @@ Render free instances sleep after 15 minutes idle, and waking one takes about 30
 
 - The frontend proxy waits up to 100 s for response headers. If none arrive, it returns 503 `{"detail":"backend_waking"}` and the UI shows "Waking the radar…".
 - `/demo` pings `/api/proxy/health` first to wake the demo backend.
-- `keepwarm.yml` keeps `radar-live` awake from 12:00 to 01:00 UTC on weekdays.
+- `keepwarm.yml` keeps the main backend awake from 12:00 to 01:00 UTC on weekdays.
 - The first request after a quiet night will be slow. That is expected on the free tier.
 
 ## Admin token (writes)
@@ -241,7 +243,7 @@ When `ADMIN_TOKEN` is set, each of them needs the header `X-Radar-Admin: <token>
 
 To use the token from a browser:
 
-1. Open `<frontend>/unlock` and paste the token. After `make deploy`, it is `PROD_ADMIN_TOKEN` in `.env`.
+1. Open `<frontend>/unlock` and paste the token. After `deploy.py --live`, it is `PROD_ADMIN_TOKEN` in `.env`.
 2. The frontend checks it against `GET /api/session`.
 3. If it is valid, the frontend stores it in an httpOnly, `SameSite=Strict` cookie (`radar_admin`). The proxy forwards that cookie as the header.
 4. To remove the token, use the **Lock** button on `/unlock` (it calls `POST /api/admin/lock`).
@@ -251,7 +253,7 @@ The proxy also refuses cross-site writes (Origin check).
 To rotate the token:
 
 1. Change `PROD_ADMIN_TOKEN` in `.env`.
-2. Run `make deploy ARGS="--step render"`. Only `ADMIN_TOKEN` changes, and `radar-live` redeploys.
+2. Run `deploy.py --live --step render`. Only `ADMIN_TOKEN` changes, and `radar-live` redeploys.
 
 `GET /api/session` returns:
 
@@ -285,13 +287,15 @@ GitHub disables scheduled workflows in a public repository after 60 days without
 | `Render cannot read https://github.com/armaansingla14/Anti-Radar` | Render's GitHub app has no access to the repo. Open [dashboard.render.com/web/new](https://dashboard.render.com/web/new) → **GitHub** → **Connect GitHub** (or *Configure account*), then grant the Render app access to `armaansingla14/Anti-Radar` at [github.com/apps/render/installations/new](https://github.com/apps/render/installations/new). Re-run `make deploy`. |
 | `Your Neon key sees several organizations` | Add `NEON_ORG_ID=<id>` (printed in the error) to `.env`. |
 | Render deploy `build_failed` / `update_failed` | Open the logs link the script prints. A config problem appears as `ANTI RADAR configuration invalid…` at the top of the deploy log, listing each problem. |
-| `radar-live /api/ready` returns 503 | The database is unreachable. Check `DATABASE_URL` on the service and that the Neon project is not suspended or over quota. |
+| `/api/ready` returns 503 | The database is unreachable. Check `DATABASE_URL` on the service and that the Neon project is not suspended or over quota. |
 | Frontend shows `backend_not_configured` | `BACKEND_URL`/`DEMO_BACKEND_URL` are missing or not https in Vercel. Run `make deploy ARGS="--step vercel"`. |
 | Frontend shows "Waking the radar…" for a long time | A cold start. Wait about 60 s. If it persists, check the Render service's events. |
 | CORS errors from the browser | `FRONTEND_URL` on Render does not match the Vercel URL. Run `make deploy ARGS="--step vercel"`, which re-syncs it. |
 | Vercel: `The provided path ".../frontend/frontend" does not exist` | The project's Root Directory is set to `frontend`. Re-run the `vercel` step, which clears it. |
+| Seed step: `docker compose exec` fails | Start the local database first: `docker compose up -d db`. |
+| Ingestion never runs | Expected for a demo deploy. With `--live`, check that the repository variable `RADAR_LIVE` is `true`. |
 | Ingestion stopped | See [the 60-day caveat](#githubs-60-day-cron-caveat). Also check the `radar-ingest` run logs and the `DATABASE_URL` secret. |
-| Start over | Delete `deploy/state.json`. The script finds existing resources by name. To start from nothing, delete the Neon project, both Render services and the Vercel project, then re-run. |
+| Start over | Delete `deploy/state.json`. The script finds existing resources by name. To start from nothing, delete the Neon project, the Render service(s) and the Vercel project, then re-run. |
 
 ## Local parity
 

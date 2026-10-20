@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
-"""ANTI RADAR: one-command $0 deploy (Neon + Render + Vercel + GitHub Actions).
+"""ANTI RADAR: one-command $0 deploy (Neon + Render + Vercel [+ GitHub Actions]).
 
     cd backend && uv run python ../scripts/deploy.py --check      # are the tokens in .env? (no network)
     cd backend && uv run python ../scripts/deploy.py --dry-run    # print every request; no network, no writes
-    cd backend && uv run python ../scripts/deploy.py              # deploy everything (idempotent; safe to re-run)
+    cd backend && uv run python ../scripts/deploy.py              # deploy the demo (idempotent; safe to re-run)
+    cd backend && uv run python ../scripts/deploy.py --live       # ... plus the live backend + scheduled ingestion
     cd backend && uv run python ../scripts/deploy.py --step render
 
-Steps (in order): neon -> render -> vercel -> github -> verify.
+Default ("demo"): ONE backend serving the verified real-data snapshot; the whole site and /demo use it.
+Needs only NEON_API_KEY, RENDER_API_KEY and VERCEL_TOKEN.
+--live adds radar-live (its own database, fed by GitHub Actions cron) as the main site's backend; /demo keeps
+the snapshot. Also needs RADAR_GITHUB_TOKEN (and optionally PROD_ANTHROPIC_API_KEY).
 
-* neon    project `anti-radar` (aws-us-west-2), databases radar_live + radar_demo, pooled + direct URIs.
-* render  free web services radar-live / radar-demo from backend/Dockerfile (repo-root context); waits for deploys.
+Steps (in order): neon -> seed -> render -> vercel -> github -> verify.
+
+* neon    project `anti-radar` (aws-us-west-2), database radar_demo (+ radar_live), pooled + direct URIs.
+* seed    rebuild the snapshot locally (`radar seed-demo` into the docker-compose Postgres), then restore that
+          database into Neon's radar_demo (pg_dump | psql). Re-running resets the public demo to the snapshot.
+* render  free web service radar-demo (+ radar-live) from backend/Dockerfile (repo-root context); waits for deploys.
 * vercel  project `anti-radar`, env BACKEND_URL / DEMO_BACKEND_URL / APP_ENV, `vercel deploy --prod` of frontend/,
-          then FRONTEND_URL on both Render services (redeploy only if it changed).
-* github  Actions secrets + BACKEND_URL_LIVE variable, then one `radar-ingest` run (job=github).
-* verify  /api/ready on both backends, /api/proxy/health and /demo on the frontend; writes the URLs into
+          then FRONTEND_URL on the Render services (redeploy only if it changed).
+* github  KEEPWARM_URL variable (keepwarm.yml pings the main backend in US business hours); with --live also
+          Actions secrets, RADAR_LIVE=true (enables radar-ingest's schedules) and one `radar-ingest` run.
+* verify  /api/ready on the backends, /api/proxy/health and /demo on the frontend; writes the URLs into
           docs/DEPLOYMENT.md and deploy/state.json.
 
 Tokens are read from the repo-root .env and never printed: every log line goes through `Ctx.redact`.
@@ -65,7 +74,7 @@ VERCEL_PROJECT = "anti-radar"
 # predictable default; the vercel step replaces it (and redeploys only if it differs).
 PROVISIONAL_FRONTEND_URL = f"https://{VERCEL_PROJECT}.vercel.app"
 
-STEPS = ("neon", "render", "vercel", "github", "verify")
+STEPS = ("neon", "seed", "render", "vercel", "github", "verify")
 DEPLOY_DONE = {"live"}
 DEPLOY_FAILED = {"build_failed", "update_failed", "canceled", "pre_deploy_failed", "deactivated"}
 RENDER_FIX = f"""Render cannot read {REPO_URL}.
@@ -83,6 +92,7 @@ class Token:
     required: bool
     where: str
     how: str
+    live_only: bool = False
 
 
 TOKENS = (
@@ -94,17 +104,23 @@ TOKENS = (
           "Vercel -> Account Settings -> Tokens -> Create (scope: your personal account)."),
     Token("RADAR_GITHUB_TOKEN", True, "https://github.com/settings/personal-access-tokens/new",
           "Fine-grained token, Repository access: 'Public repositories', no extra permissions "
-          "(the radar reads GitHub at 5,000 req/h)."),
-    Token("ANTHROPIC_API_KEY", False, "https://console.anthropic.com/settings/keys",
-          "Optional: LLM text on radar-live; without it RADAR uses deterministic templates."),
+          "(the radar reads GitHub at 5,000 req/h). Only for --live.", live_only=True),
+    # Deliberately not ANTHROPIC_API_KEY: that name is often set in the shell for other work, and only a key meant for this deployment may be shipped.
+    Token("PROD_ANTHROPIC_API_KEY", False, "https://console.anthropic.com/settings/keys",
+          "Optional, --live only: LLM text on radar-live; without it RADAR uses deterministic templates.",
+          live_only=True),
 )
-STEP_TOKENS = {
-    "neon": ("NEON_API_KEY",),
-    "render": ("NEON_API_KEY", "RENDER_API_KEY"),
-    "vercel": ("VERCEL_TOKEN", "RENDER_API_KEY"),
-    "github": ("NEON_API_KEY", "RADAR_GITHUB_TOKEN"),
-    "verify": (),
-}
+
+
+def step_tokens(step: str, live: bool) -> tuple[str, ...]:
+    return {
+        "neon": ("NEON_API_KEY",),
+        "seed": ("NEON_API_KEY",),
+        "render": ("NEON_API_KEY", "RENDER_API_KEY"),
+        "vercel": ("VERCEL_TOKEN", "RENDER_API_KEY"),
+        "github": ("NEON_API_KEY", "RADAR_GITHUB_TOKEN") if live else (),
+        "verify": (),
+    }[step]
 
 
 class DeployError(RuntimeError):
@@ -152,10 +168,13 @@ def token_value(env: dict[str, str], name: str) -> str:
     return real(name)
 
 
-def check_tokens(env: dict[str, str], which: Callable[[str], str | None] = shutil.which) -> tuple[bool, list[str]]:
+def check_tokens(env: dict[str, str], which: Callable[[str], str | None] = shutil.which,
+                 live: bool = False) -> tuple[bool, list[str]]:
     """Validate that every required token and CLI exists. Returns (ok, human-readable lines)."""
     ok, lines = True, []
     for t in TOKENS:
+        if t.live_only and not live:
+            continue
         if token_value(env, t.name):
             lines.append(f"  ok       {t.name}")
             continue
@@ -163,7 +182,8 @@ def check_tokens(env: dict[str, str], which: Callable[[str], str | None] = shuti
         tag = "MISSING " if t.required else "optional"
         lines.append(f"  {tag} {t.name}\n             create it: {t.where}\n             {t.how}")
     for tool, hint in (("gh", "install https://cli.github.com and run `gh auth login`"),
-                       ("npx", "install Node.js 20+ (https://nodejs.org)")):
+                       ("npx", "install Node.js 20+ (https://nodejs.org)"),
+                       ("docker", "install Docker and run `docker compose up -d db` (the seed step uses it)")):
         if which(tool):
             lines.append(f"  ok       `{tool}` on PATH")
         else:
@@ -178,6 +198,7 @@ def check_tokens(env: dict[str, str], which: Callable[[str], str | None] = shuti
 class Ctx:
     env: dict[str, str]
     dry_run: bool = False
+    live: bool = False
     state: dict[str, Any] = field(default_factory=dict)
     transport: httpx.BaseTransport | None = None
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run
@@ -190,6 +211,11 @@ class Ctx:
         for t in TOKENS:
             self.secret(token_value(self.env, t.name))
         self.secret(self.env.get("PROD_ADMIN_TOKEN", ""))
+
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        """Backends this deploy manages: the snapshot demo always, the live one with --live."""
+        return ("live", "demo") if self.live else ("demo",)
 
     @property
     def env_file(self) -> Path:
@@ -225,11 +251,11 @@ class Ctx:
         raise DeployError(f"{name} is missing from .env; run `make deploy-check` for where to create it.")
 
     def run(self, args: list[str], *, input: str | None = None, env: dict[str, str] | None = None,
-            fake_stdout: str = "") -> subprocess.CompletedProcess:
-        self.log("  $ " + " ".join(shlex.quote(a) for a in args) + ("   # value on stdin" if input else ""))
+            fake_stdout: str = "", cwd: Path | None = None, stdin_note: str = "value on stdin") -> subprocess.CompletedProcess:
+        self.log("  $ " + " ".join(shlex.quote(a) for a in args) + (f"   # {stdin_note}" if input else ""))
         if self.dry_run:
             return subprocess.CompletedProcess(args, 0, fake_stdout, "")
-        proc = self.runner(args, input=input, env=env, capture_output=True, text=True, cwd=str(self.root))
+        proc = self.runner(args, input=input, env=env, capture_output=True, text=True, cwd=str(cwd or self.root))
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or "")[-2000:]
             raise DeployError(f"`{' '.join(args[:3])}` failed (exit {proc.returncode}):\n{self.redact(tail)}")
@@ -287,7 +313,7 @@ def _dumps(obj: Any) -> str:
 # ── 1. Neon ───────────────────────────────────────────────────────────────────
 
 def neon_step(ctx: Ctx) -> dict[str, dict[str, str]]:
-    """Create or reuse the project and both databases; return {live|demo: {pooled, direct}} URIs."""
+    """Create or reuse the project and the databases; return {demo[, live]: {pooled, direct}} URIs."""
     ctx.log("\n== Neon: project, databases, connection strings")
     api = Api(ctx, "Neon", NEON_API, ctx.token("NEON_API_KEY"))
     org_id = neon_org_id(ctx, api)
@@ -317,7 +343,8 @@ def neon_step(ctx: Ctx) -> dict[str, dict[str, str]]:
 
     existing = {d["name"] for d in
                 api("GET", f"/projects/{project_id}/branches/{branch_id}/databases").json().get("databases", [])}
-    for db in DATABASES.values():
+    wanted = {kind: DATABASES[kind] for kind in ctx.kinds}
+    for db in wanted.values():
         if db in existing:
             ctx.log(f"  reuse database {db}")
             continue
@@ -327,7 +354,7 @@ def neon_step(ctx: Ctx) -> dict[str, dict[str, str]]:
         neon_wait(ctx, api, project_id, resp.get("operations"))
 
     uris: dict[str, dict[str, str]] = {}
-    for kind, db in DATABASES.items():
+    for kind, db in wanted.items():
         uris[kind] = {}
         for label, pooled in (("pooled", "true"), ("direct", "false")):
             uri = api("GET", f"/projects/{project_id}/connection_uri",
@@ -336,7 +363,7 @@ def neon_step(ctx: Ctx) -> dict[str, dict[str, str]]:
             ctx.secret(urlsplit(uri).password)
             uris[kind][label] = uri
     ctx.state["neon"] = {"project_id": project_id, "branch_id": branch_id, "org_id": org_id, "role": role,
-                         "region": NEON_REGION, "databases": list(DATABASES.values())}
+                         "region": NEON_REGION, "databases": list(wanted.values())}
     ctx.save_state()
     return uris
 
@@ -377,7 +404,46 @@ def neon_wait(ctx: Ctx, api: Api, project_id: str, operations: list[dict[str, An
             raise DeployError(f"Neon operation {op.get('id')} did not finish in time")
 
 
-# ── 2. Render ─────────────────────────────────────────────────────────────────
+# ── 2. Seed ───────────────────────────────────────────────────────────────────
+
+LOCAL_DB_NAME = "radar_demo"
+LOCAL_DB_URL = f"postgresql+psycopg://radar:radar@localhost:5432/{LOCAL_DB_NAME}"  # docker-compose `db`
+COMPOSE_DB = ["docker", "compose", "exec", "-T", "db"]
+# The replay is fully offline and deterministic: no LLM, no providers, clock pinned to the snapshot date.
+SEED_ENV = {"DATABASE_URL": LOCAL_DB_URL, "DATABASE_URL_DIRECT": LOCAL_DB_URL, "DEMO_SNAPSHOT": "true",
+            "DEMO_SYNTHETIC": "false", "LLM_PROVIDER": "none", "ANTHROPIC_API_KEY": "", "RADAR_NULLPOOL": "1"}
+
+
+def seed_step(ctx: Ctx, dbs: dict[str, dict[str, str]]) -> None:
+    """Replay the committed snapshot into the local docker-compose Postgres, then copy that database into Neon.
+
+    The replay (ingest + scoring + reconstructed history) takes minutes on a laptop; over the network or on
+    Render's 0.1-CPU free instance it would take far longer, so the backend's own SEED_ON_START stays a fallback.
+    """
+    ctx.log(f"\n== Seed: verified snapshot -> local {LOCAL_DB_NAME} -> Neon radar_demo")
+    exists = f"SELECT 1 FROM pg_database WHERE datname = '{LOCAL_DB_NAME}'"
+    ctx.run([*COMPOSE_DB, "sh", "-c",
+             f'psql -U radar -d postgres -tAc "{exists}" | grep -q 1 || createdb -U radar {LOCAL_DB_NAME}'])
+    env, backend = {**os.environ, **SEED_ENV}, ctx.root / "backend"
+    ctx.run(["uv", "run", "alembic", "upgrade", "head"], env=env, cwd=backend)
+    ctx.log("  replaying the snapshot locally (a few minutes) ...")
+    ctx.run(["uv", "run", "radar", "seed-demo", "--reset", "--no-fictional"], env=env, cwd=backend)
+    dump = ctx.run([*COMPOSE_DB, "pg_dump", "-U", "radar", "-d", LOCAL_DB_NAME, "--no-owner", "--no-privileges",
+                    "--no-comments", "--clean", "--if-exists"], fake_stdout="-- pg_dump (dry run)\n")
+    ctx.log(f"  restoring {len(dump.stdout or '') // 1024} KB of SQL into Neon radar_demo ...")
+    ctx.run([*COMPOSE_DB, "psql", libpq_url(dbs["demo"]["direct"]), "-q", "-v", "ON_ERROR_STOP=1",
+             "-c", "SET client_min_messages = warning", "-f", "-"],
+            input=dump.stdout, stdin_note="the dump on stdin")
+    ctx.state["seeded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    ctx.save_state()
+
+
+def libpq_url(uri: str) -> str:
+    """psql wants postgresql://..., not SQLAlchemy's postgresql+psycopg://..."""
+    return re.sub(r"^postgres(ql)?(\+\w+)?://", "postgresql://", uri)
+
+
+# ── 3. Render ─────────────────────────────────────────────────────────────────
 
 def render_env(ctx: Ctx, kind: str, db: dict[str, str], frontend_url: str) -> dict[str, str]:
     """Environment for one service (radar-live = live data; radar-demo = verified snapshot)."""
@@ -391,7 +457,7 @@ def render_env(ctx: Ctx, kind: str, db: dict[str, str], frontend_url: str) -> di
         "DB_MAX_OVERFLOW": "2",
     }
     if kind == "live":
-        anthropic = token_value(ctx.env, "ANTHROPIC_API_KEY")
+        anthropic = token_value(ctx.env, "PROD_ANTHROPIC_API_KEY")
         env.update(APP_ENV="production", DEMO_SNAPSHOT="false", SEED_ON_START="none",
                    ADMIN_TOKEN=admin_token(ctx), GITHUB_TOKEN=ctx.token("RADAR_GITHUB_TOKEN"),
                    LLM_PROVIDER="anthropic" if anthropic else "none", LLM_DAILY_USD_CAP="3")
@@ -441,13 +507,14 @@ def admin_token(ctx: Ctx) -> str:
 
 
 def render_step(ctx: Ctx, dbs: dict[str, dict[str, str]]) -> dict[str, str]:
-    ctx.log("\n== Render: radar-live + radar-demo (free, Docker, oregon)")
+    ctx.log(f"\n== Render: {' + '.join(SERVICES[k] for k in ctx.kinds)} (free, Docker, oregon)")
     api = Api(ctx, "Render", RENDER_API, ctx.token("RENDER_API_KEY"))
     owner_id = render_owner(ctx, api)
     frontend = ctx.state.get("frontend_url") or PROVISIONAL_FRONTEND_URL
     services = ctx.state.setdefault("render", {})
     waits: list[tuple[str, str, str | None]] = []
-    for kind, name in SERVICES.items():
+    for kind in ctx.kinds:
+        name = SERVICES[kind]
         desired = render_env(ctx, kind, dbs[kind], frontend)
         svc = render_find_service(api, owner_id, name)
         if svc is None:
@@ -467,7 +534,7 @@ def render_step(ctx: Ctx, dbs: dict[str, dict[str, str]]) -> dict[str, str]:
         waits.append((name, svc["id"], deploy_id))
     for name, service_id, deploy_id in waits:
         render_wait(ctx, api, name, service_id, deploy_id)
-    return {k: v["url"] for k, v in services.items()}
+    return {k: services[k]["url"] for k in ctx.kinds}
 
 
 def raise_render_create_error(ctx: Ctx, name: str, resp: httpx.Response) -> None:
@@ -537,13 +604,14 @@ def render_wait(ctx: Ctx, api: Api, name: str, service_id: str, deploy_id: str |
         waited += 15
 
 
-# ── 3. Vercel ─────────────────────────────────────────────────────────────────
+# ── 4. Vercel ─────────────────────────────────────────────────────────────────
 
 def vercel_step(ctx: Ctx) -> str:
     ctx.log("\n== Vercel: project, env, production deploy of frontend/")
     render = ctx.state.get("render") or {}
-    if not {"live", "demo"} <= render.keys():
+    if not set(ctx.kinds) <= render.keys():
         raise DeployError("No Render URLs in deploy/state.json yet: run `--step render` first.")
+    main_url = render["live" if ctx.live else "demo"]["url"]
     token = ctx.token("VERCEL_TOKEN")
     api = Api(ctx, "Vercel", VERCEL_API, token)
     user = api("GET", "/v2/user").json()["user"]
@@ -564,7 +632,7 @@ def vercel_step(ctx: Ctx) -> str:
         ctx.log("  set framework=nextjs, rootDirectory=(empty): the CLI deploys frontend/ directly")
 
     api("POST", f"/v10/projects/{project['id']}/env", params={"upsert": "true"},
-        json=vercel_env(render["live"]["url"], render["demo"]["url"]))
+        json=vercel_env(main_url, render["demo"]["url"]))
     ctx.log("  env BACKEND_URL, DEMO_BACKEND_URL, APP_ENV (production + preview)")
 
     org_id = team_id or user["id"]
@@ -584,19 +652,20 @@ def vercel_step(ctx: Ctx) -> str:
     ctx.save_state()
     ctx.log(f"  production URL: {frontend}")
 
-    ctx.log("  FRONTEND_URL on both Render services")
+    ctx.log("  FRONTEND_URL on the Render service(s)")
     rapi = Api(ctx, "Render", RENDER_API, ctx.token("RENDER_API_KEY"))
     waits = [(render[k]["name"], render[k]["id"],
-              render_sync_env(ctx, rapi, render[k]["id"], {"FRONTEND_URL": frontend})) for k in SERVICES]
+              render_sync_env(ctx, rapi, render[k]["id"], {"FRONTEND_URL": frontend})) for k in ctx.kinds]
     for name, service_id, deploy_id in waits:
         render_wait(ctx, rapi, name, service_id, deploy_id)
     return frontend
 
 
-def vercel_env(live_url: str, demo_url: str) -> list[dict[str, Any]]:
+def vercel_env(main_url: str, demo_url: str) -> list[dict[str, Any]]:
+    """BACKEND_URL serves the site; DEMO_BACKEND_URL serves /demo. Without --live both are the snapshot backend."""
     target = ["production", "preview"]
     return [{"key": k, "value": v, "type": "encrypted", "target": target}
-            for k, v in (("BACKEND_URL", live_url), ("DEMO_BACKEND_URL", demo_url), ("APP_ENV", "production"))]
+            for k, v in (("BACKEND_URL", main_url), ("DEMO_BACKEND_URL", demo_url), ("APP_ENV", "production"))]
 
 
 def pick_production_url(domains: list[dict[str, Any]], fallback: str | None) -> str | None:
@@ -609,22 +678,29 @@ def pick_production_url(domains: list[dict[str, Any]], fallback: str | None) -> 
     return fallback.rstrip("/") if fallback else None
 
 
-# ── 4. GitHub ─────────────────────────────────────────────────────────────────
+# ── 5. GitHub ─────────────────────────────────────────────────────────────────
 
-def github_step(ctx: Ctx, dbs: dict[str, dict[str, str]]) -> None:
-    ctx.log(f"\n== GitHub Actions ({GITHUB_REPO}): secrets, variable, first live capture")
-    live_url = (ctx.state.get("render") or {}).get("live", {}).get("url")
-    if not live_url:
-        raise DeployError("No radar-live URL in deploy/state.json yet: run `--step render` first.")
+def github_step(ctx: Ctx, dbs: dict[str, dict[str, str]] | None) -> None:
+    main = "live" if ctx.live else "demo"
+    ctx.log(f"\n== GitHub Actions ({GITHUB_REPO}): keep-warm" + (", secrets, first live capture" if ctx.live else ""))
+    main_url = (ctx.state.get("render") or {}).get(main, {}).get("url")
+    if not main_url:
+        raise DeployError(f"No radar-{main} URL in deploy/state.json yet: run `--step render` first.")
+    ctx.run(["gh", "variable", "set", "KEEPWARM_URL", "--body", main_url, "--repo", GITHUB_REPO])
+    if not ctx.live:
+        ctx.log("  scheduled ingestion stays off (radar-ingest only runs on a schedule when RADAR_LIVE=true)")
+        return
+    if dbs is None:
+        raise DeployError("github --live needs the Neon databases")
     values = {
         "DATABASE_URL": dbs["live"]["pooled"],
         "DATABASE_URL_DIRECT": dbs["live"]["direct"],
         "RADAR_GITHUB_TOKEN": ctx.token("RADAR_GITHUB_TOKEN"),
-        "ANTHROPIC_API_KEY": token_value(ctx.env, "ANTHROPIC_API_KEY"),
+        "ANTHROPIC_API_KEY": token_value(ctx.env, "PROD_ANTHROPIC_API_KEY"),
     }
     for name, value in github_secret_values(values).items():
         ctx.run(["gh", "secret", "set", name, "--repo", GITHUB_REPO], input=value)  # value on stdin, not argv
-    ctx.run(["gh", "variable", "set", "BACKEND_URL_LIVE", "--body", live_url, "--repo", GITHUB_REPO])
+    ctx.run(["gh", "variable", "set", "RADAR_LIVE", "--body", "true", "--repo", GITHUB_REPO])
     gh = ctx.state.setdefault("github", {})
     if gh.get("first_capture_dispatched"):
         ctx.log("  first capture already dispatched (see the Actions tab)")
@@ -640,15 +716,13 @@ def github_secret_values(values: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in values.items() if v}
 
 
-# ── 5. Verify ─────────────────────────────────────────────────────────────────
+# ── 6. Verify ─────────────────────────────────────────────────────────────────
 
-def verify_targets(state: dict[str, Any]) -> list[tuple[str, str]]:
+def verify_targets(state: dict[str, Any], kinds: tuple[str, ...] = ("live", "demo")) -> list[tuple[str, str]]:
     render, frontend = state.get("render") or {}, state.get("frontend_url")
-    if not ({"live", "demo"} <= render.keys() and frontend):
+    if not (set(kinds) <= render.keys() and frontend):
         raise DeployError("deploy/state.json lacks Render/Vercel URLs: run the render and vercel steps first.")
-    return [
-        ("radar-live /api/ready", f"{render['live']['url']}/api/ready"),
-        ("radar-demo /api/ready", f"{render['demo']['url']}/api/ready"),
+    return [(f"{SERVICES[k]} /api/ready", f"{render[k]['url']}/api/ready") for k in kinds] + [
         ("frontend /api/proxy/health", f"{frontend}/api/proxy/health"),
         ("frontend /demo", f"{frontend}/demo"),
     ]
@@ -658,7 +732,7 @@ def verify_step(ctx: Ctx, attempts: int = 4) -> bool:
     ctx.log("\n== Verify (a sleeping Render backend can take ~60 s to wake)")
     ok = True
     with httpx.Client(timeout=150, transport=ctx.transport, follow_redirects=True) as client:
-        for label, url in verify_targets(ctx.state):
+        for label, url in verify_targets(ctx.state, ctx.kinds):
             status: int | str = "-"
             for attempt in range(attempts):
                 ctx.log(f"  GET {url}")
@@ -686,7 +760,9 @@ def doc_url_block(state: dict[str, Any]) -> str:
     render, fe = state.get("render") or {}, state.get("frontend_url")
     if not fe:
         return "_Not deployed yet. Run `make deploy`; this block is filled in automatically._"
-    rows = [f"| Frontend | {fe} |", f"| Guided demo | {fe}/demo |", f"| Unlock writes | {fe}/unlock |"]
+    rows = [f"| Frontend | {fe} |", f"| Guided demo | {fe}/demo |"]
+    if "live" in render:
+        rows.append(f"| Unlock writes (live) | {fe}/unlock |")
     for kind, label in (("live", "radar-live API"), ("demo", "radar-demo API")):
         if kind in render:
             rows.append(f"| {label} | {render[kind]['url']} (health: `/api/health`, ready: `/api/ready`) |")
@@ -773,7 +849,7 @@ def dry_run_transport() -> httpx.MockTransport:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def run_steps(ctx: Ctx, steps: list[str]) -> bool:
-    missing = sorted({t for s in steps for t in STEP_TOKENS[s] if not token_value(ctx.env, t)})
+    missing = sorted({t for s in steps for t in step_tokens(s, ctx.live) if not token_value(ctx.env, t)})
     if missing and not ctx.dry_run:
         raise DeployError(f"Missing in .env: {', '.join(missing)}. Run `make deploy-check` for where to get them.")
     dbs: dict[str, dict[str, str]] | None = None
@@ -788,12 +864,14 @@ def run_steps(ctx: Ctx, steps: list[str]) -> bool:
     for step in steps:
         if step == "neon":
             databases()
+        elif step == "seed":
+            seed_step(ctx, databases())
         elif step == "render":
             render_step(ctx, databases())
         elif step == "vercel":
             vercel_step(ctx)
         elif step == "github":
-            github_step(ctx, databases())
+            github_step(ctx, databases() if ctx.live else None)
         elif step == "verify":
             ok = verify_step(ctx)
     return ok
@@ -805,19 +883,24 @@ def summary(ctx: Ctx) -> str:
     lines = ["", "== Summary" + (" (dry run: nothing was created)" if ctx.dry_run else "")]
     if s.get("frontend_url"):
         lines += [f"  frontend     {s['frontend_url']}", f"  guided demo  {s['frontend_url']}/demo"]
-    for kind in SERVICES:
+    for kind in ctx.kinds:
         if kind in render:
             lines.append(f"  {render[kind]['name']:<12} {render[kind]['url']}")
     if s.get("neon"):
         lines.append(f"  neon         project {s['neon']['project_id']} ({', '.join(DATABASES.values())})")
-    if s.get("frontend_url"):
-        lines.append(f"  writes       paste PROD_ADMIN_TOKEN from .env at {s['frontend_url']}/unlock")
-    lines.append(f"  ingestion    {REPO_URL}/actions (radar-ingest; keepwarm)")
+    if ctx.live:
+        if s.get("frontend_url"):
+            lines.append(f"  writes       paste PROD_ADMIN_TOKEN from .env at {s['frontend_url']}/unlock")
+        lines.append(f"  ingestion    {REPO_URL}/actions (radar-ingest; keepwarm)")
+    else:
+        lines.append("  mode         demo: the whole site serves the verified snapshot (re-run with --live for live data)")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Deploy ANTI RADAR to Neon + Render + Vercel + GitHub Actions ($0).")
+    parser.add_argument("--live", action="store_true",
+                        help="also deploy the live backend + scheduled ingestion (default: snapshot demo only)")
     parser.add_argument("--check", action="store_true", help="only validate tokens/CLIs in .env (no network)")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and every request; no network")
     parser.add_argument("--step", action="append", choices=STEPS, help="run only this step (repeatable)")
@@ -826,17 +909,18 @@ def main(argv: list[str] | None = None) -> int:
     env = {k: v for k, v in os.environ.items() if k in {t.name for t in TOKENS}}
     env.update({k: v for k, v in load_env(ROOT / ".env").items() if v})  # blank .env lines do not override
     if args.check:
-        ok, lines = check_tokens(env)
+        ok, lines = check_tokens(env, live=args.live)
         print("Deploy prerequisites (repo-root .env):")
         print("\n".join(lines))
         print("\nAll set: run `make deploy`." if ok else "\nAdd the missing values to .env, then re-run `make deploy-check`.")
         return 0 if ok else 1
 
-    ctx = Ctx(env=env, dry_run=args.dry_run, state=load_state(ROOT / "deploy" / "state.json"),
+    ctx = Ctx(env=env, dry_run=args.dry_run, live=args.live, state=load_state(ROOT / "deploy" / "state.json"),
               transport=dry_run_transport() if args.dry_run else None)
     steps = [s for s in STEPS if s in (args.step or STEPS)]
     if ctx.dry_run:
-        ctx.log(f"DRY RUN: steps {', '.join(steps)}; responses are simulated (fresh accounts), secrets shown as ***")
+        ctx.log(f"DRY RUN ({'live + demo' if ctx.live else 'demo'}): steps {', '.join(steps)}; "
+                "responses are simulated (fresh accounts), secrets shown as ***")
     try:
         ok = run_steps(ctx, steps)
     except RepoAccessError as e:

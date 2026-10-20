@@ -1,6 +1,6 @@
-# Keep the live Render backend awake during US business hours (12:00–01:00 UTC, weekdays) so the first
-# visitor does not wait for a cold start. ~13 h × 22 days ≈ 290 instance-hours/month, inside Render's
-# 750 free hours shared with the (mostly asleep) demo service. Only pings /api/health (no DB work).
+# Keep the main Render backend (KEEPWARM_URL: radar-demo for a demo deploy, radar-live with --live) awake during
+# US business hours (12:00–01:00 UTC, weekdays) so the first visitor does not wait for a cold start.
+# ~13 h × 22 days ≈ 290 instance-hours/month, inside Render's 750 free hours. Only pings /api/health (no DB work).
 name: keepwarm
 
 on:
@@ -18,8 +18,8 @@ jobs:
     steps:
       - name: Ping /api/health
         env:
-          BACKEND_URL_LIVE: ${{ vars.BACKEND_URL_LIVE || secrets.BACKEND_URL_LIVE }}
+          KEEPWARM_URL: ${{ vars.KEEPWARM_URL || vars.BACKEND_URL_LIVE }}
         run: |
-          if [ -z "$BACKEND_URL_LIVE" ]; then echo "BACKEND_URL_LIVE not configured; skipping"; exit 0; fi
+          if [ -z "$KEEPWARM_URL" ]; then echo "KEEPWARM_URL not configured; skipping"; exit 0; fi
           curl -fsS --retry 4 --retry-delay 15 --retry-all-errors --max-time 90 \
-            "${BACKEND_URL_LIVE%/}/api/health" -o /dev/null -w "%{http_code} in %{time_total}s\n"
+            "${KEEPWARM_URL%/}/api/health" -o /dev/null -w "%{http_code} in %{time_total}s\n"

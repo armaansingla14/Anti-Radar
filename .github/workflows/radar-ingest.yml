@@ -1,6 +1,8 @@
 # Scheduled ingestion + scoring against the LIVE database (one-shot CLI jobs; no long-running worker).
 # Each schedule maps to a list of `radar sweep --only <job>` steps (see "Resolve jobs").
 # NOTE: GitHub disables scheduled workflows after 60 days without repository activity — see docs/DEPLOYMENT.md.
+# Schedules only run once the live backend exists (repo variable RADAR_LIVE=true, set by `deploy.py --live`);
+# a demo-only deploy has no live database, so scheduled runs are skipped instead of failing every few hours.
 name: radar-ingest
 
 on:
@@ -29,6 +31,7 @@ permissions:
 
 jobs:
   sweep:
+    if: github.event_name == 'workflow_dispatch' || vars.RADAR_LIVE == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
