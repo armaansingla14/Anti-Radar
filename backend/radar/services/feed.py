@@ -72,10 +72,11 @@ from radar.services.entities import (
     theme_entity_ids,
     validate_theme,
 )
-from radar.services.memo import memoized
+from radar.services.memo import memoized, memoized_view
 from radar.settings import get_settings
 
 CARD_LIMIT = 12
+SINCE_GRAIN = timedelta(minutes=5)  # default /daily window start is floored to this (memo-friendly)
 EMERGING_MIN_SCORE = 45  # "emerging companies" headline count: early-stage and scoring at least this
 NEW_MIN_SCORE = 30  # "entered the radar" count ignores unscored noise
 # Measurements are dated when observed (not when the underlying change happened), so they
@@ -448,10 +449,20 @@ def snapshot_note(as_of: freshness.AsOf | None = None, *, include_demo: bool = F
 # ── /api/radar ───────────────────────────────────────────────────────────────
 
 
+VIEW_TTL_SECONDS = 300  # feeds with "last 24 h / 7 d" windows: a memo hit is never older than this
+
+
 def radar_feed(session: Session, *, include_demo: bool | None = None, new_only: bool = False,
                theme: str | None = None) -> RadarFeed:
+    """GET /api/radar. Memoized on the view data version (+ VIEW_TTL_SECONDS)."""
     include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
-    theme = validate_theme(theme)
+    theme = validate_theme(theme)  # validate before touching the memo
+    return memoized_view(session, ("radar_feed", include_demo, new_only, theme),
+                         lambda: _build_radar_feed(session, include_demo=include_demo, new_only=new_only,
+                                                   theme=theme), ttl=VIEW_TTL_SECONDS)
+
+
+def _build_radar_feed(session: Session, *, include_demo: bool, new_only: bool, theme: str | None) -> RadarFeed:
     as_of = freshness.feed_as_of(session)
     cards = top_company_cards(session, include_demo=include_demo, theme=theme, new_only=new_only)
     founders = top_founder_cards(session, include_demo=include_demo, theme=theme, new_only=new_only)
@@ -831,11 +842,24 @@ def _daily_watch(session: Session, *, include_demo: bool, anchor: datetime) -> l
 
 
 def daily_radar_v2(session: Session, *, since: datetime | None = None, include_demo: bool | None = None) -> Any:
+    """GET /api/daily/v2. Memoized on (window start, view data version) + VIEW_TTL_SECONDS."""
+    include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
+    explicit = since is not None
+    since = resolve_since(session, since)
+    if not explicit:
+        # The default window (now − 24 h or the previous visit) moves every request; flooring it to
+        # SINCE_GRAIN only ever widens it slightly and lets consecutive loads share the memo.
+        secs, grain = int(since.timestamp()), int(SINCE_GRAIN.total_seconds())
+        since = datetime.fromtimestamp(secs - secs % grain, tz=UTC)
+    return memoized_view(session, ("daily_v2", include_demo, since),
+                         lambda: _build_daily_v2(session, since=since, include_demo=include_demo),
+                         ttl=VIEW_TTL_SECONDS)
+
+
+def _build_daily_v2(session: Session, *, since: datetime, include_demo: bool) -> Any:
     from radar.schemas.feeds_v2 import DailyRadarV2
     from radar.services import home as H
 
-    include_demo = get_settings().demo_synthetic if include_demo is None else include_demo
-    since = resolve_since(session, since)
     as_of = freshness.feed_as_of(session)
     anchor = as_of.anchor
     kw = {"include_demo": include_demo, "anchor": anchor}

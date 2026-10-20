@@ -55,7 +55,7 @@ export function MeetingBriefButton({ personId, briefId, readOnly, allowRegenerat
   if (action.kind === "open") {
     return (
       <span className={clsx("inline-flex flex-wrap items-center gap-x-4 gap-y-2", className)}>
-        <Link href={action.href} data-action="brief" className={cls}>
+        <Link href={action.href} data-action="brief" data-demo="meeting-brief" className={cls}>
           <span aria-hidden>▤</span> Open meeting brief
         </Link>
         {allowRegenerate && !readOnly && (
@@ -80,7 +80,7 @@ export function MeetingBriefButton({ personId, briefId, readOnly, allowRegenerat
     );
   }
   return (
-    <button type="button" data-action="brief" onClick={() => void run(false)} disabled={!!busy} aria-busy={!!busy} className={clsx(cls, className)}>
+    <button type="button" data-action="brief" data-demo="meeting-brief" onClick={() => void run(false)} disabled={!!busy} aria-busy={!!busy} className={clsx(cls, className)}>
       <span aria-hidden>▤</span>
       {busy ? "Drafting brief…" : "Generate meeting brief"}
     </button>

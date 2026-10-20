@@ -269,11 +269,14 @@ def paper_links(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.
 
     keys = {p.id: _code_url_keys(p.code_urls) for p in papers}
     all_keys = set().union(*keys.values()) if keys else set()
-    repos = list(session.scalars(select(Repository).where(func.lower(Repository.full_name).in_(all_keys)))) \
-        if all_keys else []
+    # Column-only selects: this runs over hundreds of papers (rank_papers) and must not hydrate
+    # full Repository / Company / Person rows just to read four fields.
+    repos = session.execute(select(Repository.id, Repository.full_name, Repository.company_id, Repository.is_demo)
+                            .where(func.lower(Repository.full_name).in_(all_keys))).all() if all_keys else []
     repo_by_key = {r.full_name.lower(): r for r in repos}
     cids = {p.company_id for p in papers if p.company_id} | {r.company_id for r in repos if r.company_id}
-    companies = {c.id: c for c in session.scalars(select(Company).where(Company.id.in_(cids)))} if cids else {}
+    companies = {c.id: c for c in session.execute(
+        select(Company.id, Company.slug, Company.name, Company.is_demo).where(Company.id.in_(cids)))} if cids else {}
     for p in papers:
         cands = [p.company_id] + [repo_by_key[k].company_id for k in keys[p.id] if k in repo_by_key]
         for cid in cands:
@@ -285,12 +288,12 @@ def paper_links(session: Session, papers: Sequence[ResearchPaper]) -> dict[uuid.
             if r:
                 add(p.id, {"type": "repository", "id": str(r.id), "slug": r.full_name, "name": r.full_name,
                            "is_demo": r.is_demo})
-    for pid, person in session.execute(
-        select(PaperAuthor.paper_id, Person).join(Person, Person.id == PaperAuthor.person_id)
+    for pid, person_id, slug, name, is_demo in session.execute(
+        select(PaperAuthor.paper_id, Person.id, Person.slug, Person.name, Person.is_demo)
+        .join(Person, Person.id == PaperAuthor.person_id)
         .where(PaperAuthor.paper_id.in_(pids)).order_by(PaperAuthor.position)
     ).tuples():
-        add(pid, {"type": "person", "id": str(person.id), "slug": person.slug, "name": person.name,
-                  "is_demo": person.is_demo})
+        add(pid, {"type": "person", "id": str(person_id), "slug": slug, "name": name, "is_demo": is_demo})
     return out
 
 

@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getStatus } from "@/lib/api";
 import { fmtDateTime } from "@/lib/format";
+import { providerHealthLine } from "@/lib/labels";
 import type { SystemStatus } from "@/lib/types";
 
 async function loadStatus(): Promise<SystemStatus | null> {
@@ -17,11 +18,10 @@ async function loadStatus(): Promise<SystemStatus | null> {
 async function Freshness() {
   const status = await loadStatus();
   if (!status) return <span>Data freshness unavailable — backend not reachable</span>;
-  const healthy = status.providers.filter((p) => p.state === "healthy").length;
   return (
     <span className="tnum">
-      Scored {status.last_scored_at ? fmtDateTime(status.last_scored_at) : "— never"} · score {status.score_version} · providers{" "}
-      {healthy}/{status.providers.length} healthy
+      Scored {status.last_scored_at ? fmtDateTime(status.last_scored_at) : "— never"} · score {status.score_version} ·{" "}
+      {providerHealthLine(status.providers)}
       {status.demo_mode && <span className="ml-2 text-ink-2">· demo mode</span>}
     </span>
   );

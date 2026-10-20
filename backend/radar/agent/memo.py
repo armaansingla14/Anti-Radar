@@ -18,7 +18,7 @@ from radar.agent.analyst import investigate
 from radar.agent.brief_schema import AntiBrief, AntiMemo, AntiMemoDraft, Claim
 from radar.agent.render import memo_to_markdown
 from radar.agent.tools import latest_score, resolve_entity
-from radar.llm.guard import SYSTEM_GUARD, validate_citations
+from radar.llm.guard import SYSTEM_GUARD, derived_block, inline_untrusted, validate_citations
 from radar.llm.prompts import load_prompt
 from radar.llm.provider import BaseProvider, LLMError, NullProvider, get_llm
 from radar.models import Company, ResearchReport, ScoreSnapshot
@@ -110,9 +110,12 @@ def generate_memo(
     generator, model, cost = "template", None, 0.0
     validation: dict | None = None
     try:
-        src_list = "\n".join(f"{s['id']}: {s.get('title')} ({s.get('source_type')}) {s.get('url')}" for s in sources)
-        user = (f"Brief (JSON):\n{json.dumps(brief.model_dump(mode='json'), ensure_ascii=False)}\n\n"
-                f"Sources the ids refer to:\n{src_list}")
+        # Brief JSON and source titles/URLs carry external text: escaped and fenced as data, never instructions.
+        src_list = "\n".join(f"{inline_untrusted(str(s['id']), 12)}: {inline_untrusted(s.get('title'), 200)} "
+                             f"({inline_untrusted(s.get('source_type'), 30)}) {inline_untrusted(s.get('url'), 500)}"
+                             for s in sources)
+        user = (f"Brief (JSON):\n{derived_block(json.dumps(brief.model_dump(mode='json'), ensure_ascii=False), 'brief')}"
+                f"\n\nSources the ids refer to:\n{derived_block(src_list, 'source list')}")
         res = provider.structured("analyst.memo", "deep", SYSTEM_GUARD + "\n\n" + load_prompt("memo"), user,
                                   AntiMemoDraft, cache=True, max_tokens=8000)
         draft = res.parsed

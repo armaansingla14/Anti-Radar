@@ -13,6 +13,11 @@ import time
 from fastapi import HTTPException, Request
 
 _buckets: dict[tuple[str, str], tuple[float, float]] = {}
+
+
+def _now() -> float:  # indirection so tests can freeze the limiter's clock without touching time.monotonic
+    return time.monotonic()
+
 _lock = threading.Lock()
 
 
@@ -23,7 +28,7 @@ def rate_limit(name: str, per_minute: int):
     def dependency(request: Request) -> None:
         client = request.client.host if request.client else "local"
         key = (name, client)
-        now = time.monotonic()
+        now = _now()
         with _lock:
             tokens, last = _buckets.get(key, (capacity, now))
             tokens = min(capacity, tokens + (now - last) * refill)
@@ -53,7 +58,7 @@ class TokenBucket:
             return False
         capacity, refill = float(per_minute), per_minute / 60.0
         key = (self.name, "*")
-        now = time.monotonic()
+        now = _now()
         with _lock:
             tokens, last = _buckets.get(key, (capacity, now))
             tokens = min(capacity, tokens + (now - last) * refill)

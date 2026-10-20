@@ -452,8 +452,19 @@ def render_markdown(day: date, items: Sequence[BriefItem], founders: Sequence[In
 # ── public ───────────────────────────────────────────────────────────────────
 
 
+BRIEF_TTL_SECONDS = 300  # "last 7 / 30 days" windows move with the wall clock on live data
+
+
 def morning_brief(session: Session, *, include_demo: bool | None = None) -> MorningBrief:
+    """GET /api/brief (composed live). Memoized on the view data version (+ a short TTL)."""
+    from radar.services.memo import memoized_view
+
     include_demo = get_settings().demo_mode if include_demo is None else include_demo
+    return memoized_view(session, ("morning_brief", include_demo),
+                         lambda: _compose_morning_brief(session, include_demo=include_demo), ttl=BRIEF_TTL_SECONDS)
+
+
+def _compose_morning_brief(session: Session, *, include_demo: bool) -> MorningBrief:
     day = clock.today()
     strange_all = strange_signals(session, include_demo=include_demo, limit=1)
     strange = strange_all[0] if strange_all else None

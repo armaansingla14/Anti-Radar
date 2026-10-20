@@ -423,23 +423,42 @@ def demo_capture(
 
     tmp = SNAPSHOT_DIR.with_name("snapshot.tmp")
     shutil.rmtree(tmp, ignore_errors=True)
-    _banner("Capturing real-data snapshot")
+    _banner("Capturing VERIFIED real-data snapshot (V2 pipeline)")
+    from radar.thesis.loader import get_thesis
+
+    thesis = get_thesis()
+    started = datetime.now(timezone.utc)
     with ops.capturing(tmp):
+        # Same sources and order as a scheduled sweep; every provider batch (with its source URLs and
+        # observation timestamps) is recorded so the demo backend can replay exactly what was observed.
         _report(ops.ingest_hn(days=21, topic_days=60))
         _report(ops.ingest_arxiv(max_results=papers_per_category, days=21))
         _report(ops.ingest_github(per_query=per_query, max_repos=max_repos))
-        for full in RETRO_REPOS:
-            _report(ops.ingest_github(repo=full))
-        ops.recompute()
+        r = ops.ingest_young_orgs(terms=list(thesis.discovery_queries), n_terms=len(thesis.discovery_queries))
+        if r:
+            _report(r)
+        ops.ingest_talent(all_orgs=True)
+        ops.recompute()  # formation anchors must exist before enrichment picks targets (derived; not captured)
+        ops.enrich_formation_anchors()
         for r in ops.crawl_company_sites(limit=websites):
             _report(r)
+        ops.run_step("stats")
+        _report(ops.probe_attention(limit=70))
+        for full in RETRO_REPOS:
+            _report(ops.ingest_github(repo=full))
+    files = sorted(tmp.glob("*.json.gz"))
     (tmp / "MANIFEST.json").write_text(
         json.dumps(
             {
+                "kind": "verified_snapshot",
                 "captured_at": datetime.now(timezone.utc).isoformat(),
+                "capture_started_at": started.isoformat(),
                 "as_of": clock.today().isoformat(),
-                "sources": ["github", "arxiv", "hackernews", "website"],
-                "note": "Real public data captured from official APIs. Facts are true as of the capture date.",
+                "sources": ["github", "arxiv", "hackernews", "website", "ats"],
+                "files": len(files),
+                "note": ("Real public data collected by ANTI RADAR from official public APIs and websites. Every "
+                         "record keeps its source URL and observation time; metrics are exactly as observed. No "
+                         "synthetic events. Derived scores are recomputed on load."),
             },
             indent=2,
         )

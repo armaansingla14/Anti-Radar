@@ -13,6 +13,7 @@ import { xModeFromStatus } from "@/components/entity/entityLogic";
 import { getStatus } from "@/lib/api";
 import { getSession } from "@/lib/session";
 import { fmtCompact, fmtDate, fmtDateTime, fmtNum, humanize } from "@/lib/format";
+import { providerHealth } from "@/lib/labels";
 import type { JsonObject } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Status" };
@@ -164,10 +165,9 @@ export default async function StatusPage() {
     last_success_rel: relativeTime(p.last_success_at, now),
     last_run_rel: relativeTime(p.last_run_at, now),
   }));
-  const healthy = status.providers.filter((p) => p.state === "healthy").length;
+  const { healthy, live: liveCount, disabled } = providerHealth(status.providers);
   const errored = status.providers.filter((p) => p.state === "error");
   const degraded = status.providers.filter((p) => p.state === "degraded");
-  const live = status.providers.filter((p) => p.state !== "disabled");
   const records = status.providers.reduce((s, p) => s + p.records_collected, 0);
   const signals = status.providers.reduce((s, p) => s + p.signals_created, 0);
   const cost24 = num(status.llm.cost_24h);
@@ -175,9 +175,9 @@ export default async function StatusPage() {
   const headline =
     errored.length > 0
       ? `${errored.map((p) => p.label).join(", ")} ${errored.length === 1 ? "is" : "are"} failing.`
-      : degraded.length > 0
-        ? `${healthy} of ${live.length} live providers healthy.`
-        : `All ${live.length} live providers healthy.`;
+      : healthy < liveCount
+        ? `${healthy} of ${liveCount} live providers healthy.`
+        : `All ${liveCount} live providers healthy.`;
 
   return (
     <div>
@@ -207,12 +207,12 @@ export default async function StatusPage() {
 
       <div className="mb-14 grid grid-cols-2 gap-6 md:grid-cols-4">
         <StatTile
-          value={`${healthy}/${live.length}`}
+          value={`${healthy}/${liveCount}`}
           label="Live providers healthy"
           accent={errored.length > 0}
           sub={[
             errored.length ? `${errored.length} in error` : `${degraded.length} degraded`,
-            status.providers.length > live.length ? `${status.providers.length - live.length} disabled` : null,
+            disabled ? `${disabled} disabled` : null,
           ]
             .filter(Boolean)
             .join(" · ")}

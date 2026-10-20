@@ -253,6 +253,35 @@ def test_memo_from_template_brief(db, acme):
     assert db.scalar(select(func.count()).select_from(ResearchReport).where(ResearchReport.kind == "brief")) == 1
 
 
+def test_memo_prompt_fences_brief_and_source_titles(db, acme):
+    """The memo prompt carries the brief JSON and source titles (external text) only escaped inside
+    <derived_data> blocks: an injected title cannot open or close prompt blocks."""
+    from radar.llm.provider import BaseProvider, LLMRefused
+
+    class Capture(BaseProvider):
+        name, available = "anthropic", True
+
+        def __init__(self) -> None:
+            self.user = ""
+
+        def model_for(self, tier):
+            return "capture"
+
+        def _call_structured(self, model, tier, system, user, schema, max_tokens):
+            self.user = user
+            raise LLMRefused("capture only")
+
+    db.add(Signal(entity_id=acme.id, entity_type="company", signal_type="hn_discussion", source_type="hackernews",
+                  source_url="https://news.ycombinator.com/item?id=1", title=INJECTION,
+                  event_at=_ts(2026, 10, 3), dedup_key=uuid.uuid4().hex))
+    db.flush()
+    cap = Capture()
+    memo = generate_memo(db, "company", str(acme.id), provider=cap)
+    assert memo.generator == "template" and cap.user
+    assert "</source" not in cap.user.lower() and '<source id="S99">' not in cap.user
+    assert cap.user.count("<derived_data") == cap.user.count("</derived_data>") == 2
+
+
 # ── live fetch containment (#26) and subject-line escaping (#28) ──
 
 

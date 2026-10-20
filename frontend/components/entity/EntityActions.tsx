@@ -115,6 +115,7 @@ export function EntityActions({ entityType, entityId, entityName, watched, autoI
         <button
           type="button"
           data-action="investigate"
+          data-demo="investigate"
           onClick={investigate}
           className={clsx(primary, investigating ? "border-accent bg-accent text-paper hover:bg-accent-hover" : "border-ink text-ink hover:bg-ink hover:text-paper")}
           aria-expanded={investigating}

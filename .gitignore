@@ -11,3 +11,11 @@ e2e/test-results/
 e2e/playwright-report/
 backend/.cassettes-tmp/
 *.egg-info/
+
+# capture scratch + large demo media (video is attached to GitHub releases)
+backend/radar/demo/snapshot.tmp/
+demo/*.mp4
+demo/*.webm
+e2e/test-results/
+e2e/playwright-report/
+e2e/videos/

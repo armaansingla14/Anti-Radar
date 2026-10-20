@@ -121,6 +121,10 @@ class User(Base, TimestampMixin):
 
 class Company(Base, EntityMixin):
     __tablename__ = "companies"
+    __table_args__ = (
+        Index("ix_companies_first_seen_at", "first_seen_at"),  # Unknown Yesterday windows
+        Index("ix_companies_updated_at", "updated_at"),  # services.memo view version (max)
+    )
     id: Mapped[uuid.UUID] = uuid_pk()
     slug: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(300))
@@ -146,6 +150,10 @@ class Company(Base, EntityMixin):
 
 class Person(Base, EntityMixin):
     __tablename__ = "people"
+    __table_args__ = (
+        Index("ix_people_first_seen_at", "first_seen_at"),  # Unknown Yesterday windows
+        Index("ix_people_updated_at", "updated_at"),  # services.memo view version (max)
+    )
     id: Mapped[uuid.UUID] = uuid_pk()
     slug: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(300))
@@ -213,6 +221,7 @@ class Repository(Base, EntityMixin):
 
 class ResearchPaper(Base, EntityMixin):
     __tablename__ = "research_papers"
+    __table_args__ = (Index("ix_research_papers_first_seen_at", "first_seen_at"),)  # recent_papers window
     id: Mapped[uuid.UUID] = uuid_pk()
     arxiv_id: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     title: Mapped[str] = mapped_column(Text)
@@ -275,6 +284,7 @@ class Signal(Base):
     __table_args__ = (
         Index("ix_signals_entity_event", "entity_type", "entity_id", "event_at"),
         Index("ix_signals_type_event", "signal_type", "event_at"),
+        Index("ix_signals_created_at", "created_at"),  # services.memo data version (max)
     )
     id: Mapped[uuid.UUID] = uuid_pk()
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
@@ -355,6 +365,7 @@ class ScoreSnapshot(Base):
     __table_args__ = (
         UniqueConstraint("entity_id", "day", name="uq_score_day"),
         Index("ix_score_type_day", "entity_type", "day"),
+        Index("ix_score_snapshots_created_at", "created_at"),  # services.memo data version (max)
     )
     id: Mapped[uuid.UUID] = uuid_pk()
     entity_type: Mapped[str] = mapped_column(String(20))
@@ -503,6 +514,7 @@ class UserAction(Base):
 
 class ResearchReport(Base, TimestampMixin):
     __tablename__ = "research_reports"
+    __table_args__ = (Index("ix_research_reports_kind_created", "kind", "created_at"),)  # brief history
     id: Mapped[uuid.UUID] = uuid_pk()
     kind: Mapped[str] = mapped_column(String(30))  # brief | memo | morning_brief
     entity_type: Mapped[str | None] = mapped_column(String(20))
@@ -623,7 +635,10 @@ class FormationCandidate(Base):
     Rebuilt by ``scoring.formation.run``; rows that no longer qualify are deleted."""
 
     __tablename__ = "formation_candidates"
-    __table_args__ = (Index("ix_formation_tier_score", "tier", "score"),)
+    __table_args__ = (
+        Index("ix_formation_tier_score", "tier", "score"),
+        Index("ix_formation_candidates_updated_at", "updated_at"),  # home / view memo version (max)
+    )
     id: Mapped[uuid.UUID] = uuid_pk()
     slug: Mapped[str] = mapped_column(String(220), unique=True)
     kind: Mapped[str] = mapped_column(String(10))  # team | person

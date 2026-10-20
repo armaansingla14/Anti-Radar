@@ -97,7 +97,16 @@ def momentum_share(components: dict[str, Any] | None) -> float | None:
 
 
 def thesis_map(session: Session, thesis: Thesis | None = None) -> ThesisMap:
-    thesis = thesis or get_thesis()
+    """GET /api/thesis. The default-thesis map is memoized on the view data version (it reads every
+    scored entity's latest snapshot, so recomputing it per request is the slow path)."""
+    if thesis is not None:
+        return _build_thesis_map(session, thesis)
+    from radar.services.memo import memoized_view
+
+    return memoized_view(session, ("thesis_map",), lambda: _build_thesis_map(session, get_thesis()))
+
+
+def _build_thesis_map(session: Session, thesis: Thesis) -> ThesisMap:
     today = clock.today()
     now_dt = _dt(today)
 

@@ -303,7 +303,7 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
           {whyNow}
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-y border-rule py-2.5" aria-label="Data age">
             <span className="label shrink-0 text-ink">Data age</span>
-            <DataAge age={detail.data_age} now={now} />
+            <DataAge age={detail.data_age} now={now} entityType="person" />
           </div>
         </div>
         {formationSec}

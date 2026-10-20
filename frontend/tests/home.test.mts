@@ -116,6 +116,23 @@ describe("data age", () => {
     assert.deepEqual(dataAgeParts({ updated_at: null, last_observed_at: null, age_days: null, families: {} }, now), []);
   });
 
+  it("lists only person-applicable families for people (no Hiring / Web)", () => {
+    const parts = dataAgeParts(
+      {
+        updated_at: null,
+        last_observed_at: null,
+        age_days: null,
+        families: { github: "2026-10-20T11:52:00Z", research: null, hiring: null, web: null, community: null },
+      },
+      now,
+      "person",
+    );
+    assert.deepEqual(
+      parts.map((p) => `${p.label} ${p.value}`),
+      ["GitHub 8 min ago", "Research unavailable", "HN unavailable", "X unavailable"],
+    );
+  });
+
   it("phrases the live header", () => {
     assert.equal(updatedAgo("2026-10-20T11:48:00Z", now), "Updated 12 minutes ago");
     assert.equal(updatedAgo("2026-10-20T11:59:00Z", now), "Updated 1 minute ago");
@@ -337,5 +354,23 @@ describe("collision gate", () => {
     assert.equal(isCollision({ families: [], strength: "MEDIUM" }), true);
     assert.equal(isCollision({ families: ["github", "arxiv"] }), true);
     assert.equal(isCollision(null), false);
+  });
+
+  it("says 'single source family' only when a single-family collision is stored", async () => {
+    const { collisionFallback } = await import("../lib/labels.ts");
+    assert.equal(collisionFallback({ families: ["github"] }), "Single source family");
+    assert.equal(collisionFallback(null), null); // no stored collision → no claim about families
+    assert.equal(collisionFallback({ families: [] }), null);
+    assert.equal(collisionFallback({ families: ["github", "arxiv"] }), null); // a real collision renders instead
+  });
+});
+
+describe("provider health (footer = /status)", () => {
+  it("counts live providers excluding disabled ones and reports the disabled count", async () => {
+    const { providerHealth, providerHealthLine } = await import("../lib/labels.ts");
+    const ps = ["healthy", "degraded", "healthy", "healthy", "never_run", "disabled"].map((state) => ({ state }));
+    assert.deepEqual(providerHealth(ps), { healthy: 3, live: 5, disabled: 1 });
+    assert.equal(providerHealthLine(ps), "3/5 live providers healthy · 1 disabled");
+    assert.equal(providerHealthLine([{ state: "healthy" }]), "1/1 live providers healthy");
   });
 });

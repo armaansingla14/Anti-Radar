@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { postFeedback } from "@/lib/api";
 import { fmtDate, hrefFor, pad2 } from "@/lib/format";
-import { isCollision } from "@/lib/labels";
+import { collisionFallback, isCollision } from "@/lib/labels";
 import type { AntiScore, EvidenceItem, FeedbackLabel, IntelCard as IntelCardData } from "@/lib/types";
 import { AttentionGapMini } from "./AttentionGapPlot";
 import { DemoBadge, EpistemicBadge, NewBadge } from "./Badges";
@@ -152,7 +152,7 @@ export function IntelCard({
           {card.collision && isCollision(card.collision) ? (
             <CollisionLine collision={card.collision} />
           ) : (
-            <span className="text-[12.5px] text-ink-3">Single source family — no collision yet</span>
+            <span className="text-[12.5px] text-ink-3">{collisionFallback(card.collision) ? "Single source family — no collision yet" : "None yet"}</span>
           )}
           <SourcesButton claim={`Why ${card.name} surfaced`} evidence={evidence} count={card.sources_count} demo={card.is_demo} className="ml-auto" />
         </div>
@@ -202,7 +202,7 @@ export function IntelCard({
         {card.sparkline.length > 1 && <Sparkline values={card.sparkline} width={200} height={30} label={card.sparkline_label} />}
         {card.attention_gap && <AttentionGapMini gap={card.attention_gap} />}
         {card.first_seen_at && <p className="label text-ink-3">First seen {fmtDate(card.first_seen_at)}</p>}
-        {hasAge && <DataAge age={card.data_age} now={new Date()} />}
+        {hasAge && <DataAge age={card.data_age} now={new Date()} entityType={card.entity_type === "person" ? "person" : "company"} />}
       </aside>
 
       {/* ── actions ── */}

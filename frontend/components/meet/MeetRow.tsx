@@ -96,6 +96,8 @@ export function MeetRow({ card, readOnly, watched }: { card: MeetCard; readOnly:
   return (
     <article
       data-card
+      data-demo="meet-row"
+      data-demo-rank={card.rank}
       data-href={href}
       tabIndex={0}
       aria-labelledby={`meet-${p.id}`}

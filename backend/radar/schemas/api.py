@@ -177,7 +177,8 @@ VelocityBasis = Literal["observed", "backfill", "insufficient_history"]
 class DataAge(BaseModel):
     """How fresh an entity's data is. ``families`` maps each source family (github, research,
     hiring, web, community = Hacker News, social = X) to when it last produced an observation
-    about the entity (None = never observed). Cards carry ``updated_at`` only."""
+    about the entity (None = never observed). People only carry the families that apply to a
+    person (github, research, community, social). Cards carry ``updated_at`` only."""
 
     updated_at: datetime | None = None
     last_observed_at: datetime | None = None  # max over families

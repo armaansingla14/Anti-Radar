@@ -30,7 +30,7 @@ from radar import clock
 from radar.agent.brief_schema import Claim, MeetingBrief
 from radar.agent.render import meeting_brief_to_markdown
 from radar.agent.tools import AnalystTools, RegisteredSource, SourceRegistry, ToolInputError
-from radar.llm.guard import SYSTEM_GUARD, inline_untrusted, validate_citations
+from radar.llm.guard import SYSTEM_GUARD, derived_block, inline_untrusted, validate_citations
 from radar.llm.provider import BaseProvider, LLMError, get_llm
 from radar.models import (
     Company,
@@ -404,9 +404,11 @@ def generate_meeting_brief(session: Session, person_id: str | uuid.UUID, *, forc
     note: str | None = None
     try:
         name = inline_untrusted(P.display_name(person).name)
+        draft = json.dumps(template_brief(g).model_dump(mode="json"), ensure_ascii=False)[:20000]
+        # The draft quotes external text (titles, names), so it is escaped and fenced like source content.
         user = (f"Person: \"{name}\" (date {clock.today().isoformat()}).\n\nSources:\n\n{registry.blocks()}\n\n"
                 f"Deterministic template draft for reference (JSON; you may improve it but keep citations valid):\n"
-                f"{json.dumps(template_brief(g).model_dump(mode='json'), ensure_ascii=False)[:20000]}")
+                f"{derived_block(draft, 'template draft')}")
         res = provider.structured("analyst.meeting_brief", "deep", SYSTEM_GUARD + "\n\n" + MEETING_PROMPT, user,
                                   MeetingBrief, cache=True, prompt_version=PROMPT_VERSION, max_tokens=6000)
         brief = res.parsed.model_copy(deep=True)

@@ -819,7 +819,19 @@ def execute(session: Session, f: SearchFilters, limit: int = DEFAULT_LIMIT) -> t
     return results, len(hits)
 
 
+SEARCH_TTL_SECONDS = 300  # queries can carry "within N days" windows relative to now
+
+
 def search(session: Session, query: str, limit: int = DEFAULT_LIMIT) -> SearchResponse:
+    """Memoized per (query, limit) on the view data version — repeated searches (palette, back
+    navigation, the search page re-rendering) don't re-rank every candidate."""
+    from radar.services.memo import memoized_view
+
+    return memoized_view(session, ("search", query, limit), lambda: _search(session, query, limit),
+                         ttl=SEARCH_TTL_SECONDS)
+
+
+def _search(session: Session, query: str, limit: int) -> SearchResponse:
     filters, chips, parser = parse_query(query)
     results, total = execute(session, filters, limit)
     return SearchResponse(query=query, filters=filters, interpretation=chips, parser=parser, results=results,

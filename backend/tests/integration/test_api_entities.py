@@ -322,7 +322,8 @@ def test_details_carry_data_age(seeded, client):
     assert age["last_observed_at"] and age["updated_at"] and age["age_days"] is not None
     assert age["families"]["hiring"]  # Halcyon has job postings
     p = client.get("/api/founders/sana-qureshi").json()
-    assert set(p["data_age"]["families"]) == set(age["families"])
+    # People only carry the families that can describe a person (no hiring / web).
+    assert set(p["data_age"]["families"]) == {"github", "research", "community", "social"}
 
 
 def test_company_velocity_from_scoring_metrics(seeded, client):

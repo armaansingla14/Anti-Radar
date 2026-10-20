@@ -127,6 +127,18 @@ export function isCollision(c: { families: string[]; strength?: string | null } 
   return c.families.length >= 2 || s === "HIGH" || s === "MEDIUM";
 }
 
+/**
+ * Copy for the "independent signals" slot when there is no collision to draw.
+ * A stored single-family collision reads "Single source family"; an entity with
+ * no stored collision at all gets null (callers render nothing / a neutral note)
+ * rather than a claim about its source families.
+ */
+export function collisionFallback(c: { families: string[]; strength?: string | null } | null | undefined): string | null {
+  if (isCollision(c)) return null;
+  if (!c || c.families.length === 0) return null;
+  return "Single source family";
+}
+
 /** Distinct sources behind a set of evidence (same URL counts once; unlinked items count by title). */
 export function countSources(items: Pick<EvidenceItem, "source_url" | "title">[]): number {
   return new Set(items.map((e) => e.source_url || `t:${e.title}`)).size;
@@ -210,6 +222,9 @@ export const DATA_AGE_FAMILIES: { key: string; label: string }[] = [
   { key: "social", label: "X" },
 ];
 
+/** Source families that can describe a person (job postings and company web pages cannot). */
+export const PERSON_DATA_AGE_FAMILIES: ReadonlySet<string> = new Set(["github", "research", "community", "social"]);
+
 /** Compact elapsed time: "just now", "8 min ago", "19 h ago", "1 d ago"; null when unparseable or in the future by > 5 min. */
 export function ageShort(at: string | null | undefined, now: Date): string | null {
   if (!at) return null;
@@ -237,12 +252,17 @@ export interface DataAgePart {
  * never observed (null) read "unavailable"; X/social is always listed so its
  * absence is visible rather than silent.
  */
-export function dataAgeParts(age: DataAge | null | undefined, now: Date): DataAgePart[] {
+export function dataAgeParts(
+  age: DataAge | null | undefined,
+  now: Date,
+  entityType: "company" | "person" = "company",
+): DataAgePart[] {
   const fams = age?.families ?? {};
   const keys = Object.keys(fams);
   if (keys.length === 0) return [];
   const parts: DataAgePart[] = [];
   for (const f of DATA_AGE_FAMILIES) {
+    if (entityType === "person" && !PERSON_DATA_AGE_FAMILIES.has(f.key)) continue;
     const present = f.key in fams;
     if (!present && f.key !== "social") continue;
     const at = (fams as Record<string, string | null | undefined>)[f.key];
@@ -334,4 +354,29 @@ const LEGACY_FEEDBACK: Partial<Record<FeedbackLabel, FeedbackLabel>> = {
  */
 export function legacyFeedbackLabel(label: FeedbackLabel): FeedbackLabel | null {
   return LEGACY_FEEDBACK[label] ?? null;
+}
+
+// ── Provider health (shared by /status and the footer) ──────────────────────
+
+export interface ProviderHealth {
+  healthy: number;
+  /** Providers that are switched on (everything except "disabled"). */
+  live: number;
+  disabled: number;
+}
+
+/** Healthy / live / disabled counts — one definition for the status page and the footer. */
+export function providerHealth(providers: { state: string }[]): ProviderHealth {
+  const disabled = providers.filter((p) => p.state === "disabled").length;
+  return {
+    healthy: providers.filter((p) => p.state === "healthy").length,
+    live: providers.length - disabled,
+    disabled,
+  };
+}
+
+/** "3/5 live providers healthy · 1 disabled". */
+export function providerHealthLine(providers: { state: string }[]): string {
+  const h = providerHealth(providers);
+  return `${h.healthy}/${h.live} live providers healthy${h.disabled ? ` · ${h.disabled} disabled` : ""}`;
 }

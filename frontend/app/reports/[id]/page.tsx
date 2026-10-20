@@ -47,7 +47,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const filename = `${report.kind}-${report.entity_slug ?? report.id}.md`;
 
   return (
-    <article className="mx-auto max-w-[980px] pb-12 print:max-w-none">
+    <article data-demo="report" data-demo-kind={report.kind} className="mx-auto max-w-[980px] pb-12 print:max-w-none">
       {/* Print: hide site chrome, keep the memo. */}
       <style>{`@media print { body > header, body > footer, #main ~ *, nav[aria-label] { display: none !important; } html, body { background: #fff; } a { text-decoration: none; } }`}</style>
 

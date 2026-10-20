@@ -1,7 +1,7 @@
 /**
  * Same-origin proxy from the browser to the FastAPI backend.
  *
- * - Only allow-listed top-level API sections are reachable.
+ * - Only allow-listed top-level API sections are reachable (`lib/proxyPolicy.ts`: exactly what the browser fetches).
  * - Only JSON/SSE-relevant headers are forwarded in either direction; cookies,
  *   auth headers and the backend address never reach the client.
  * - Responses are streamed through unbuffered so SSE (/investigate) works.
@@ -12,6 +12,7 @@
  * - A sleeping backend (Render free tier cold start) yields 503 `backend_waking` so the UI can say so.
  */
 import type { NextRequest } from "next/server";
+import { proxyMethodAllowed, proxyPathAllowed } from "@/lib/proxyPolicy";
 import { ADMIN_COOKIE, ADMIN_HEADER, DATASET_COOKIE, parseDataset, resolveBackend } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -22,35 +23,8 @@ export const maxDuration = 300;
 /** How long to wait for response headers (a cold Render instance takes 30–60 s to start). */
 const HEADERS_TIMEOUT_MS = 100_000;
 
-const ALLOWED_SECTIONS = new Set([
-  "health",
-  "session",
-  "radar",
-  "home",
-  "daily",
-  "brief",
-  "companies",
-  "founders",
-  "formation",
-  "meet",
-  "meeting-brief",
-  "signals",
-  "thesis",
-  "watchlist",
-  "search",
-  "status",
-  "retrospective",
-  "graph",
-  "reports",
-  "feedback",
-  "investigate",
-  "memo",
-  "ingest",
-]);
-
 const MAX_BODY_BYTES = 256 * 1024;
 const FORWARD_RESPONSE_HEADERS = ["content-type", "content-disposition", "cache-control", "etag", "last-modified"];
-const SEGMENT = /^[A-Za-z0-9._~@:+-]+$/;
 
 function jsonError(status: number, detail: string): Response {
   return Response.json({ detail }, { status, headers: { "Cache-Control": "no-store" } });
@@ -68,19 +42,15 @@ function sameOrigin(request: NextRequest): boolean {
   }
 }
 
-function validPath(segments: string[]): boolean {
-  if (segments.length === 0 || !ALLOWED_SECTIONS.has(segments[0])) return false;
-  return segments.every((s) => s !== "." && s !== ".." && SEGMENT.test(s));
-}
-
 async function proxy(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
   const { path } = await ctx.params;
-  if (!validPath(path)) return jsonError(404, "Unknown API path");
+  if (!proxyPathAllowed(path)) return jsonError(404, "Unknown API path");
 
   const backend = resolveBackend(parseDataset(request.cookies.get(DATASET_COOKIE)?.value));
   if (!backend.ok) return jsonError(503, backend.detail);
 
   const isWrite = request.method !== "GET" && request.method !== "HEAD";
+  if (!proxyMethodAllowed(path, request.method)) return jsonError(405, "method_not_allowed");
   if (isWrite && !sameOrigin(request)) return jsonError(403, "cross_site_write");
 
   const target = `${backend.base}/api/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;

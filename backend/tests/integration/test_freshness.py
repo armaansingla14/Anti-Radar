@@ -111,6 +111,7 @@ def test_person_data_age_and_unobserved_entity(db):
     assert ages[p.id].families["github"] == _dt(DAY - timedelta(days=7), 0)
     assert ages[p.id].families["social"] == _dt(DAY - timedelta(days=1))
     assert ages[p.id].age_days == 1
+    assert set(ages[p.id].families) == set(freshness.PERSON_FAMILIES)  # no hiring / web for people
     q = ages[quiet.id]
     assert q.last_observed_at is None and q.age_days is None and all(v is None for v in q.families.values())
     assert freshness.data_age(db, "person", []) == {}

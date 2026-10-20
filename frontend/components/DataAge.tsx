@@ -6,13 +6,15 @@ export interface DataAgeProps {
   age: DataAgeData | null | undefined;
   /** Reference instant (ISO or Date). Pass the server's clock to keep SSR and hydration in agreement. */
   now: string | Date;
+  /** People only list the families that can describe a person (no Hiring / Web). */
+  entityType?: "company" | "person";
   className?: string;
 }
 
 /** "GitHub 8 min ago · Research 1 d ago · Hiring 19 h ago · X unavailable". */
-export function DataAge({ age, now, className }: DataAgeProps) {
+export function DataAge({ age, now, entityType = "company", className }: DataAgeProps) {
   const ref = typeof now === "string" ? new Date(now) : now;
-  const parts = dataAgeParts(age, ref);
+  const parts = dataAgeParts(age, ref, entityType);
   const base = "font-mono text-[10px] uppercase leading-relaxed tracking-[0.06em] text-ink-3";
   if (parts.length === 0) {
     const updated = ageShort(age?.updated_at ?? null, ref);

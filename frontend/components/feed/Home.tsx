@@ -15,7 +15,7 @@ import { FormationLabel } from "@/components/formation/Labels";
 import { formationHref, MemberLine } from "@/components/formation/FormationCardView";
 import { relativeTime } from "@/components/insight/relativeTime";
 import { fmtCompact, fmtDate, fmtDateTime, hrefFor, pad2 } from "@/lib/format";
-import { familyLabels, isCollision } from "@/lib/labels";
+import { collisionFallback, familyLabels, isCollision } from "@/lib/labels";
 import type { ChangeItem, FormationCard, HomeSummary, IntelCard, MeetCard, StrangeSignal } from "@/lib/types";
 import { changeHref, changeIndex, changeKindLabel, COUNT_DEFS } from "./homeLogic";
 import { EntityLinks } from "./EntityLinks";
@@ -68,7 +68,7 @@ function Empty({ children }: { children: ReactNode }) {
 
 export function HomeCounts({ summary }: { summary: HomeSummary }) {
   return (
-    <ul aria-label="Today in numbers" className="grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
+    <ul data-demo="home-counts" aria-label="Today in numbers" className="grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
       {COUNT_DEFS.map((d, i) => {
         const n = summary[d.key];
         return (
@@ -285,9 +285,9 @@ export function CompanyRows({ cards, note }: { cards: IntelCard[]; note?: string
               <div className="col-span-2 col-start-2 mt-1 min-w-0 lg:col-span-1 lg:col-start-3 lg:mt-0 lg:pt-[3px]">
                 {c.collision && isCollision(c.collision) ? (
                   <CollisionLine collision={c.collision} className="text-[11.5px]" />
-                ) : (
+                ) : collisionFallback(c.collision) ? (
                   <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-ink-3">Single source family · no collision</span>
-                )}
+                ) : null}
               </div>
               <div className="col-start-3 row-start-1 text-right lg:col-start-4" title={`${label} ${c.score}`}>
                 <span className="tnum block font-mono text-[15px] leading-none text-ink">{c.score}</span>

@@ -56,6 +56,8 @@ from radar.schemas.api import DataAge
 from radar.settings import get_settings
 
 FAMILIES = ("github", "research", "hiring", "web", "community", "social")
+# Families that can describe a person: hiring (job postings) and web (company pages) are company-only.
+PERSON_FAMILIES = ("github", "research", "community", "social")
 SOURCE_FAMILY = {"github": "github", "arxiv": "research", "jobs": "hiring", "website": "web",
                  "hackernews": "community", "x": "social"}
 # Provider runs that are not data sources: the snapshot loader and the fictional demo seeder.
@@ -191,7 +193,10 @@ def age_days(at: datetime | None) -> int | None:
 
 
 def data_age(session: Session, entity_type: EntityType, ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, DataAge]:
-    """Full per-entity data age: row ``updated_at`` plus last observation per source family."""
+    """Full per-entity data age: row ``updated_at`` plus last observation per source family.
+
+    Only families that apply to the entity type are reported (people have no hiring / web family),
+    so the UI never lists a company-only source as "unavailable" for a person."""
     ids = list(set(ids))
     if not ids:
         return {}
@@ -199,8 +204,10 @@ def data_age(session: Session, entity_type: EntityType, ids: Iterable[uuid.UUID]
     updated = dict(session.execute(select(model.id, model.updated_at).where(model.id.in_(ids))).tuples().all())
     fams = family_last_observed(session, entity_type, ids)
     out = {}
+    applicable = PERSON_FAMILIES if entity_type == "person" else FAMILIES
     for i in ids:
-        f = fams.get(i) or dict.fromkeys(FAMILIES)
+        got = fams.get(i) or {}
+        f = {k: got.get(k) for k in applicable}
         seen = [v for v in f.values() if v is not None]
         last = max(seen) if seen else None
         out[i] = DataAge(updated_at=updated.get(i), last_observed_at=last, age_days=age_days(last), families=f)

@@ -55,6 +55,8 @@ export function FormationCardView({ card, rank, className }: { card: FormationCa
   return (
     <article
       data-card
+      data-demo="formation-card"
+      data-demo-slug={card.slug}
       data-href={href}
       tabIndex={0}
       aria-labelledby={`fc-${card.id}`}
@@ -94,6 +96,7 @@ export function FormationCardView({ card, rank, className }: { card: FormationCa
         <Link
           href={href}
           data-action="open"
+          data-demo="formation-open"
           className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink transition-colors hover:text-accent"
         >
           View formation report →
