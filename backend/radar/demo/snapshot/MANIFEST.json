@@ -1,11 +1,16 @@
 {
-  "captured_at": "2026-10-06T17:46:58.379937+00:00",
-  "as_of": "2026-10-06",
+  "kind": "verified_snapshot",
+  "captured_at": "2026-10-20T17:07:01.288808+00:00",
+  "capture_started_at": "2026-10-20T15:33:43.519106+00:00",
+  "as_of": "2026-10-20",
   "sources": [
     "github",
     "arxiv",
     "hackernews",
-    "website"
+    "website",
+    "ats"
   ],
-  "note": "Real public data captured from official APIs. Facts are true as of the capture date."
+  "files": 47,
+  "note": "Real public data collected by ANTI RADAR from official public APIs and websites. Every record keeps its source URL and observation time; metrics are exactly as observed. No synthetic events. Derived scores are recomputed on load. Captured in two passes on the same day (main sweep, then stats retry + discovery + enrichment).",
+  "passes": 2
 }
