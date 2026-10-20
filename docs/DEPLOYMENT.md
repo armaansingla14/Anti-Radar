@@ -3,7 +3,13 @@
 ## Production URL
 
 <!-- deploy:urls:start -->
-_Not deployed yet. Run `scripts/deploy.py`; this block is filled in automatically._
+| What | URL |
+|---|---|
+| Frontend | https://anti-radar-one.vercel.app |
+| Guided demo | https://anti-radar-one.vercel.app/demo |
+| radar-demo API | https://radar-demo-os45.onrender.com (health: `/api/health`, ready: `/api/ready`) |
+
+Last verified by `scripts/deploy.py`: 2026-10-20T20:47:44Z.
 <!-- deploy:urls:end -->
 
 ## Deploy in one command

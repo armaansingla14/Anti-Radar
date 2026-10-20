@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 
@@ -238,8 +239,11 @@ def test_cli_sweep_only_and_unknown_step(db, monkeypatch):
 def test_cli_seed_demo_flags_exist():
     from radar.cli import app
 
-    r = CliRunner().invoke(app, ["seed-demo", "--help"])
-    assert r.exit_code == 0 and "--no-fictional" in r.output and "--if-empty" in r.output
+    # Rich renders help with colour and terminal-width wrapping (forced on under GitHub Actions): normalise both.
+    env = {"COLUMNS": "200", "NO_COLOR": "1", "FORCE_COLOR": None, "GITHUB_ACTIONS": None}
+    r = CliRunner().invoke(app, ["seed-demo", "--help"], env=env)
+    out = re.sub(r"\x1b\[[0-9;]*m", "", r.output)
+    assert r.exit_code == 0 and "--no-fictional" in out and "--if-empty" in out
 
 
 def test_session_scope_import_smoke():
