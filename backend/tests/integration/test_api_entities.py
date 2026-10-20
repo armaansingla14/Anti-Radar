@@ -509,3 +509,27 @@ def test_lab_automation_logins_are_bots():
                   "facebook-github-bot", "meta-codesync", "nvidia-merlin-bot", "mergify[bot]", "Copybara-Service"):
         assert is_bot(login), login
     assert not is_bot("kevinzakka")
+
+
+def test_company_page_drops_bot_team_members_and_other_orgs_lines(db, client):
+    """AI-agent / automation accounts are never team members, and a team member's why-now lines naming
+    another organization's tracked repository stay off this company's page."""
+    from radar.models import CompanyPerson, Repository
+    from radar.services.entities import company_scoped_lines
+
+    mine, other = Company(slug="lethe-co", name="Lethe Co"), Company(slug="deck-co", name="Deck Co")
+    human = Person(slug="lethe-dev", name="Lethe Dev", github_handle="lethedev")
+    bot = Person(slug="claude", name="Claude", github_handle="claude")
+    db.add_all([mine, other, human, bot])
+    db.flush()
+    db.add_all([Repository(full_name="lethe-co/utopia", owner="lethe-co", company_id=mine.id),
+                Repository(full_name="Deck-Co/Deck", owner="Deck-Co", company_id=other.id),
+                CompanyPerson(company_id=mine.id, person_id=human.id, role="Contributor", confidence=0.5),
+                CompanyPerson(company_id=mine.id, person_id=bot.id, role="Contributor", confidence=0.5)])
+    db.commit()
+
+    founders = client.get("/api/companies/lethe-co").json()["founders"]
+    assert [f["slug"] for f in founders] == ["lethe-dev"]
+    lines = ["Deck-Co/Deck: 48 new contributors in the last 30 days", "lethe-co/utopia: +1,166 stars in 30 days",
+             "Contributes to research and/or tooling", "Repository someone/unknown created"]
+    assert company_scoped_lines(db, lines, ["lethe-co"]) == lines[1:]

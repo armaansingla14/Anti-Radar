@@ -686,6 +686,10 @@ NEW_PROJECT_TRACTION_STARS = 25
 NEW_PROJECT_TRACTION_FORKS = 5
 NEW_PROJECT_TRACTION_CONTRIBUTORS = 2  # contributors other than the owner (automation excluded)
 NEW_PROJECT_STRONG_STARS = 500  # stars at which traction strength saturates
+# "Notable" traction — enough to be formation evidence of its own (``project_traction``), beyond the repository
+# merely counting: >= 50 stars, >= 10 forks, or >= 2 other contributors.
+NEW_PROJECT_NOTABLE_STARS = 50
+NEW_PROJECT_NOTABLE_FORKS = 10
 NEW_PROJECT_DEPTH_MATCHES = 2
 NEW_PROJECT_DEPTH_STRENGTH = 0.35
 SERIAL_NEW_PROJECTS = 7
@@ -713,6 +717,12 @@ class NewProjectQuality:
     @property
     def url(self) -> str:
         return f"https://github.com/{self.repo}"
+
+    @property
+    def notable(self) -> bool:
+        """Traction strong enough to be evidence of its own (see ``NEW_PROJECT_NOTABLE_*``)."""
+        return self.counts and (self.stars >= NEW_PROJECT_NOTABLE_STARS or self.forks >= NEW_PROJECT_NOTABLE_FORKS
+                                or self.contributors >= NEW_PROJECT_TRACTION_CONTRIBUTORS)
 
     def traction_text(self) -> str:
         bits = [f"{self.stars:,} star{'s' if self.stars != 1 else ''}"]

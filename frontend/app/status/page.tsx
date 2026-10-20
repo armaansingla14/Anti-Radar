@@ -207,10 +207,15 @@ export default async function StatusPage() {
 
       <div className="mb-14 grid grid-cols-2 gap-6 md:grid-cols-4">
         <StatTile
-          value={`${healthy}/${status.providers.length}`}
-          label="Providers healthy"
+          value={`${healthy}/${live.length}`}
+          label="Live providers healthy"
           accent={errored.length > 0}
-          sub={errored.length ? `${errored.length} in error` : `${degraded.length} degraded`}
+          sub={[
+            errored.length ? `${errored.length} in error` : `${degraded.length} degraded`,
+            status.providers.length > live.length ? `${status.providers.length - live.length} disabled` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         />
         <StatTile value={fmtCompact(records)} label="Records collected" sub="latest run per provider" />
         <StatTile value={fmtCompact(signals)} label="Signals created" sub="latest run per provider" />

@@ -146,3 +146,91 @@ def test_why_person_leads_with_verified_history_and_why_now_with_the_new_project
     # An unknown contributor: no verified line, Founder Score first.
     r2, _ = _ranked([], [stars], comps)
     assert meet.why_person(r2, [])[0] == "Founder Score 48/100"
+
+
+# ── M7 rebalancing: priority gate, event strength ────────────────────────────
+
+
+def _snap(score: float, pedigree_raw: dict | None = None):
+    return SimpleNamespace(score=score, components={"pedigree": {"raw": pedigree_raw or {}}})
+
+
+def test_priority_gate_requires_verified_pedigree_breadth_or_founder_score():
+    labs = _labs()
+    cand2 = SimpleNamespace(signal_families=["github", "web"])
+    cand1 = SimpleNamespace(signal_families=["github"])
+    assert meet.priority_gate(labs, _snap(20), None) == "verified commits to google-deepmind/mujoco"
+    assert meet.priority_gate([], _snap(20, {"source": "public_github_org", "strength": 1.0,
+                                             "org_login": "openai"}), None) == "public GitHub member of openai"
+    # A self-reported affiliation is not verified pedigree.
+    assert meet.priority_gate([], _snap(20, {"source": "affiliation", "strength": 1.0}), None) is None
+    assert meet.priority_gate([], _snap(20), cand2) == "formation candidate with 2 source families"
+    assert meet.priority_gate([], _snap(20), cand1) is None  # single-family candidate membership is not enough
+    assert meet.priority_gate([], _snap(45), None) == "Founder Score 45 >= 45"
+    assert meet.priority_gate([], _snap(44.9), cand1) is None
+    # Without a gate the person is a WATCH whatever the score; with one the score/breadth thresholds apply.
+    assert meet.priority_for(90, 3, eligible=False) == "WATCH"
+    assert meet.priority_for(90, 3, eligible=True) == "HIGH"
+
+
+def _event(stype: str, meta: dict):
+    return SimpleNamespace(id=uuid.uuid4(), signal_type=stype, meta=meta)
+
+
+def test_event_strength_by_own_commits_and_halved_when_employed_elsewhere():
+    pid = uuid.uuid4()
+    joined = _event("joined_young_org", {"org": "smg-project", "commits": 3})
+    deep = _event("joined_young_org", {"org": "acme", "commits": 50})
+    assert meet.event_strength([joined], person_id=pid) == pytest.approx(meet.membership_strength(3))
+    assert meet.membership_strength(None) == meet.JOIN_BASE < meet.membership_strength(3) < 1.0
+    assert meet.event_strength([deep], person_id=pid) == pytest.approx(1.0)
+    # Current company is another, established organization: a young-org event counts half...
+    assert meet.event_strength([joined], person_id=pid, elsewhere="Inferact") == pytest.approx(
+        meet.membership_strength(3) * meet.ELSEWHERE_SHARE)
+    # ... unless the current company *is* that young organization; a new repository is never halved.
+    assert meet.event_strength([joined], person_id=pid, elsewhere="smg-project") == pytest.approx(
+        meet.membership_strength(3))
+    from radar.scoring.extract import assess_new_project
+
+    new = _event("new_project", {"repo": "kz/mjbatch"})
+    projects = {new.id: assess_new_project("kz/mjbatch", stars=600, forks=60)}
+    assert meet.event_strength([new], projects, pid, elsewhere="Inferact") == 1.0
+    # A new repository that does not count is no event at all.
+    weak = _event("new_project", {"repo": "nick/vllm-force-merge-stats"})
+    projects[weak.id] = assess_new_project("nick/vllm-force-merge-stats", stars=0)
+    assert meet.formation_events(meet.Evidence([weak]), projects) == []
+    assert meet.event_strength([weak], projects, pid) == 0.0
+
+
+def test_verified_talent_with_traction_outranks_unknown_young_org_contributor_on_features():
+    """The documented formula on the real-data shapes (Oct 20): Kevin Zakka (Founder Score 49, verified mujoco
+    commits, 600-star new repository) vs an unknown young-org contributor (Founder Score 28, single family,
+    member of a 3-family candidate scoring 35)."""
+    talent = {"founder": meet.WEIGHTS["founder"] * 0.49, "formation": meet.WEIGHTS["formation"] * 0.51,
+              "thesis": 6.6, "recency": 2.6, "collision": 3.0, "talent": meet.talent_points(_labs(), 1.0)}
+    unknown = {"founder": meet.WEIGHTS["founder"] * 0.28, "formation": meet.WEIGHTS["formation"] * 0.35,
+               "thesis": 4.7, "recency": 6.7, "attention": 2.0, "collision": 3.0}
+    assert meet.meet_score(talent) > meet.meet_score(unknown) + 15
+    # Formation membership alone is worth less than the founder-score gap between them.
+    assert meet.WEIGHTS["formation"] < meet.WEIGHTS["founder"] * (0.49 - 0.28) + meet.TALENT_POINTS
+
+
+def test_noise_repositories_are_not_why_now_or_what_changed():
+    from radar.scoring.extract import assess_new_project
+
+    now = datetime(2026, 10, 6, 18, tzinfo=UTC)
+
+    def sig(stype, days, title, url):
+        return SimpleNamespace(id=uuid.uuid4(), signal_type=stype, source_type="github", title=title,
+                               description=None, source_url=url, event_at=now - timedelta(days=days), meta={})
+
+    good = sig("new_project", 40, "om created om/FetchMan", "https://github.com/om/FetchMan")
+    junk = sig("new_project", 20, "om created om/tabletask", "https://github.com/om/tabletask")
+    junk_created = sig("repo_created", 20, "Repository om/tabletask created", "https://github.com/om/tabletask")
+    other = sig("paper_published", 5, "Paper", "https://arxiv.org/abs/1")
+    r, _ = _ranked(_labs(), [other, junk_created, junk, good])
+    r.projects = {good.id: assess_new_project("om/FetchMan", stars=67),
+                  junk.id: assess_new_project("om/tabletask", stars=1)}
+    titles = [i.title for i in meet.why_now(r, now)]
+    assert titles == ["om created om/FetchMan", "Paper"]
+    assert not any("tabletask" in w for w in meet.what_changed(r, now))

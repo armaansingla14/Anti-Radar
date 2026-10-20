@@ -38,17 +38,23 @@ a young org's unknown contributors cannot outrank verified talent on membership 
              their best own formation event in the last 180 days (joined_young_org / lab_alumni_cluster
              0.6..1 by the person's own commits on the young org, saturating at 50; a new_project its ``extract.assess_new_project`` strength — 0.5..1 with traction, 0.35 for
              thesis depth; a new repository that does not count is no event); a quarter of the lab strength
-             without one. The total is capped at 100.
+             without one. A young-org event counts half when the person's own profile names another, established
+             organization (a public GitHub membership older than the young-org window) as current company
+             (``formation.current_org_elsewhere``). The total is capped at 100.
 * unverified −10 for someone with no verified pedigree (no verified lab commits, no public membership of a
              tier-listed GitHub org), Founder Score < 45 and single-family evidence, unless they are in a
              formation candidate with >= 2 families: an unknown contributor of a young org is a WATCH, not a
              meeting.
 * obviousness −25 when the person has > 20k followers, or > 1k followers and a current affiliation
-             with an established organization (``scoring.formation._established_employer``) —
+             with an established organization (``scoring.formation._established_employer``), or their own
+             profile calls them a founder of an organization whose GitHub organization is older than the
+             young-org window (``scoring.formation.public_founder_org``: the formation is already public) —
              waived when the best Formation Score is ≥ 60 (exceptional formation evidence).
 
 "Own evidence" = signals recorded on the person, signals linked to the person
-(``signal_entities``) and the signals the Founder Score cites as evidence for its components.
+(``signal_entities``) and the signals the Founder Score cites as evidence for its components. A new
+repository that does not count (``extract.assess_new_project``: trivial utility, serial hobby repo, no
+traction) is never shown under WHY NOW / WHAT CHANGED (``is_noise_repo_signal``).
 
 Ranking: meet score desc, then Founder Score desc, then person id (total order → reproducible).
 Diversity: at most 2 people from the same formation candidate (or, without one, the same
@@ -132,6 +138,7 @@ TALENT_NO_EVENT_SHARE = 0.25
 UNVERIFIED_PENALTY = 10.0
 JOIN_BASE = 0.6
 JOIN_FULL_COMMITS = 50
+ELSEWHERE_SHARE = 0.5
 GATE_FOUNDER_SCORE = 45.0
 GATE_FORMATION_FAMILIES = 2
 TALENT_EVENT_TYPES = FORMATION_EVENT_TYPES | {LAB_ALUMNI_CLUSTER}
@@ -217,6 +224,7 @@ class Ranked:
     labs: list[LabContribution] = field(default_factory=list)  # verified lab-repository history
     gate: str | None = None  # why HIGH/MEDIUM priority is allowed (None = WATCH only)
     projects: dict[uuid.UUID, NewProjectQuality] = field(default_factory=dict)  # new_project signal -> quality
+    elsewhere: tuple[str, Any] | None = None  # (org, created): current company is another established org
 
     @property
     def priority(self) -> str:
@@ -353,9 +361,17 @@ def _group_key(p: Person, cand: FormationCandidate | None) -> str | None:
     return f"company:{k}" if k else None
 
 
-def _obviousness(session: Session, p: Person, formation_score: float, young_ids: set[uuid.UUID]) -> str | None:
+def _obviousness(session: Session, p: Person, formation_score: float, young_ids: set[uuid.UUID],
+                 org_created: dict[str, Any] | None = None) -> str | None:
     if formation_score >= EXCEPTIONAL_FORMATION:
         return None
+    if org_created:
+        from radar.scoring.formation import public_founder_org
+
+        formed = public_founder_org(p, org_created, clock.today())
+        if formed is not None:
+            return (f"own profile describes them as a founder of {formed[0]}, whose GitHub organization was created "
+                    f"{formed[1].isoformat()} — the formation is already public (self-reported)")
     followers = p.followers or 0
     if followers > OBVIOUS_FOLLOWERS:
         return f"{followers:,} GitHub followers — already widely followed"
@@ -423,6 +439,20 @@ def formation_events(ev: Evidence, projects: dict[uuid.UUID, NewProjectQuality] 
                  or ((q := projects.get(s.id)) is not None and q.counts))]
 
 
+def is_noise_repo_signal(s: Signal, projects: dict[uuid.UUID, NewProjectQuality] | None) -> bool:
+    """A signal about a new repository that does not count (trivial utility, serial hobby repo, no traction):
+    its ``new_project`` signal or another signal pointing at that repository (``repo_created``, stars ...)."""
+    if not projects:
+        return False
+    if s.signal_type == "new_project":
+        q = projects.get(s.id)
+        return q is not None and not q.counts
+    good = {q.url.lower() for q in projects.values() if q.counts}
+    url = (getattr(s, "source_url", None) or "").lower().rstrip("/")
+    return any((url == u or url.startswith(u + "/")) and u not in good
+               for u in (q.url.lower() for q in projects.values() if not q.counts))
+
+
 def own_commits_on_anchor(s: Signal, person_id: uuid.UUID | None) -> int | None:
     """The person's own commits to the young org / repository of a joined_young_org or lab_alumni_cluster event
     (signal metadata), None when not recorded."""
@@ -447,16 +477,22 @@ def membership_strength(commits: int | None) -> float:
 
 
 def event_strength(events: Sequence[Signal], projects: dict[uuid.UUID, NewProjectQuality] | None = None,
-                   person_id: uuid.UUID | None = None) -> float:
+                   person_id: uuid.UUID | None = None, elsewhere: str | None = None) -> float:
     """0..1: the strongest formation event — a new repository by its quality strength, a young-org event
-    (joined_young_org / lab_alumni_cluster) by the person's own commits there (``membership_strength``)."""
+    (joined_young_org / lab_alumni_cluster) by the person's own commits there (``membership_strength``), halved
+    (``ELSEWHERE_SHARE``) when the person's current company is another, established organization
+    (``elsewhere``, ``formation.current_org_elsewhere``): contributing alongside a job is not forming."""
     best = 0.0
     for s in events:
         if s.signal_type == "new_project":
             q = (projects or {}).get(s.id)
             best = max(best, q.strength if q is not None else 0.0)
         else:
-            best = max(best, membership_strength(own_commits_on_anchor(s, person_id)))
+            v = membership_strength(own_commits_on_anchor(s, person_id))
+            org = str((getattr(s, "meta", None) or {}).get("org") or "")
+            if elsewhere and org_key(org) != org_key(elsewhere):
+                v *= ELSEWHERE_SHARE
+            best = max(best, v)
     return best
 
 
@@ -485,6 +521,9 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
     fb = _feedback_points(session, list(people) + [c.anchor_id for c in cands.values()])
     projects = assess_new_project_signals(
         session, {s.id: s for e in evidence.values() for s in e.signals if s.signal_type == "new_project"}.values())
+    from radar.scoring.formation import current_org_elsewhere, org_created_map
+
+    org_created = org_created_map(session)
 
     out: list[Ranked] = []
     for pid, p in people.items():
@@ -505,9 +544,10 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
             for k, v in fb.get(cand.anchor_id, {}).items():
                 labels.setdefault(k, v)
         feedback = max(-FEEDBACK_CAP, min(FEEDBACK_CAP, sum(labels.values())))
-        obvious = _obviousness(session, p, fscore, young_ids)
+        obvious = _obviousness(session, p, fscore, young_ids, org_created)
         labs = person_lab_contributions(p)
         events = formation_events(ev, projects)
+        elsewhere = current_org_elsewhere(p, org_created, clock.today())
         gate = priority_gate(labs, snap, cand)
         unverified = (verified_pedigree(labs, snap) is None and float(snap.score) < GATE_FOUNDER_SCORE
                       and len(families) < 2
@@ -519,7 +559,7 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
             "recency": WEIGHTS["recency"] * recency,
             "attention": WEIGHTS["attention"] * _comp_ratio(snap, "attention_gap"),
             "collision": WEIGHTS["collision"] * min(len(families), COLLISION_FULL) / COLLISION_FULL,
-            "talent": talent_points(labs, event_strength(events, projects, pid)),
+            "talent": talent_points(labs, event_strength(events, projects, pid, elsewhere[0] if elsewhere else None)),
             "unverified": -UNVERIFIED_PENALTY if unverified else 0.0,
             "feedback": feedback,
             "obviousness": -OBVIOUS_PENALTY if obvious else 0.0,
@@ -527,7 +567,7 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
         features = {k: round(v, 2) for k, v in features.items()}
         out.append(Ranked(person=p, snap=snap, score=meet_score(features), features=features, families=families,
                           evidence=ev, candidate=cand, obvious=obvious, feedback=labels, group=_group_key(p, cand),
-                          labs=labs, gate=gate, projects=projects))
+                          labs=labs, gate=gate, projects=projects, elsewhere=elsewhere))
     return select_diverse(out, limit)
 
 
@@ -611,6 +651,11 @@ def why_person(r: Ranked, founder_of: Sequence[str], anchor: Company | None = No
     out.append(f"Founder Score {round(r.founder_score)}/100")
     if traction and not r.labs:
         out.append(traction)
+    elsewhere = getattr(r, "elsewhere", None)
+    if elsewhere and any(s.signal_type != "new_project" for s in formation_events(r.evidence, projects)):
+        out.append(f"Profile lists {elsewhere[0]} as current company (self-reported) and is a public member of its "
+                   f"GitHub organization (created {elsewhere[1].isoformat()}) — contributing to a young organization "
+                   "alongside, not necessarily forming it")
     for key in _FOUNDER_COMPONENTS:
         c = comps.get(key) or {}
         if key == "pedigree" and r.labs and ((c.get("raw") or {}).get("source") in (None, "lab_contribution")):
@@ -644,7 +689,9 @@ def why_now(r: Ranked, now: datetime) -> list[EvidenceItem]:
     # The new project / young org (formation events) first, within the evidence window; then the newest evidence.
     events = [s for s in formation_events(r.evidence, getattr(r, "projects", None))
               if s.event_at <= now + timedelta(days=1)]
-    rest = [s for s in r.evidence.signals if s.event_at >= recent and s.signal_type not in TALENT_EVENT_TYPES]
+    projects = getattr(r, "projects", None)
+    rest = [s for s in r.evidence.signals if s.event_at >= recent and s.signal_type not in TALENT_EVENT_TYPES
+            and not is_noise_repo_signal(s, projects)]
     for s in [*events, *rest]:
         if s.title in seen:
             continue
@@ -672,7 +719,7 @@ def what_changed(r: Ranked, now: datetime) -> list[str]:
     for s in sorted(r.evidence.signals, key=lambda s: s.event_at):
         if s.event_at < recent or s.event_at > now + timedelta(days=1) or s.signal_type not in CHANGE_TYPES:
             continue
-        if s.title in seen:
+        if s.title in seen or is_noise_repo_signal(s, getattr(r, "projects", None)):
             continue
         seen.add(s.title)
         out.append(f"{_date(s.event_at)}: {s.title}")

@@ -344,3 +344,106 @@ def test_talent_person_with_only_github_evidence_stays_early():
     sc = score_candidate(p, build_tech_cohort([]), TODAY)
     assert sc.families == ["github"] and sc.tier in ("early", None) and sc.label in (LABEL_PERSON, None)
     assert "new repository of their own" in sc.components["formation_evidence"]["explanation"]
+
+
+# ── M7: new-project noise, already-public formation, lab themes ──────────────
+
+
+def test_new_project_noise_filter_and_traction():
+    from radar.scoring.extract import assess_new_project
+
+    # Trivial utility names need traction, whatever their thesis keywords.
+    for repo in ("nick/vllm-force-merge-stats", "ada/dotfiles", "ada/spotify-llm-mcp", "ada/qwen-experiments"):
+        q = assess_new_project(repo, stars=2, thesis_matches=("ai.inference", "ai.agents"))
+        assert not q.counts and "trivial utility" in q.reason and q.strength == 0
+    # Serial hobby repos (7+ new repositories by one person in the window) need traction too.
+    q = assess_new_project("ada/railhead", stars=0, serial=7, thesis_matches=("ai.inference", "ai.agents"))
+    assert not q.counts and "one of 7 new repositories" in q.reason
+    # A non-trivial repository by a non-serial author counts on thesis depth (>= 2 subcategories), weakly.
+    q = assess_new_project("ada/tactile-sim", stars=3, thesis_matches=("robotics.simulation", "robotics.manipulation"))
+    assert q.counts and not q.traction and q.strength == 0.35
+    assert not assess_new_project("ada/tactile-sim", stars=3, thesis_matches=("robotics.simulation",)).counts
+    # Traction (stars >= 25, forks >= 5 or >= 2 other contributors) counts even for trivial / serial repos.
+    assert assess_new_project("ada/gpu-stats", stars=25).counts
+    assert assess_new_project("ada/railhead", forks=5, serial=9).counts
+    assert assess_new_project("ada/railhead", contributors=2, serial=9).counts
+    # Traction strength grows with stars: a 600-star repository counts strongly.
+    big, small = assess_new_project("kz/mjbatch", stars=600, forks=60), assess_new_project("m/prefix", stars=27)
+    assert big.strength == 1.0 and 0.5 < small.strength < big.strength
+    # Notable traction (its own evidence kind) needs >= 50 stars, >= 10 forks or >= 2 other contributors.
+    assert big.notable and not small.notable
+    assert assess_new_project("a/b", stars=30, forks=10).notable
+    assert not assess_new_project("a/b", stars=3, thesis_matches=("ai.x", "ai.y")).notable
+
+
+def _person(bio: str | None = None, company: str | None = None, orgs: list | None = None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(bio=bio, current_company=company, attrs={"github_orgs": orgs or []})
+
+
+def test_public_founder_org_detects_already_public_formations():
+    from radar.scoring.formation import YOUNG_DAYS, public_founder_org
+
+    created = {"inferact": date(2025, 10, 20), "newco": TODAY - timedelta(days=40),
+               "vllm project": date(2023, 6, 1), "stainless api": date(2022, 1, 1)}
+    # Founder phrase followed by an @mention of an organization older than the young-org window.
+    p = _person("Core maintainer of @vllm-project.\r\nCo-Founder & Chief Scientist @Inferact .", "@vllm-project")
+    assert public_founder_org(p, created, TODAY) == ("Inferact", date(2025, 10, 20))
+    assert public_founder_org(_person("cofounder of @Inferact, lead maintainer of @vllm-project"), created,
+                              TODAY)[0] == "Inferact"
+    # A young organization is formation in progress, not an already-public one.
+    assert public_founder_org(_person("Co-founder @newco"), created, TODAY) is None
+    assert (TODAY - created["newco"]).days <= YOUNG_DAYS
+    # "Founding engineer" is not a founder; an unknown organization is not evidence either way.
+    assert public_founder_org(_person("Founding Engineer @stainless-api"), created, TODAY) is None
+    assert public_founder_org(_person("Founder @mystery"), created, TODAY) is None
+    # Without an @mention, the profile's company is the organization the founder phrase refers to.
+    assert public_founder_org(_person("Founder & CEO", "Inferact"), created, TODAY)[0] == "Inferact"
+    assert public_founder_org(_person("ML engineer", "Inferact"), created, TODAY) is None
+
+
+def test_current_org_elsewhere_needs_company_and_public_membership_of_an_old_org():
+    from radar.scoring.formation import current_org_elsewhere
+
+    created = {"inferact": date(2025, 10, 20), "smg project": date(2026, 6, 4)}
+    orgs = [{"login": "Inferact", "name": "Inferact"}, {"login": "smg-project"}]
+    p = _person(company="inferact", orgs=orgs)
+    assert current_org_elsewhere(p, created, TODAY) == ("Inferact", date(2025, 10, 20))
+    assert current_org_elsewhere(_person(company="inferact", orgs=orgs[1:]), created, TODAY) is None  # not a member
+    assert current_org_elsewhere(_person(company="smg-project", orgs=orgs), created, TODAY) is None  # young
+    assert current_org_elsewhere(_person(company=None, orgs=orgs), created, TODAY) is None
+
+
+def test_lab_theme_scores_use_talent_theme_hints(monkeypatch):
+    from radar.scoring import formation
+
+    monkeypatch.setattr(formation, "talent_theme_hints", lambda: {"vllm-project": ["ai"],
+                                                                   "google-deepmind": ["ai", "robotics"]})
+    labs = _labs(("vllm-project", "vllm", 214, 1, "2024-01-01", "2026-01-01"))
+    labs2 = _labs(("sgl-project", "sglang", 784, 1, "2024-01-01", "2026-01-01"))
+    assert formation.lab_theme_scores([labs, labs2]) == {"ai": formation.LAB_HINT_THEME_SCORE}
+    assert formation.lab_theme_scores([labs2]) == {}  # no hint configured: stays unclassified
+
+
+def test_unverified_team_without_traction_is_not_a_candidate():
+    from types import SimpleNamespace
+
+    from radar.scoring.formation import TEAM_FLOOR_FOUNDER_SCORE, untracted_unverified_team
+
+    unknown = [MemberInfo(A, "Xavier", founder_score=9), MemberInfo(B, "Arpan", founder_score=7)]
+    tiny = [SimpleNamespace(stars=5, forks=3)]
+    why = untracted_unverified_team(unknown, tiny)
+    assert why is not None and "5 stars, 3 forks across 1 repository" in why and "best 9" in why
+    assert untracted_unverified_team(unknown, [SimpleNamespace(stars=20, forks=1)] * 2) is None  # 40 stars
+    assert untracted_unverified_team(unknown, [SimpleNamespace(stars=0, forks=5)]) is None
+    strong = [*unknown, MemberInfo(C, "Cy", founder_score=TEAM_FLOOR_FOUNDER_SCORE)]
+    assert untracted_unverified_team(strong, tiny) is None
+    labbed = [*unknown, MemberInfo(C, "Cy", founder_score=10, lab_contributions=_labs(
+        ("vllm-project", "vllm", 214, 1, "2024-01-01", "2026-01-01")))]
+    assert untracted_unverified_team(labbed, tiny) is None
+    public = [*unknown, MemberInfo(C, "Cy", founder_score=10, tier=1.0, tier_basis="public_github_org")]
+    assert untracted_unverified_team(public, tiny) is None
+    claimed = [*unknown, MemberInfo(C, "Cy", founder_score=10, tier=1.0, tier_basis="affiliation",
+                                    self_reported=True)]
+    assert untracted_unverified_team(claimed, tiny) is not None  # a self-reported affiliation is not verified

@@ -525,3 +525,119 @@ def test_talent_person_new_project_is_a_person_candidate_but_unknown_person_is_n
     why = P.person_why_now(talent, snap)
     assert why[0].startswith("Now building adak/tactile-sim") and why[1].startswith("300 commits to openai/triton")
     assert P.headline(nobody, None) is None or "Contributor" not in (P.headline(nobody, None) or "")
+
+
+# ── M7: real-data regressions (Oct 20 sweep) ─────────────────────────────────
+
+
+def test_unclassified_young_org_of_verified_lab_contributors_is_a_team_candidate(db, monkeypatch):
+    """smg-project shape: a young org with no topics, two members with verified commits to *different* lab
+    repositories and only a handful of commits each on the org (maintainers merging via PRs)."""
+    monkeypatch.setattr(formation, "talent_theme_hints", lambda: {"vllm-project": ["ai"], "sgl-project": ["ai"]})
+    c, people = young_org(db, "gateway", n_people=2, prior_paper=False, on_thesis=False)
+    for rc, n in zip(db.scalars(select(RepoContributor).where(RepoContributor.person_id.in_([p.id for p in people]))
+                                .order_by(RepoContributor.contributions.desc())), (6, 3)):
+        rc.contributions = n
+    _make_talent(db, people[0], 784, 900, 30, full="sgl-project/sglang")
+    _make_talent(db, people[1], 214, 800, 30, full="vllm-project/vllm")
+    # Same shape without verified history stays off-thesis (no topics, nothing to infer a theme from).
+    plain, _ = young_org(db, "plaingw", n_people=2, prior_paper=False, on_thesis=False)
+    solo, _ = young_org(db, "lonely", n_people=1, prior_paper=False)
+    run_all(db)
+    fc = cand(db, c.id)
+    assert fc is not None and fc.kind == "team" and fc.theme == "ai"
+    conv = fc.convergence["explanation"]
+    assert conv.startswith("Two members previously contributed to sgl-project/sglang and vllm-project/vllm "
+                           "(verified commits)"), conv
+    fq = fc.components["founder_quality"]
+    assert fq["raw"]["tier_basis"] == "lab_contribution" and len(fq["raw"]["lab_members"]) == 2
+    assert "784 commits to sgl-project/sglang" in fq["explanation"] + json.dumps(fq["evidence"])
+    assert "lab_alumni" in fc.components["formation_evidence"]["raw"]["kinds"]
+    # Every anchor left out carries a reason, and explain() reports it.
+    rejected: list = []
+    formation.compute(db, DAY, rejected=rejected)
+    reasons = {r.slug: r.reason for r in rejected}
+    assert reasons["plaingw"] == "off_thesis" and reasons["lonely"] == "too_few_members"
+    assert "gateway" not in reasons
+    ex = formation.explain(db, "lonely", DAY)
+    assert ex["candidates"] == [] and ex["rejected"][0]["reason"] == "too_few_members"
+    assert "needs 2" in ex["rejected"][0]["detail"]
+    ex = formation.explain(db, "gateway", DAY)
+    assert ex["candidates"][0]["kind"] == "team" and ex["rejected"] == []
+    assert formation.explain(db, "nobody-here", DAY)["error"]
+    summary = formation.run(db, DAY)
+    assert summary["rejected"]["company:off_thesis"] >= 1 and summary["rejected"]["company:too_few_members"] >= 1
+
+
+def test_founder_of_an_already_public_company_is_not_a_possible_formation(db):
+    """youkaichao / simon-mo shape: a static bio 'Co-Founder @Inferact' (GitHub org > 180 days old)."""
+    old = _founder_bio_person(db, "kai", None, phrase="co-founder")
+    old.bio = "Core maintainer of @vllm-project. Co-Founder & Chief Scientist @Inferact ."
+    old.followers = 4000
+    old.attrs = {**old.attrs, "github_orgs": [{"login": "Inferact", "created_at": "2025-09-01T00:00:00Z"}]}
+    new = _founder_bio_person(db, "nova", None, phrase="co-founder")
+    new.bio = "Co-founder @novaco"
+    new.attrs = {**new.attrs, "github_orgs": [{"login": "novaco", "created_at": "2026-09-01T00:00:00Z"}]}
+    _make_talent(db, old, 471, 900, 10, full="vllm-project/vllm")
+    _make_talent(db, new, 471, 900, 10, full="vllm-project/vllm")
+    db.flush()
+    rejected: list = []
+    scored = {x.inp.anchor_id: x for x in formation.compute(db, DAY, rejected=rejected)}
+    why = {r.anchor_id: r for r in rejected}
+    assert old.id not in scored and why[old.id].reason == "formation_public"
+    assert "founder of Inferact" in why[old.id].detail and "2025-09-01" in why[old.id].detail
+    assert new.id in scored  # a young organization: formation in progress
+
+
+def test_new_project_traction_must_be_notable_to_be_its_own_evidence(db):
+    people = {}
+    for handle, stars, forks in (("kz", 600, 60), ("nm", 27, 4)):
+        p = Person(slug=handle, name=handle.upper(), github_handle=handle, first_seen_at=at(5), followers=40,
+                   attrs={"self_reported": True})
+        db.add(p)
+        db.flush()
+        _make_talent(db, p, 150, 900, 30, full="google-deepmind/mujoco")
+        tag(db, p.id, "person", 0.9)
+        repo = Repository(full_name=f"{handle}/sim", owner=handle, owner_type="User", stars=stars, forks=forks,
+                          gh_created_at=at(40), pushed_at=at(1))
+        db.add(repo)
+        db.flush()
+        s = signal(db, p, "person", "new_project", "github", 40, f"{handle} created {repo.full_name}",
+                   related=[(repo, "repository")])
+        s.meta = {"repo": repo.full_name, "stars": stars}
+        people[handle] = p
+    # A trivial repository by the same person is never cited (neither its new_project nor repo_created signal).
+    junk = Repository(full_name="kz/dotfiles", owner="kz", owner_type="User", stars=0, gh_created_at=at(3),
+                      pushed_at=at(1))
+    db.add(junk)
+    db.flush()
+    signal(db, people["kz"], "person", "new_project", "github", 3, "kz created kz/dotfiles",
+           related=[(junk, "repository")]).meta = {"repo": "kz/dotfiles", "stars": 0}
+    rc = signal(db, junk, "repository", "repo_created", "github", 3, "Repository kz/dotfiles created")
+    rc.source_url = "https://github.com/kz/dotfiles"
+    db.flush()
+    scored = considered(db)
+    kz, nm = scored[people["kz"].id], scored[people["nm"].id]
+    assert "dotfiles" not in json.dumps([kz.components, kz.why_now])
+    assert set(kz.components["formation_evidence"]["raw"]["kinds"]) == {"new_project", "project_traction"}
+    assert nm.components["formation_evidence"]["raw"]["kinds"] == ["new_project"]  # counts, but not notable
+    assert "600 stars, 60 forks" in json.dumps(kz.components["formation_evidence"]["evidence"])
+    assert kz.score > nm.score
+    assert kz.tier == "early" and kz.families == ["github"]  # single family: never above EARLY
+
+
+def test_unverified_young_org_without_traction_is_rejected_with_reason(db):
+    """Pareton shape: unknown members (Founder Scores < 45), 5 stars and 3 forks."""
+    weak, _ = young_org(db, "tinyco", prior_paper=False)
+    labbed, people = young_org(db, "tinylab", prior_paper=False)
+    for c in (weak, labbed):
+        r = db.scalar(select(Repository).where(Repository.company_id == c.id))
+        r.stars, r.forks = 5, 3
+    _make_talent(db, people[0], 120, 700, 30)
+    run_all(db)
+    rejected: list = []
+    formation.compute(db, DAY, rejected=rejected)
+    why = {r.slug: r for r in rejected}
+    assert cand(db, weak.id) is None and why["tinyco"].reason == "no_traction"
+    assert "5 stars, 3 forks" in why["tinyco"].detail
+    assert cand(db, labbed.id) is not None and "tinylab" not in why  # verified pedigree keeps it

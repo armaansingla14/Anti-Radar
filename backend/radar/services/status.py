@@ -132,7 +132,8 @@ def _provider_status(key: str, label: str, cadence: float | None, runs: list[Ing
         records_collected=sum(r.records_fetched or 0 for r in window),
         records_rejected=sum(r.records_rejected or 0 for r in window),
         signals_created=sum(r.signals_created or 0 for r in window),
-        errors=[str(e)[:300] for e in (last.errors or [])][:10] if last else [],
+        # A disabled provider's skipped run records its reason as an 'error'; that is the reason, not a failure.
+        errors=[str(e)[:300] for e in (last.errors or [])][:10] if last and state != "disabled" else [],
         rate_limit_remaining=last.rate_limit_remaining if last else None,
         latency_ms_p50=round(statistics.median(lat), 1) if lat else None,
         runs_24h=len(window),

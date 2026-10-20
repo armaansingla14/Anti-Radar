@@ -15,13 +15,21 @@ Candidates
     on-thesis (fit >= ``THESIS_GATE``) or linked to a young organization, and is not already part
     of a team candidate. Someone whose only evidence is a generic "founder" self-description
     while at an established organization (non-young with > ``ESTABLISHED_FOLLOWERS`` GitHub
-    followers, or an established stage) is left out.
+    followers, or an established stage) is left out — as is someone whose only evidence is a profile calling
+    them a founder of an organization whose GitHub organization is older than ``YOUNG_DAYS``
+    (``public_founder_org``: that formation is already public, e.g. a funded company's co-founders).
 
-Off-thesis team anchors (thesis fit < ``THESIS_GATE``) are excluded.
+Off-thesis team anchors (thesis fit < ``THESIS_GATE``) are excluded, and so is a young org that is no stronger
+than a hobby repository: no member with verified pedigree (lab commits / public tier-listed org membership) or a
+Founder Score >= ``TEAM_FLOOR_FOUNDER_SCORE``, and < 25 stars and < 5 forks across its repositories
+(``untracted_unverified_team``). An anchor with no classified topics
+whose members have verified lab commits takes those labs' themes (``lab_theme_scores``): missing topics
+are not evidence of being off-thesis.
 
 A ``new_project`` counts only with traction (>= 25 stars, >= 5 forks or >= 2 other contributors) or, for a
 non-trivial repository by someone not creating repositories in series, thesis depth (>= 2 thesis
-subcategories) — ``extract.assess_new_project``. Traction adds its own evidence kind (``project_traction``),
+subcategories) — ``extract.assess_new_project``. *Notable* traction (>= 50 stars, >= 10 forks or >= 2 other
+contributors) adds its own evidence kind (``project_traction``),
 and a person's new repository's stars since creation stand in for the star rate when no 30-day delta is
 measurable; for teams the anchor repositories' lifetime star rate does (labelled as such).
 
@@ -31,7 +39,8 @@ counts by reason.
 
 Evidence scope: a candidate cites only signals about the anchor (the org/person and its own
 repositories) plus members' *own* formation signals (affiliation/bio change, formation
-language). A member's activity on unrelated repositories is never cited.
+language). A member's activity on unrelated repositories is never cited, nor is any signal about a
+person's new repository that does not count (``_Ctx.is_noise_repo_signal``).
 
 FORMATION SCORE (/100, deterministic, every component carries its evidence)
 --------------------------------------------------------------------------
@@ -58,6 +67,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import uuid
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -94,6 +104,8 @@ from radar.scoring.convergence import (
     load_pair_relationships,
 )
 from radar.scoring.extract import (
+    NEW_PROJECT_TRACTION_FORKS,
+    NEW_PROJECT_TRACTION_STARS,
     NewProjectQuality,
     SignalIndex,
     _merge_topics,
@@ -157,6 +169,7 @@ HIGH_MIN_FAMILIES = 3
 EMERGING_MIN_FAMILIES = 2
 HIGH_MIN_CONVERGENCE = ("MEDIUM", "HIGH")
 ESTABLISHED_FOLLOWERS = 50
+TEAM_FLOOR_FOUNDER_SCORE = 45.0  # an unverified team without traction needs one member at least this strong
 LAB_HINT_THEME_SCORE = 0.5  # thesis evidence of verified lab commits for an otherwise unclassified person
 # Source families shown to users (same vocabulary as services/freshness.py and the UI).
 FORMATION_FAMILY: dict[str, str] = {"github": "github", "arxiv": "research", "jobs": "hiring", "website": "web",
@@ -694,6 +707,18 @@ def _member_info(p: Person, snap: ScoreSnapshot | None, thesis: Thesis) -> Membe
     )
 
 
+def lab_theme_scores(contributions: Iterable[Sequence[LabContribution]]) -> dict[str, float]:
+    """Unclassified is not off-thesis: verified commits to a lab repository carry that lab's primary theme
+    (config/talent_sources.yaml ``theme_hint``) at a moderate strength (``LAB_HINT_THEME_SCORE``)."""
+    hints = talent_theme_hints()
+    out: dict[str, float] = {}
+    for labs in contributions:
+        for c in labs:
+            for th in hints.get(c.org.lower(), [])[:1]:
+                out[th] = max(out.get(th, 0.0), LAB_HINT_THEME_SCORE)
+    return out
+
+
 def _signal_fact(s: SignalLite, kind: str) -> EvidenceFact:
     return EvidenceFact(kind=kind, title=s.title, source_url=s.source_url, source_type=s.source_type,
                         event_at=s.event_at, signal_id=s.id)
@@ -722,10 +747,29 @@ class _Ctx:
     young_links: dict[uuid.UUID, list[tuple[uuid.UUID, str, date]]] = field(default_factory=dict)
     rejected: list[Rejection] = field(default_factory=list)
     projects: dict[uuid.UUID, NewProjectQuality] = field(default_factory=dict)  # new_project signal -> quality
+    _org_created: dict[str, date] | None = None
+    _noise_repos: set[str] | None = None
+
+    @property
+    def org_created(self) -> dict[str, date]:
+        if self._org_created is None:
+            self._org_created = org_created_map(self.session)
+        return self._org_created
 
     def reject(self, anchor_type: str, anchor_id: uuid.UUID, slug: str, name: str, reason: str, detail: str) -> None:
         self.rejected.append(Rejection(anchor_type, anchor_id, slug, name, reason, detail))
         log.debug("formation: %s %s rejected — %s: %s", anchor_type, slug, reason, detail)
+
+    def is_noise_repo_signal(self, x: SignalLite) -> bool:
+        """A new repository that does not count (trivial / serial / no traction) is never cited — neither its
+        ``new_project`` signal nor the other signals about that repository (``repo_created``, stars ...)."""
+        if x.signal_type == "new_project":
+            return not self.project_counts(x)
+        if self._noise_repos is None:
+            self._noise_repos = {q.url.lower() for q in self.projects.values() if not q.counts} - {
+                q.url.lower() for q in self.projects.values() if q.counts}
+        url = (x.source_url or "").lower().rstrip("/")
+        return any(url == u or url.startswith(u + "/") for u in self._noise_repos)
 
     def project_counts(self, x: SignalLite) -> bool:
         """A formation event that counts: anything but a new repository without traction / thesis depth."""
@@ -874,6 +918,10 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
         repos = repos_by.get(c.id, [])
         theme_rows = [row for eid in (c.id, *(r.id for r in repos)) for row in topics.get(eid, [])]
         topic_scores, theme_scores, _ = _merge_topics(theme_rows)
+        if not theme_scores:
+            # An unclassified young org (no topics, no description) whose members have verified lab commits
+            # takes those labs' themes — missing topics are not evidence of being off-thesis.
+            theme_scores = lab_theme_scores(person_lab_contributions(people[pid]) for pid in member_ids)
         fit, theme, sub = _fit(theme_scores, topic_scores, thesis)
         if fit < THESIS_GATE:
             ctx.reject("company", c.id, c.slug, c.name, "off_thesis",
@@ -883,6 +931,10 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
         members = [_member_info(people[pid], ctx.snaps.get(pid), thesis) for pid in member_ids]
         members.sort(key=lambda m: (-(m.founder_score or -1), m.name))
         members = members[:MAX_MEMBERS]
+        why = untracted_unverified_team(members, repos)
+        if why is not None:
+            ctx.reject("company", c.id, c.slug, c.name, "no_traction", why)
+            continue
         name = _display(c)
         anchor_sigs = ctx.index.for_entities([c.id, *(r.id for r in repos)])
         mids = {m.id for m in members}
@@ -911,6 +963,30 @@ def gather_teams(ctx: _Ctx) -> list[CandidateInput]:
         ))
     _attach_convergence(ctx, out, {c.id: c for c, _ in young}, repos_by)
     return out
+
+
+def verified_member(m: MemberInfo) -> bool:
+    """Verified pedigree: lab-repository commits or an observed public membership of a tier-listed org."""
+    return bool(m.lab_contributions) or (m.tier_basis == "public_github_org" and m.tier > 0)
+
+
+def untracted_unverified_team(members: Sequence[MemberInfo], repos: Sequence[Repository]) -> str | None:
+    """Why a young org is no stronger than a hobby repository (None = keep): no member with verified pedigree
+    or a Founder Score >= ``TEAM_FLOOR_FOUNDER_SCORE``, and no traction on its repositories (< 25 stars and < 5
+    forks in total — the ``extract.assess_new_project`` traction bar)."""
+    if any(verified_member(m) for m in members):
+        return None
+    best = max((m.founder_score or 0.0 for m in members), default=0.0)
+    if best >= TEAM_FLOOR_FOUNDER_SCORE:
+        return None
+    stars = sum(int(r.stars or 0) for r in repos)
+    forks = sum(int(r.forks or 0) for r in repos)
+    if stars >= NEW_PROJECT_TRACTION_STARS or forks >= NEW_PROJECT_TRACTION_FORKS:
+        return None
+    return (f"no member with verified pedigree or Founder Score >= {round(TEAM_FLOOR_FOUNDER_SCORE)} (best "
+            f"{round(best)}) and no traction ({stars} stars, {forks} forks across {len(repos)} "
+            f"repositor{'y' if len(repos) == 1 else 'ies'}; needs "
+            f">= {NEW_PROJECT_TRACTION_STARS} stars or >= {NEW_PROJECT_TRACTION_FORKS} forks)")
 
 
 def lifetime_star_rate(repos: Sequence[Repository], day: date) -> dict[str, Any]:
@@ -1089,6 +1165,68 @@ def _established_employer(s: Session, p: Person, young_ids: set[uuid.UUID]) -> C
     return None
 
 
+_FOUNDER_ORG_RE = re.compile(r"\b(?:co-?\s?founder|founder)s?\b[^@\n]{0,40}@([A-Za-z0-9][A-Za-z0-9-]{0,38})",
+                             re.IGNORECASE)
+
+
+def org_created_map(session: Session) -> dict[str, date]:
+    """org key -> GitHub organization creation date, from organizations on the radar (``gh_org_created_at``)
+    and every observed public membership (``Person.attrs['github_orgs'][].created_at``)."""
+    out: dict[str, date] = {}
+
+    def put(name: str | None, raw: Any) -> None:
+        k = org_key(name)
+        if not k or not raw:
+            return
+        try:
+            d = datetime.fromisoformat(str(raw).replace("Z", "+00:00")).date()
+        except ValueError:
+            return
+        out[k] = min(d, out.get(k, d))
+
+    for c in session.scalars(select(Company).where(Company.github_org.is_not(None))):
+        put(c.github_org, (c.attrs or {}).get("gh_org_created_at"))
+    for attrs in session.scalars(select(Person.attrs)):
+        for o in (attrs if isinstance(attrs, dict) else {}).get("github_orgs") or []:
+            if isinstance(o, dict):
+                put(o.get("login"), o.get("created_at"))
+    return out
+
+
+def public_founder_org(p: Person, org_created: dict[str, date], day: date) -> tuple[str, date] | None:
+    """(org, created) when the person's own profile describes them as a (co-)founder of an organization whose
+    GitHub organization is older than ``YOUNG_DAYS`` — the formation is already public, not an early signal.
+
+    The organization is the ``@mention`` right after the founder phrase in the bio ("Co-Founder & Chief
+    Scientist @Inferact"), else the profile's current company when the bio says founder. Self-reported."""
+    bio = p.bio or ""
+    names = [m.group(1) for m in _FOUNDER_ORG_RE.finditer(bio)]
+    if not names and "founder" in bio.lower() and p.current_company:
+        names = [p.current_company.strip().lstrip("@")]
+    for name in names:
+        created = org_created.get(org_key(name))
+        if created is not None and (day - created).days > YOUNG_DAYS:
+            return name, created
+    return None
+
+
+def current_org_elsewhere(p: Person, org_created: dict[str, date], day: date) -> tuple[str, date] | None:
+    """(org, created) when the person's profile names as current company a GitHub organization they publicly
+    belong to that is older than ``YOUNG_DAYS`` — they are at an existing organization, so contributing to a
+    young one is weaker evidence of forming it. Company field self-reported; membership observed."""
+    attrs = p.attrs or {}
+    cur = org_key(((attrs.get("affiliations_normalized") or {}).get("current_company")) or p.current_company)
+    if not cur:
+        return None
+    for o in attrs.get("github_orgs") or []:
+        if not isinstance(o, dict) or cur not in {org_key(o.get("login")), org_key(o.get("name"))}:
+            continue
+        created = org_created.get(org_key(o.get("login")))
+        if created is not None and (day - created).days > YOUNG_DAYS:
+            return str(o.get("login")), created
+    return None
+
+
 def _person_scope(s: Session, people: dict[uuid.UUID, Person]) -> dict[uuid.UUID, set[uuid.UUID]]:
     """Entities a person candidate may cite signals about: the person and repositories they own."""
     handles = {p.github_handle.lower(): pid for pid, p in people.items() if p.github_handle}
@@ -1172,12 +1310,7 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
             _, theme_scores, _ = _merge_topics(_topics(s, [pid]).get(pid, []))
         member = _member_info(p, snap, thesis)
         if not theme_scores and member.lab_contributions:
-            # Unclassified is not off-thesis: verified commits to a lab repository carry that lab's primary
-            # theme (config/talent_sources.yaml theme_hint) at a moderate strength.
-            hints = talent_theme_hints()
-            for c in member.lab_contributions:
-                for th in hints.get(c.org.lower(), [])[:1]:
-                    theme_scores = {**theme_scores, th: max(theme_scores.get(th, 0.0), LAB_HINT_THEME_SCORE)}
+            theme_scores = lab_theme_scores([member.lab_contributions])
         fit, theme, sub = _fit(theme_scores, topic_scores, thesis)
         young = ctx.young_links.get(pid, [])
         talent = bool(member.lab_contributions)
@@ -1199,7 +1332,7 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
                 projects.append(q)
                 fact.detail = f"{q.traction_text()}; counts: {q.reason}"
             facts.append(fact)
-            if q is not None and q.traction:
+            if q is not None and q.notable:
                 facts.append(EvidenceFact("project_traction", f"{q.repo}: {q.traction_text()}",
                                           detail="Observed public repository counts (GitHub)", source_url=q.url,
                                           source_type="github", event_at=None))
@@ -1220,9 +1353,17 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
                            f"only evidence is a 'founder' self-description while at an established organization "
                            f"({emp.name})")
                 continue
+            formed = public_founder_org(p, ctx.org_created, day)
+            if formed is not None:
+                ctx.reject("person", pid, p.slug, member.name, "formation_public",
+                           f"only evidence is a self-description as a founder of {formed[0]}, whose GitHub "
+                           f"organization was created {formed[1].isoformat()} ({(day - formed[1]).days} days ago, "
+                           f"> {YOUNG_DAYS}): the formation is already public, not an early signal")
+                continue
         allowed = scope.get(pid, {pid}) | {cid for cid, _, _ in young}
         cited = [x for x in ctx.index.for_entities([pid]) if x.entity_id in allowed
-                 and (x.signal_type not in FORMATION_SIGNAL_TYPES or x.entity_id == pid)]
+                 and (x.signal_type not in FORMATION_SIGNAL_TYPES or x.entity_id == pid)
+                 and not ctx.is_noise_repo_signal(x)]
         for x in cited:
             if x.signal_type == "x_launch_post" and x.entity_id == pid:
                 facts.append(_signal_fact(x, "launch"))

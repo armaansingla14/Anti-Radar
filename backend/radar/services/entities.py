@@ -20,6 +20,7 @@ which always labels its generator and falls back to deterministic templates.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
@@ -618,9 +619,10 @@ def _company_repos(session: Session, c: Company) -> list[Repository]:
 
 
 def _company_people(session: Session, c: Company) -> list[tuple[CompanyPerson, Person]]:
+    """People linked to the company — automation / AI coding-agent accounts are never team members."""
     return list(session.execute(
         select(CompanyPerson, Person).join(Person, Person.id == CompanyPerson.person_id)
-        .where(CompanyPerson.company_id == c.id)
+        .where(CompanyPerson.company_id == c.id, *human_person_conditions())
         .order_by(CompanyPerson.is_founder.desc(), CompanyPerson.confidence.desc(), Person.name)
     ).tuples())
 
@@ -679,6 +681,23 @@ def _company_facts(session: Session, c: Company, prov_rows: Sequence[FieldProven
     return facts
 
 
+_REPO_REF = re.compile(r"(?<![\w.\-/])[A-Za-z0-9][\w.\-]*/[\w.\-]*\w")
+
+
+def company_scoped_lines(session: Session, lines: Sequence[str], owners: Iterable[str]) -> list[str]:
+    """Drop evidence lines that name a tracked repository of another owner ('Droid-Deck/DroidDeck: …') —
+    evidence about a different organization does not belong on this company's page. Only slugs that are
+    known repositories count, so prose such as 'and/or' never removes a line."""
+    own = {o.lower() for o in owners}
+    refs = {ln: {m.lower() for m in _REPO_REF.findall(ln or "")} for ln in lines}
+    cand = {m for ms in refs.values() for m in ms if m.split("/", 1)[0] not in own}
+    if not cand:
+        return list(lines)
+    foreign = {f.lower() for f in session.scalars(
+        select(Repository.full_name).where(func.lower(Repository.full_name).in_(sorted(cand))))}
+    return [ln for ln in lines if not (refs[ln] & foreign)]
+
+
 def company_detail(session: Session, id_or_slug: str) -> CompanyDetail | None:
     c = P.resolve_entity(session, Company, id_or_slug)
     if c is None:
@@ -693,10 +712,15 @@ def company_detail(session: Session, id_or_slug: str) -> CompanyDetail | None:
 
     # founders: this company's link decides role / founder flag
     cards = {card.id: card for card in P.person_cards(session, [p for _cp, p in links])}
+    # A person's why-now lines can cite other organizations' repositories (they also contribute there); on
+    # this company's page only lines about this company's own repositories (or naming no repository) stay.
+    owners = {o for o in (c.github_org, *(r.owner for r in repos)) if o}
     founders = []
     for cp, p in links:
         role = "Contributor" if (cp.confidence or 0) < 1 else cp.role
-        founders.append(cards[str(p.id)].model_copy(update={"role": role, "is_founder": bool(cp.is_founder)}))
+        card = cards[str(p.id)]
+        founders.append(card.model_copy(update={"role": role, "is_founder": bool(cp.is_founder),
+                                                "why_now": company_scoped_lines(session, card.why_now, owners)}))
 
     jobs = list(session.scalars(select(Job).where(Job.company_id == c.id, Job.closed_at.is_(None))
                                 .order_by(Job.posted_at.desc().nulls_last(), Job.first_seen_at.desc())))
