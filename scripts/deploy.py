@@ -887,7 +887,7 @@ def summary(ctx: Ctx) -> str:
         if kind in render:
             lines.append(f"  {render[kind]['name']:<12} {render[kind]['url']}")
     if s.get("neon"):
-        lines.append(f"  neon         project {s['neon']['project_id']} ({', '.join(DATABASES.values())})")
+        lines.append(f"  neon         project {s['neon']['project_id']} ({', '.join(s['neon'].get('databases', []))})")
     if ctx.live:
         if s.get("frontend_url"):
             lines.append(f"  writes       paste PROD_ADMIN_TOKEN from .env at {s['frontend_url']}/unlock")
