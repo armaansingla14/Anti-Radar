@@ -216,6 +216,9 @@ class _Ingestor:
     def _apply_first_seen(self, entity: Entity, record: Any) -> None:
         attrs = getattr(record, "attrs", None) or {}
         raw = attrs.get("first_seen_at")
+        # Use the app clock, not the DB server's now(): when "today" is pinned (snapshot replay,
+        # tests) server time would place new rows in the future and hide them from scoring.
+        entity.first_seen_at = self.now
         if self.is_demo and raw:
             entity.first_seen_at = _aware(dateparser.isoparse(str(raw)))
         if self.is_demo and attrs.get("demo_label"):
@@ -681,7 +684,7 @@ class _Ingestor:
                 job = Job(id=uuid.uuid4(), company_id=company.id, external_id=rec.external_id, ats=rec.ats,
                           title=rec.title, department=rec.department, role_class=role_class,
                           location=rec.location, url=rec.url, posted_at=_aware(rec.posted_at),
-                          is_demo=self.is_demo)
+                          first_seen_at=self.now, is_demo=self.is_demo)
                 self.s.add(job)
                 self.stats.jobs_new += 1
                 if prior_crawl:
