@@ -9,7 +9,7 @@
 | Guided demo | https://anti-radar-one.vercel.app/demo |
 | radar-demo API | https://radar-demo-os45.onrender.com (health: `/api/health`, ready: `/api/ready`) |
 
-Last verified by `scripts/deploy.py`: 2026-10-20T20:47:44Z.
+Last verified by `scripts/deploy.py`: 2026-10-20T23:33:47Z.
 <!-- deploy:urls:end -->
 
 ## Deploy in one command
