@@ -89,3 +89,57 @@ def test_affiliation_line_marks_self_reported():
     assert meet.affiliation_line(SimpleNamespace(current_company=None, prior_affiliations=[], attrs={})) \
         == "Affiliation unknown"
     assert meet.affiliation_line(p, ["Acme"]).startswith("Founder, Acme")
+
+
+# ── talent pool ──────────────────────────────────────────────────────────────
+
+
+def _labs(commits=412, tier=1):
+    from radar.scoring.features import parse_lab_contributions
+
+    return parse_lab_contributions([{"org": "google-deepmind", "label": "Google DeepMind", "tier": tier,
+                                     "repo": "mujoco", "commits": commits, "first_commit_at": "2024-01-01",
+                                     "last_commit_at": "2025-08-01"}])
+
+
+def test_talent_points_prefer_a_recent_formation_event():
+    labs = _labs()
+    assert meet.talent_points(labs, True) == meet.TALENT_POINTS
+    assert meet.talent_points(labs, False) == meet.TALENT_POINTS * meet.TALENT_NO_EVENT_SHARE
+    assert meet.talent_points([], True) == 0
+    assert meet.talent_points(_labs(commits=5, tier=2), True) < meet.talent_points(labs, True)
+    assert meet.meet_score({"founder": 30, "formation": 25, "thesis": 10, "recency": 10, "attention": 10,
+                            "collision": 15, "talent": 8}) == 100.0  # capped
+
+
+def _ranked(labs, signals, comps=None):
+    now = datetime(2026, 10, 6, 18, tzinfo=UTC)
+    snap = SimpleNamespace(score=48.0, components=comps or {}, attention={})
+    return SimpleNamespace(person=SimpleNamespace(attrs={}), snap=snap, founder_score=48.0, labs=labs,
+                           candidate=None, obvious=None, evidence=meet.Evidence(signals)), now
+
+
+def test_why_person_leads_with_verified_history_and_why_now_with_the_new_project():
+    now = datetime(2026, 10, 6, 18, tzinfo=UTC)
+
+    def sig(stype, days, title):
+        return SimpleNamespace(id=uuid.uuid4(), signal_type=stype, source_type="github", title=title, description=None,
+                               source_url="https://github.com/x", event_at=now - timedelta(days=days))
+
+    new = sig("new_project", 40, "Ada created ada/tactile-sim")  # older than 30 days, still leads why-now
+    stars = sig("star_velocity", 1, "ada/tactile-sim +40 stars")
+    comps = {"pedigree": {"value": 15, "max": 15, "explanation": "Contributed 412 commits to ...",
+                          "raw": {"source": "lab_contribution"}},
+             "technical_output": {"value": 10, "max": 25, "explanation": "Technical output measured."}}
+    r, _ = _ranked(_labs(), [stars, new], comps)
+    why = meet.why_person(r, [])
+    assert why[0] == "412 commits to google-deepmind/mujoco (tier-1 lab repository, verified)"
+    assert why[1] == "Founder Score 48/100"
+    assert not any(w.startswith("Contributed 412") for w in why)  # pedigree not repeated
+    assert not any("worked at" in w.lower() for w in why)
+    items = meet.why_now(r, now)
+    assert items[0].title == "Ada created ada/tactile-sim" and items[1].title == "ada/tactile-sim +40 stars"
+    assert meet.formation_events(r.evidence) == [new]
+    # An unknown contributor: no verified line, Founder Score first.
+    r2, _ = _ranked([], [stars], comps)
+    assert meet.why_person(r2, [])[0] == "Founder Score 48/100"

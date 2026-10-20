@@ -6,8 +6,9 @@
     radar ingest url https://acme.ai
     radar ingest x https://x.com/someone/status/123 [--text "..."]
     radar ingest orgs                # young GitHub orgs around thesis terms (formation discovery)
+    radar ingest talent [--all-orgs] [--org openai] [--no-activity]  # verified frontier-lab talent pool
     radar ingest all                 # = radar sweep
-    radar sweep [--only hn|arxiv|github|orgs|enrich|web|stats|probe|score|formation|brief|retention ...]
+    radar sweep [--only hn|arxiv|github|orgs|talent|enrich|web|stats|probe|score|formation|meet|brief|retention ...]
     radar score                      # classify → stage → score
     radar brief [--save]             # print (and optionally persist) today's morning brief
     radar retention                  # prune old evidence/history, then VACUUM
@@ -34,8 +35,8 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 # Same as ops.ALL_STEPS (asserted in tests); duplicated so `--help` does not import the pipeline.
-_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "formation", "meet",
-              "brief", "retention")
+_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "score", "formation",
+              "meet", "brief", "retention")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ANTI RADAR — Conviction Before Consensus.")
 ingest_app = typer.Typer(no_args_is_help=True, help="Pull signals from a source.")
@@ -151,6 +152,24 @@ def ingest_orgs(
     _report(ops.ingest_young_orgs(terms=term, created_within_days=created_within_days, max_orgs=max_orgs))
 
 
+@ingest_app.command("talent")
+def ingest_talent(
+    org: Annotated[list[str] | None, typer.Option("--org", help="Talent source org to refresh (repeatable)")] = None,
+    all_orgs: Annotated[bool, typer.Option("--all-orgs", help="Refresh every configured org now")] = False,
+    pool: Annotated[bool, typer.Option(help="Refresh the talent pool (due orgs)")] = True,
+    activity: Annotated[bool, typer.Option(help="Check the pool's recent activity")] = True,
+    limit: Annotated[int | None, typer.Option(help="Max people checked for recent activity")] = None,
+) -> None:
+    """Verified talent pool (frontier-lab contributors, config/talent_sources.yaml) + their new repos / young orgs."""
+    from radar import ops
+
+    _banner("Talent pool")
+    res = ops.ingest_talent(pool=pool, activity=activity, orgs=org, all_orgs=all_orgs, limit=limit)
+    for run, stats in res.pop("runs"):
+        _report((run, stats))
+    console.print(f"  [dim]{json.dumps(res, default=str)}[/dim]")
+
+
 @ingest_app.command("enrich")
 def ingest_enrich(
     limit: Annotated[int, typer.Option(help="Max formation anchors / young orgs to enrich")] = 40,
@@ -202,8 +221,9 @@ def sweep(
         "--only", help="Step to run (repeatable): " + ", ".join(_ALL_STEPS))] = None,
     strict: Annotated[bool, typer.Option(help="Exit 1 if any step ends in error")] = False,
 ) -> None:
-    """One-shot sweep: hn → arxiv → github → orgs → enrich → web → stats → probe → score → brief (each recorded in
-    ingestion_runs). `enrich` adds website/hiring, HN and arXiv evidence to formation anchors (young orgs);
+    """One-shot sweep: hn → arxiv → github → orgs → talent → enrich → web → stats → probe → score → meet → brief (each
+    recorded in ingestion_runs). `talent` refreshes the verified frontier-lab talent pool and checks what its people
+    started recently. `enrich` adds website/hiring, HN and arXiv evidence to formation anchors (young orgs);
     `stats` re-asks GitHub for statistics that were still being computed (202)."""
     from radar import ops
 

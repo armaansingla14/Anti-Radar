@@ -1,0 +1,157 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ANTI RADAR — TALENT POOL sources
+#
+# People with VERIFIED public technical history at frontier labs / frontier OSS:
+# non-bot contributors with >= `min_commits` commits to the repositories below
+# (counts and first/last commit weeks come from the GitHub API).
+#
+# Honesty rules (enforced in code, restated here):
+#   * "contributed N commits to org/repo" is a verified fact; it is NEVER employment.
+#     Employment stays INFERRED / self-reported (GitHub profile company field).
+#   * A new repository or a new org is not a company: POSSIBLE FORMATION language only.
+#
+# tier 1 = frontier AI / robotics / systems labs and the core frontier OSS projects;
+# tier 2 = strong but broader communities (large OSS ecosystems, academic labs, hardware OSS).
+# `repos` lists explicit repositories (no docs/website/cookbook repos); without it the
+# provider takes the org's top non-fork, non-archived repos by stars.
+# Every org login below was verified to exist via GET /users/{login} (2026-10-20);
+# `openhwgroup` was dropped (its repositories moved; the org has no code repos left).
+# ─────────────────────────────────────────────────────────────────────────────
+
+limits:
+  repos_per_org: 3            # used when an org has no explicit `repos`
+  contributors_per_repo: 15   # top non-bot contributors per repo (by commits)
+  min_commits: 10             # verified history threshold
+  max_people: 450             # whole-pool person budget per talent_pool run
+  new_repo_window_days: 120   # new_project: repos created this recently
+  young_org_days: 180         # joined_young_org: orgs created this recently
+  orgs_per_run: 4             # talent_pool orgs refreshed per sweep run (4 runs/day -> full cycle in ~2 days)
+  refresh_days: 7             # an org's contributor list is refreshed at most weekly
+  activity_people_per_run: 300  # recent_activity checks per run (oldest-checked first)
+  activity_recheck_hours: 20  # people checked more recently than this are skipped (daily cadence)
+
+sources:
+  # ── AI labs ────────────────────────────────────────────────────────────────
+  - org: openai
+    label: OpenAI
+    tier: 1
+    theme_hint: [ai]
+    repos: [codex, openai-agents-python, whisper]
+  - org: anthropics
+    label: Anthropic
+    tier: 1
+    theme_hint: [ai]
+    repos: [claude-code, claude-agent-sdk-python, anthropic-sdk-python]
+  - org: google-deepmind
+    label: Google DeepMind
+    tier: 1
+    theme_hint: [ai, robotics]
+    repos: [mujoco, mujoco_menagerie, gemma, alphafold3]
+  - org: google-research
+    label: Google Research
+    tier: 1
+    theme_hint: [ai]
+    repos: [timesfm, scenic, t5x]
+  - org: facebookresearch
+    label: Meta FAIR
+    tier: 1
+    theme_hint: [ai, robotics]
+    repos: [xformers, sam3, dinov2, faiss]
+  - org: meta-llama
+    label: Meta Llama
+    tier: 1
+    theme_hint: [ai]
+    repos: [llama-models, PurpleLlama]
+  - org: NVIDIA
+    label: NVIDIA
+    tier: 1
+    theme_hint: [ai, semiconductors, robotics]
+    repos: [Megatron-LM, TensorRT-LLM, warp, Isaac-GR00T]
+  - org: NVlabs
+    label: NVIDIA Research
+    tier: 1
+    theme_hint: [ai, robotics]
+    repos: [GR00T-WholeBodyControl, Sana, tiny-cuda-nn, ProtoMotions]
+  - org: mistralai
+    label: Mistral AI
+    tier: 1
+    theme_hint: [ai]
+    repos: [mistral-inference, mistral-common, mistral-vibe]
+  - org: xai-org
+    label: xAI
+    tier: 1
+    theme_hint: [ai]
+    repos: [xai-sdk-python, grok-1]
+  - org: allenai
+    label: Ai2
+    tier: 1
+    theme_hint: [ai, robotics]
+    repos: [open-instruct, Olmo-core, olmocr, molmoact2]
+  - org: huggingface
+    label: Hugging Face
+    tier: 2
+    theme_hint: [ai, robotics]
+    repos: [lerobot, trl, diffusers]
+  # ── Robotics ───────────────────────────────────────────────────────────────
+  - org: Physical-Intelligence
+    label: Physical Intelligence
+    tier: 1
+    theme_hint: [robotics]
+    repos: [openpi, real-time-chunking-kinetix]
+  - org: Genesis-Embodied-AI
+    label: Genesis AI
+    tier: 1
+    theme_hint: [robotics]
+    repos: [genesis-world, quadrants]
+  - org: isaac-sim
+    label: NVIDIA Isaac Sim
+    tier: 1
+    theme_hint: [robotics]
+    repos: [IsaacLab, IsaacLab-Arena]
+  - org: leggedrobotics
+    label: ETH Robotic Systems Lab
+    tier: 2
+    theme_hint: [robotics]
+    repos: [rsl_rl, ocs2, elevation_mapping_cupy]
+  - org: unitreerobotics
+    label: Unitree Robotics
+    tier: 2
+    theme_hint: [robotics]
+    repos: [unitree_rl_gym, unitree_sdk2, xr_teleoperate]
+  # ── Systems / inference infra ──────────────────────────────────────────────
+  - org: vllm-project
+    label: vLLM
+    tier: 1
+    theme_hint: [ai]
+    repos: [vllm, llm-compressor]
+  - org: sgl-project
+    label: SGLang
+    tier: 1
+    theme_hint: [ai]
+    repos: [sglang, SpecForge]
+  - org: pytorch
+    label: PyTorch
+    tier: 1
+    theme_hint: [ai]
+    repos: [pytorch, torchtitan, executorch]
+  - org: triton-lang
+    label: Triton
+    tier: 1
+    theme_hint: [ai, semiconductors]
+    repos: [triton]
+  - org: tinygrad
+    label: tiny corp
+    tier: 1
+    theme_hint: [ai, semiconductors]
+    repos: [tinygrad]
+  # ── Semiconductors / hardware ──────────────────────────────────────────────
+  - org: tenstorrent
+    label: Tenstorrent
+    tier: 2
+    theme_hint: [semiconductors, ai]
+    repos: [tt-metal, tt-mlir, tt-forge]
+  - org: chipsalliance
+    label: CHIPS Alliance
+    tier: 2
+    theme_hint: [semiconductors]
+    repos: [chisel, rocket-chip, Caliptra]

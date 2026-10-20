@@ -277,3 +277,41 @@ def test_meet_writes_need_admin_when_token_set(world, client, monkeypatch):
     assert client.post("/api/meeting-brief", json={"person_id": str(world["ada"])}).status_code == 403
     assert client.get("/api/meet").status_code == 200
     assert client.post("/api/meet/refresh", headers={"X-Radar-Admin": "s3cret"}).status_code == 200
+
+
+# ── talent pool ──────────────────────────────────────────────────────────────
+
+
+def test_talent_pool_person_with_new_project_outranks_unknown_contributor(db, client):
+    talent = add_person(db, "kira", 45, families=("github",), days_ago=5)
+    unknown = add_person(db, "uno", 45, families=("github",), days_ago=5)
+    talent.attrs = {**talent.attrs, "lab_contributions": [
+        {"org": "google-deepmind", "label": "Google DeepMind", "tier": 1, "repo": "mujoco", "commits": 412,
+         "first_commit_at": "2024-02-01T00:00:00+00:00", "last_commit_at": "2025-07-01T00:00:00+00:00"}]}
+    for p in (talent, unknown):
+        db.add(Signal(entity_id=p.id, entity_type="person", signal_type="new_project", source_type="github",
+                      source_url=f"https://github.com/{p.github_handle}/tactile-sim",
+                      title=f"{p.github_handle} created {p.github_handle}/tactile-sim (new repository)",
+                      event_at=NOW - timedelta(days=12), dedup_key=uuid.uuid4().hex,
+                      meta={"repo": f"{p.github_handle}/tactile-sim", "stars": 25, "topics": ["robotics"]}))
+        snap = db.scalar(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == p.id))
+        c = dict(snap.components)
+        c["formation"] = {**c["formation"], "raw": {"new_projects": [f"{p.github_handle}/tactile-sim"]}}
+        snap.components = c
+    db.commit()
+    rows = {r.person.github_handle: r for r in meet.rank_people(db, limit=20)}
+    assert rows["kira"].features["talent"] == meet.TALENT_POINTS
+    assert rows["uno"].features["talent"] == 0
+    assert rows["kira"].score > rows["uno"].score
+    feed = client.get("/api/meet").json()
+    hs = _handles(feed)
+    assert hs.index("kira") < hs.index("uno")
+    card = feed["people"][hs.index("kira")]
+    assert card["why_person"][0] == "412 commits to google-deepmind/mujoco (tier-1 lab repository, verified)"
+    assert card["why_now"][0]["title"] == "kira created kira/tactile-sim (new repository)"
+    assert card["person"]["headline"] == "Contributor to google-deepmind/mujoco · now building kira/tactile-sim"
+    assert card["person"]["why_now"][0].startswith("Now building kira/tactile-sim")
+    assert any("new_project" not in w and "kira created" in w for w in card["what_changed"])
+    other = feed["people"][hs.index("uno")]
+    assert other["why_person"][0].startswith("Founder Score") and "Contributor to" not in (
+        other["person"]["headline"] or "")

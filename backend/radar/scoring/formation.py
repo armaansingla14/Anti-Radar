@@ -7,7 +7,9 @@ Candidates
     people (listed members, or contributors with >= 3 commits). Labs, academic domains and
     established stages (growth/public) are excluded.
 (b) **person** — someone with their *own* formation_language / x_formation_post (self-reported,
-    INFERRED) or affiliation_changed signal in the last ``PERSON_SIGNAL_DAYS`` days who is
+    INFERRED) or affiliation_changed signal in the last ``PERSON_SIGNAL_DAYS`` days — or a
+    **talent-pool** person (verified lab-repository commits, ``Person.attrs['lab_contributions']``)
+    with their own new_project / joined_young_org event or in a lab_alumni_cluster — who is
     on-thesis (fit >= ``THESIS_GATE``) or linked to a young organization, and is not already part
     of a team candidate. Someone whose only evidence is a generic "founder" self-description
     while at an established organization (non-young with > ``ESTABLISHED_FOLLOWERS`` GitHub
@@ -21,13 +23,15 @@ language). A member's activity on unrelated repositories is never cited.
 
 FORMATION SCORE (/100, deterministic, every component carries its evidence)
 --------------------------------------------------------------------------
-* founder_quality    25  top-3 member Founder Scores (0.5/0.3/0.2) and best pedigree tier
-* team_convergence   25  ``scoring.convergence`` (prior ties that predate the anchor)
+* founder_quality    25  top-3 member Founder Scores (0.5/0.3/0.2) and best pedigree strength (verified lab
+                         commits / public org membership in full; listed/self-reported affiliation x 0.7)
+* team_convergence   25  ``scoring.convergence`` (prior ties that predate the anchor, incl. lab-alumni ties)
 * technical_activity 20  anchor commits / stars / new contributors / releases, percentiles vs
                          the day's candidate cohort; nothing measured -> 0 ("insufficient history")
 * formation_evidence 20  distinct kinds of formation evidence (org created, working team, founding
                          team = >= 2 members' first commits within 30 days of creation, first job
-                         post, website, launch, formation language, affiliation change, young org)
+                         post, website, launch, formation language, affiliation change, young org,
+                         new repository of their own, lab-alumni cluster)
 * novelty_attention  10  first-seen recency (6) + attention gap where measured (4; unmeasured -> 0)
 
 Tiers: high (>= 70, >= 3 independent source families and convergence >= MEDIUM), emerging
@@ -84,8 +88,17 @@ from radar.scoring.extract import (
     load_signal_index,
     org_created_date,
     person_affiliation_tier,
+    person_lab_contributions,
 )
-from radar.scoring.features import FORMATION_SIGNAL_TYPES, SignalLite
+from radar.scoring.features import (
+    FORMATION_EVENT_TYPES,
+    FORMATION_SIGNAL_TYPES,
+    LAB_ALUMNI_CLUSTER,
+    LabContribution,
+    SignalLite,
+    lab_summary,
+    pedigree_strength,
+)
 from radar.thesis.loader import Thesis, get_thesis
 
 log = logging.getLogger(__name__)
@@ -144,6 +157,8 @@ CHANGE_TYPES = frozenset({"affiliation_changed", "bio_changed"})
 ORG_TYPES = frozenset({"org_created", "repo_created"})
 MEMBER_OWN_TYPES = CHANGE_TYPES | LANGUAGE_TYPES  # a member's own formation signals (cited on team candidates)
 PERSON_QUALIFYING_TYPES = frozenset({"affiliation_changed", "formation_language", "x_formation_post"})
+# Qualify a person candidate only for talent-pool people (verified lab-repository commits).
+TALENT_QUALIFYING_TYPES = FORMATION_EVENT_TYPES | {LAB_ALUMNI_CLUSTER}
 
 EVIDENCE_KIND_LABELS = {
     "org_created": "organization/repository created",
@@ -155,6 +170,8 @@ EVIDENCE_KIND_LABELS = {
     "formation_language": "formation language",
     "affiliation_change": "affiliation/bio change",
     "young_org": "joined a young organization",
+    "new_project": "new repository of their own",
+    "lab_alumni": "lab alumni committing together",
 }
 
 
@@ -175,6 +192,11 @@ class MemberInfo:
     is_demo: bool = False
     tier_basis: str | None = None  # "public_github_org" when the tier comes from a public org membership
     tier_org_login: str | None = None
+    lab_contributions: list[LabContribution] = field(default_factory=list)  # verified, strongest first
+
+    @property
+    def pedigree(self) -> tuple[float, str]:
+        return pedigree_strength(self.tier, self.tier_basis, self.lab_contributions, self.self_reported)
 
 
 @dataclass
@@ -262,8 +284,11 @@ def _aware(d: datetime | None) -> datetime | None:
 def founder_quality(members: Sequence[MemberInfo], kind: str = "team") -> dict[str, Any]:
     scored = sorted((m for m in members if m.founder_score is not None), key=lambda m: (-m.founder_score, m.name))
     top = scored[:3]
-    best_tier = max((m.tier for m in members), default=0.0)
-    tier_member = next((m for m in sorted(members, key=lambda m: (-m.tier, m.name)) if m.tier > 0), None)
+    peds = {m.id: m.pedigree for m in members}
+    best_tier = max((peds[m.id][0] for m in members), default=0.0)
+    tier_member = next((m for m in sorted(members, key=lambda m: (-peds[m.id][0], m.name)) if peds[m.id][0] > 0),
+                       None)
+    lab_members = [m for m in members if m.lab_contributions]
     if top:
         ws = TOP_FOUNDER_WEIGHTS[: len(top)]
         mean = sum(w * m.founder_score for w, m in zip(ws, top)) / sum(ws)  # type: ignore[operator]
@@ -279,34 +304,48 @@ def founder_quality(members: Sequence[MemberInfo], kind: str = "team") -> dict[s
     else:
         parts.append("No member Founder Scores computed yet")
     if tier_member is not None:
+        source = peds[tier_member.id][1]
         tier = "tier-1" if tier_member.tier >= 1.0 else "tier-2"
-        if tier_member.tier_basis == "public_github_org" and tier_member.tier_org_login:
+        if source == "lab_contribution":
+            lc = tier_member.lab_contributions[0]
+            parts.append(f"{tier_member.name}: {lc.phrase()[0].lower()}{lc.phrase()[1:]}")
+        elif tier_member.tier_basis == "public_github_org" and tier_member.tier_org_login:
             parts.append(f"{tier_member.name} is a public GitHub member of {tier_member.tier_org_login} "
                          f"({tier_member.tier_match}, {tier})")
         else:
             sr = ", self-reported" if tier_member.self_reported else ""
             parts.append(f"{tier_member.name} lists {tier_member.tier_match} ({tier}{sr})")
+        if len(lab_members) >= 2 and kind != "person":
+            parts.append(f"{number_word(len(lab_members), True)} members have verified lab-repository commits")
     else:
         parts.append("no member affiliation on the thesis tier lists")
     evidence = []
     for m in (top or list(members)[:3]):
+        bits = []
+        if m.lab_contributions:
+            bits.append(lab_summary(m.lab_contributions) + " (verified)")
         if m.tier_match and m.tier_basis == "public_github_org" and m.tier_org_login:
-            aff = f"; public GitHub member of {m.tier_org_login} ({m.tier_match})"
+            bits.append(f"public GitHub member of {m.tier_org_login} ({m.tier_match})")
         elif m.tier_match:
-            aff = f"; affiliation {m.tier_match} ({'self-reported' if m.self_reported else 'listed'})"
-        else:
-            aff = ""
+            bits.append(f"affiliation {m.tier_match} ({'self-reported' if m.self_reported else 'listed'})")
+        aff = "".join(f"; {b}" for b in bits)
         fs = f"Founder Score {round(m.founder_score)}" if m.founder_score is not None else "Founder Score n/a"
+        lc0 = m.lab_contributions[0] if m.lab_contributions else None
         evidence.append({"signal_id": None, "title": m.name, "detail": fs + aff,
                          "source_type": "github" if (m.profile_url or "").startswith("https://github.com") else None,
-                         "source_url": m.profile_url, "event_at": None})
+                         "source_url": m.profile_url or (f"https://github.com/{lc0.full_name}" if lc0 else None),
+                         "event_at": None})
+    tm_source = peds[tier_member.id][1] if tier_member else None
     raw = {"founder_scores": [{"person_id": str(m.id), "name": m.name, "founder_score": round(m.founder_score, 1)}
                               for m in top],  # type: ignore[arg-type]
-           "weighted_mean": round(mean, 2), "best_tier": best_tier,
+           "weighted_mean": round(mean, 2), "best_tier": round(best_tier, 4),
            "tier_match": tier_member.tier_match if tier_member else None,
-           "tier_basis": tier_member.tier_basis if tier_member else None,
-           "tier_self_reported": bool(tier_member and tier_member.self_reported
-                                      and tier_member.tier_basis != "public_github_org")}
+           "tier_basis": tm_source if tm_source == "lab_contribution" else (
+               tier_member.tier_basis if tier_member else None),
+           "tier_self_reported": bool(tier_member and tier_member.self_reported and tm_source == "affiliation"),
+           "lab_members": [{"person_id": str(m.id), "name": m.name,
+                            "lab_contributions": [c.to_json() for c in m.lab_contributions[:3]]}
+                           for m in lab_members]}
     return _component("founder_quality", value, "; ".join(parts) + ".", raw, evidence)
 
 
@@ -604,6 +643,7 @@ def _member_info(p: Person, snap: ScoreSnapshot | None, thesis: Thesis) -> Membe
         self_reported=bool(attrs.get("self_reported")),
         profile_url=f"https://github.com/{p.github_handle}" if p.github_handle else (p.personal_site or p.linkedin_url),
         is_demo=bool(p.is_demo), tier_basis=aff.basis, tier_org_login=aff.org_login,
+        lab_contributions=person_lab_contributions(p),
     )
 
 
@@ -822,8 +862,12 @@ def _team_facts(c: Company, created: date, repos: Sequence[Repository], jobs: Se
     for x in anchor_sigs:
         if x.signal_type in ORG_TYPES:
             facts.append(_signal_fact(x, "org_created"))
-        elif x.signal_type == "young_org_team":
+        elif x.signal_type in ("young_org_team", "joined_young_org"):
             facts.append(_signal_fact(x, "working_team"))
+        elif x.signal_type == LAB_ALUMNI_CLUSTER:
+            facts.append(_signal_fact(x, "lab_alumni"))
+        elif x.signal_type == "new_project":
+            facts.append(_signal_fact(x, "new_project"))
         elif x.signal_type in LAUNCH_TYPES:
             facts.append(_signal_fact(x, "launch"))
         elif x.signal_type in LANGUAGE_TYPES:
@@ -871,6 +915,7 @@ def _attach_convergence(ctx: _Ctx, cands: list[CandidateInput], companies: dict[
             anchor_repo_ids={str(r.id) for r in repos_by.get(c.id, [])},
             anchor_org_keys={k for k in keys if k},
             joined=cand.joined,
+            lab={m.id: m.lab_contributions for m in cand.members if m.lab_contributions},
         )
 
 
@@ -927,17 +972,33 @@ def _person_scope(s: Session, people: dict[uuid.UUID, Person]) -> dict[uuid.UUID
     return out
 
 
+_PERSON_FACT_KIND = {"affiliation_changed": "affiliation_change", "bio_changed": "affiliation_change",
+                     "new_project": "new_project", "joined_young_org": "young_org"}
+
+
 def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
     s, day, thesis = ctx.session, ctx.day, ctx.thesis
     lo = datetime.combine(day - timedelta(days=PERSON_SIGNAL_DAYS), time.min, tzinfo=UTC)
     hi = _end(day)
     own: dict[uuid.UUID, list[SignalLite]] = defaultdict(list)
+    clusters: dict[uuid.UUID, list[SignalLite]] = defaultdict(list)  # person -> lab-alumni clusters they are in
     for eid, sigs in ctx.index.by_entity.items():
         for x in sigs.values():
-            if x.entity_id == eid and x.signal_type in FORMATION_SIGNAL_TYPES and lo <= x.event_at <= hi:
+            if not lo <= x.event_at <= hi:
+                continue
+            if x.entity_id == eid and x.signal_type in FORMATION_SIGNAL_TYPES:
                 own[eid].append(x)
-    # Qualifying: the person's own formation language/post or affiliation change (bio edits alone do not).
+            elif x.signal_type == LAB_ALUMNI_CLUSTER and x.entity_id != eid:
+                clusters[eid].append(x)
+    # Qualifying: the person's own formation language/post or affiliation change (bio edits alone do not);
+    # for talent-pool people (verified lab commits) also their own new project / young-org event or a cluster.
     pids = {pid for pid, xs in own.items() if any(x.signal_type in PERSON_QUALIFYING_TYPES for x in xs)} - exclude
+    talent_ids = ({pid for pid, xs in own.items() if any(x.signal_type in FORMATION_EVENT_TYPES for x in xs)}
+                  | set(clusters)) - exclude - pids
+    if talent_ids:
+        for p in s.scalars(select(Person).where(Person.id.in_(list(talent_ids)))):
+            if person_lab_contributions(p):
+                pids.add(p.id)
     if not pids:
         return []
     # Membership of a young-org team (signal on the org, people linked through signal_entities).
@@ -972,13 +1033,18 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
             _, theme_scores, _ = _merge_topics(_topics(s, [pid]).get(pid, []))
         fit, theme, sub = _fit(theme_scores, topic_scores, thesis)
         young = ctx.young_links.get(pid, [])
-        if fit < THESIS_GATE and not young and not team_sigs.get(pid):
-            continue
         member = _member_info(p, snap, thesis)
+        talent = bool(member.lab_contributions)
+        mine = [x for x in own.get(pid, []) if talent or x.signal_type not in FORMATION_EVENT_TYPES]
+        my_clusters = clusters.get(pid, []) if talent else []
+        joined_sig = any(x.signal_type == "joined_young_org" for x in mine)
+        if fit < THESIS_GATE and not young and not team_sigs.get(pid) and not joined_sig and not my_clusters:
+            continue
         facts: list[EvidenceFact] = []
-        for x in own.get(pid, []):
-            facts.append(_signal_fact(x, "affiliation_change" if x.signal_type in CHANGE_TYPES
-                                      else "formation_language"))
+        for x in mine:
+            facts.append(_signal_fact(x, _PERSON_FACT_KIND.get(x.signal_type, "formation_language")))
+        for x in my_clusters:
+            facts.append(_signal_fact(x, "lab_alumni"))
         for x in team_sigs.get(pid, []):
             facts.append(_signal_fact(x, "young_org"))
         for cid, cname, created in young:
@@ -987,7 +1053,7 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
                                       detail="Listed member or contributor with >= 3 commits",
                                       source_url=None, source_type="github",
                                       event_at=datetime.combine(created, time(12), tzinfo=UTC)))
-        if generic_founder_only(facts, own.get(pid, []), phrases):
+        if generic_founder_only(facts, mine, phrases):
             emp = _established_employer(s, p, young_ids)
             if emp is not None:
                 log.debug("formation: %s left out — generic founder bio at established %s", p.slug, emp.slug)
@@ -999,7 +1065,7 @@ def gather_people(ctx: _Ctx, exclude: set[uuid.UUID]) -> list[CandidateInput]:
             if x.signal_type == "x_launch_post" and x.entity_id == pid:
                 facts.append(_signal_fact(x, "launch"))
         tech_raw = (comps.get("technical_output") or {}).get("raw") or {}
-        all_sigs = sorted({x.id: x for x in [*cited, *team_sigs.get(pid, [])]}.values(),
+        all_sigs = sorted({x.id: x for x in [*cited, *team_sigs.get(pid, []), *my_clusters]}.values(),
                           key=lambda x: x.event_at, reverse=True)
         out.append(CandidateInput(
             kind="person", anchor_type="person", anchor_id=pid, anchor_name=member.name, anchor_slug=p.slug,

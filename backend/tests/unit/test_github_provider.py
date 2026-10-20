@@ -745,3 +745,222 @@ def test_user_orgs_one_call_per_user_and_fetch_public_orgs(provider):
     assert r.kind == "member" and r.dst == r.src and r.source_url == "https://github.com/ada"
     assert [o["login"] for o in r.attrs[PUBLIC_ORGS_ATTR]] == ["acme", "openai"] and r.attrs["observed_at"]
     assert rels["github_user:ben"].attrs[PUBLIC_ORGS_ATTR] == []  # checked, no public memberships
+
+
+# ── talent pool (verified frontier-lab contributors) + recent activity ───────
+
+
+def _talent_router(router: respx.Router, *, sim_stats: int = 202, rate_limit_after: int | None = None) -> list[str]:
+    """Dispatch every GitHub call from tests/fixtures/github/talent.json (paths matched case-insensitively)."""
+    fx = load("talent.json")
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.lower()
+        seen.append(str(request.url))
+        if rate_limit_after is not None and len(seen) > rate_limit_after:
+            return httpx.Response(403, json={"message": "API rate limit exceeded"},
+                                  headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999"})
+        if path == "/orgs/acme-lab/repos":
+            return httpx.Response(200, json=fx["org_repos"])
+        if path == "/repos/acme-lab/core/stats/contributors":
+            return httpx.Response(200, json=fx["stats_core"])
+        if path == "/repos/acme-lab/sim/stats/contributors":
+            return httpx.Response(sim_stats, json=[] if sim_stats == 200 else {})
+        for full, data in fx["repos"].items():
+            if path == f"/repos/{full}":
+                return httpx.Response(200, json=data)
+            if path == f"/repos/{full}/contributors":
+                return httpx.Response(200, json=fx["contributors"][full])
+        for login, repos in fx["user_repos"].items():
+            if path == f"/users/{login}/repos":
+                return httpx.Response(200, json=repos)
+        for login, orgs in fx["user_orgs"].items():
+            if path == f"/users/{login}/orgs":
+                return httpx.Response(200, json=orgs)
+        for login, data in fx["users"].items():
+            if path == f"/users/{login}":
+                return httpx.Response(200, json=data)
+        for login, data in fx["orgs"].items():
+            if path == f"/orgs/{login}":
+                return httpx.Response(200, json=data)
+        if path == "/orgs/newco/repos":
+            return httpx.Response(200, json=fx["newco_repos"])
+        if path == "/repos/newco/engine/contributors":
+            return httpx.Response(200, json=fx["newco_contributors"])
+        if path == "/repos/ada/tactile-policy":
+            return httpx.Response(200, json=next(r for r in fx["user_repos"]["ada"]
+                                                 if r["full_name"] == "Ada/tactile-policy"))
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    router.route(url__startswith=API).mock(side_effect=handler)
+    return seen
+
+
+def _acme_source(**kw):
+    from radar.providers.github import TalentSource
+
+    return TalentSource(org="acme-lab", label="Acme Lab", tier=1, theme_hint=["ai"], **kw)
+
+
+def test_talent_config_file_is_valid_and_orgs_unique():
+    from radar.providers.github import load_talent_config
+
+    cfg = load_talent_config()
+    orgs = [s.org.lower() for s in cfg.sources]
+    assert len(orgs) >= 18 and len(orgs) == len(set(orgs))
+    assert {"openai", "anthropics", "physical-intelligence", "vllm-project"} <= set(orgs)
+    assert all(s.tier in (1, 2) and s.label for s in cfg.sources)
+    assert cfg.limits.new_repo_window_days == 120 and cfg.limits.min_commits == 10
+    assert not any(r.lower().endswith(("docs", "-website", "cookbook")) for s in cfg.sources for r in s.repos)
+
+
+@pytest.mark.parametrize("name,desc,expected", [
+    ("docs", None, True), ("openai-cookbook", None, True), ("acme.github.io", None, True),
+    ("website", None, True), ("examples", None, True), ("core", "Documentation for core", True),
+    ("vllm", "A high-throughput serving engine", False), ("dockerize", None, False), ("sitemapper", None, False),
+])
+def test_is_docs_repo(name, desc, expected):
+    from radar.providers.github import is_docs_repo
+
+    assert is_docs_repo(name, desc) is expected
+
+
+def test_talent_pool_verified_contributions_dates_and_dedupe(provider, sleeps):
+    with respx.mock(assert_all_called=False) as router:
+        seen = _talent_router(router)
+        batch = provider.talent_pool([_acme_source()], repos_per_org=2, contributors_per_repo=5, min_commits=10,
+                                     known_profiles=["CY"])
+    # Top repos by stars, skipping docs, archived and curated-list repos.
+    assert [r.full_name for r in batch.repositories] == ["acme-lab/core", "acme-lab/sim"]
+    assert all(r.owner_company is None for r in batch.repositories)  # history is never employment/membership
+    assert batch.companies == []
+    assert batch.repositories[0].attrs["talent_source"] == {"org": "acme-lab", "label": "Acme Lab", "tier": 1}
+    people = {p.github_handle.lower(): p for p in batch.people}
+    assert set(people) == {"ada", "ben", "cy"}  # bot, AI agent and the 4-commit drive-by excluded; ben deduped
+    ben = people["ben"].attrs["lab_contributions"]
+    assert [(e["repo"], e["commits"]) for e in ben] == [("acme-lab/sim", 77), ("acme-lab/core", 31)]
+    core_ben = ben[1]
+    assert core_ben["first_commit_at"].startswith("2023-05-07") and core_ben["last_commit_at"].startswith("2024-06-02")
+    assert ben[0]["first_commit_at"] is None  # sim stats still computing (202): counts only
+    ada = people["ada"].attrs["lab_contributions"][0]
+    assert ada == {**ada, "org": "acme-lab", "label": "Acme Lab", "tier": 1, "commits": 240}
+    assert ada["last_commit_at"].startswith("2025-11-02")  # last week with commits (a 0-commit week is ignored)
+    assert people["ada"].name == "Ada Lovelace" and people["ada"].attrs["self_reported"]
+    assert people["cy"].name == "cy"  # known profile: not re-fetched
+    assert not any(u.lower().endswith("/users/cy") for u in seen)
+    rels = {(r.src.key, r.dst.key): r for r in batch.relations}
+    r = rels[("github_user:ada", "repo:acme-lab/core")]
+    assert r.kind == "contributor" and r.attrs["contributions"] == 240 and r.attrs["first_commit_at"]
+    assert ("github_user:ben", "repo:acme-lab/sim") in rels and "first_commit_at" not in rels[
+        ("github_user:ben", "repo:acme-lab/sim")].attrs
+    assert any("still being computed" in e for e in batch.errors)
+
+
+def test_talent_pool_max_people_and_rate_limit_stop_cleanly(provider):
+    with respx.mock(assert_all_called=False) as router:
+        _talent_router(router)
+        batch = provider.talent_pool([_acme_source(repos=["core", "sim"])], contributors_per_repo=5, max_people=1)
+    assert [p.github_handle for p in batch.people] == ["Ada"]
+    assert any("max_people (1)" in e for e in batch.errors)
+    with respx.mock(assert_all_called=False) as router:
+        _talent_router(router, rate_limit_after=3)
+        batch = provider.talent_pool([_acme_source(repos=["core", "sim"]), _acme_source(repos=["core"])])
+    assert any("rate limit" in e for e in batch.errors)  # recorded, not raised
+
+
+def test_new_project_candidate_rules():
+    from radar.providers.github import new_project_candidate
+
+    repos = {r["full_name"]: r for r in load("talent.json")["user_repos"]["ada"]}
+    assert "robotics.manipulation" in new_project_candidate(repos["Ada/tactile-policy"], "ada", TODAY)
+    assert new_project_candidate(repos["Ada/fast-thing"], "ada", TODAY) == []  # no keyword, but >= 20 stars
+    for name in ("Ada/dotfiles2", "Ada/Ada", "Ada/vllm", "Ada/old-llm"):  # weak / profile / fork / too old
+        assert new_project_candidate(repos[name], "ada", TODAY) is None, name
+    assert new_project_candidate(repos["Ada/tactile-policy"], "someone-else", TODAY) is None
+
+
+def test_recent_activity_new_projects_and_joined_young_org(provider):
+    with respx.mock(assert_all_called=False) as router:
+        seen = _talent_router(router)
+        batch = provider.recent_activity(["Ada", "ben", "cy", "dependabot[bot]"], skip_orgs=["acme-lab"], max_calls=40,
+                                         known_orgs={"oldco": "2015-01-01T00:00:00Z"})
+    sigs = [s for s in batch.signals if s.signal_type == "new_project"]
+    assert sorted(s.metadata["repo"] for s in sigs) == ["Ada/fast-thing", "Ada/tactile-policy"]
+    tp = next(s for s in sigs if s.metadata["repo"] == "Ada/tactile-policy")
+    assert tp.entity == gh_user_ref("Ada") and tp.epistemic == "FACT"
+    assert tp.event_at == datetime(2026, 9, 1, tzinfo=UTC)  # dated at repo creation, not detection
+    assert tp.metadata["topics"] == ["robot-learning", "manipulation"] and tp.metadata["stars"] == 4
+    assert "not a company" in tp.description and repo_ref("Ada/tactile-policy") in tp.related
+    assert any(r.full_name == "Ada/tactile-policy" and r.readme_excerpt is None for r in batch.repositories)
+    joined = {s.entity.key: s for s in batch.signals if s.signal_type == "joined_young_org"}
+    assert set(joined) == {"github_user:ada", "github_user:ben"}  # oldco too old (known date: no call)
+    a = joined["github_user:ada"]
+    assert a.metadata["org"] == "newco" and a.metadata["commits"] == 12 and a.metadata["repo"] == "newco/engine"
+    assert a.event_at == datetime(2026, 8, 1, tzinfo=UTC) and gh_org_ref("newco") in a.related
+    assert joined["github_user:ben"].metadata["commits"] == 2 and joined["github_user:ben"].metadata["repo"] is None
+    assert "worked" not in a.title.lower() and "founded" not in a.description.lower()
+    assert not any(u.lower().endswith("/orgs/oldco") or u.lower().endswith("/orgs/acme-lab") for u in seen)
+    assert [c.github_org for c in batch.companies] == ["newco"]
+    members = {(r.src.key, r.dst.key): r for r in batch.relations if r.kind == "member" and r.dst.type == "company"}
+    assert members[("github_user:ada", "github_org:newco")].source_url == "https://github.com/orgs/newco/people"
+    contrib = {(r.src.key, r.dst.key) for r in batch.relations if r.kind == "contributor"}
+    assert ("github_user:ada", "repo:newco/engine") in contrib and ("github_user:ben", "repo:newco/engine") not in contrib
+    # Every checked person gets the activity marker and their public orgs (annotated with created_at).
+    checked = {p.github_handle: p.attrs["activity_checked_at"] for p in batch.people if "activity_checked_at" in p.attrs}
+    assert set(checked) == {"Ada", "ben", "cy"}
+    orgs = next(r for r in batch.relations if r.kind == "member" and r.src == gh_user_ref("Ada") and r.dst == r.src)
+    assert {o["login"]: o["created_at"] for o in orgs.attrs[PUBLIC_ORGS_ATTR]} == {
+        "acme-lab": None, "newco": "2026-08-01T00:00:00Z", "oldco": "2015-01-01T00:00:00Z"}
+    assert not any("dependabot" in u for u in seen)
+
+
+def test_recent_activity_respects_call_budget(provider):
+    with respx.mock(assert_all_called=False) as router:
+        seen = _talent_router(router)
+        batch = provider.recent_activity(["Ada", "ben", "cy"], max_calls=3, skip_orgs=["acme-lab"])
+    assert len(seen) <= 3
+    assert any("call budget reached; 2 people not checked" in e for e in batch.errors)
+    assert [p.github_handle for p in batch.people if "activity_checked_at" in p.attrs] == ["Ada"]
+    # Not enough budget for the shallow fetch: the new project still comes from the listing.
+    assert {s.metadata["repo"] for s in batch.signals if s.signal_type == "new_project"} == {
+        "Ada/tactile-policy", "Ada/fast-thing"}
+    assert any("public orgs not checked" in e for e in batch.errors)
+
+
+def test_recent_activity_stops_on_rate_limit(provider):
+    with respx.mock(assert_all_called=False) as router:
+        _talent_router(router, rate_limit_after=2)
+        batch = provider.recent_activity(["Ada", "ben"])
+    assert any("rate limit" in e for e in batch.errors)
+
+
+def test_merge_lab_contributions_keeps_span_and_latest_count():
+    from radar.providers.github import merge_lab_contributions
+
+    old = [{"repo": "a/x", "commits": 10, "first_commit_at": "2021-01-03T00:00:00+00:00",
+            "last_commit_at": "2023-01-01T00:00:00+00:00"}, {"repo": "a/y", "commits": 50}]
+    new = [{"repo": "A/X", "commits": 14, "first_commit_at": "2022-01-02T00:00:00+00:00",
+            "last_commit_at": "2024-01-07T00:00:00+00:00"}]
+    out = merge_lab_contributions(old, new)
+    assert [e["repo"] for e in out] == ["a/y", "A/X"]
+    assert out[1]["commits"] == 14 and out[1]["first_commit_at"].startswith("2021-01-03")
+    assert out[1]["last_commit_at"].startswith("2024-01-07")
+
+
+def test_recent_activity_caps_new_projects_per_person_strongest_first(provider):
+    from radar.providers.github import NEW_PROJECTS_PER_PERSON
+
+    many = [{"name": f"agent-{i}", "full_name": f"zed/agent-{i}", "html_url": f"https://github.com/zed/agent-{i}",
+             "owner": {"login": "zed", "type": "User"}, "fork": False, "archived": False, "topics": [],
+             "description": "An autonomous agent with tool use", "stargazers_count": i,
+             "created_at": "2026-09-0%dT00:00:00Z" % (i + 1)} for i in range(5)]
+    weak = {**many[0], "name": "chat", "full_name": "zed/chat", "description": "llm chat", "stargazers_count": 0}
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{API}/users/zed/repos").respond(json=[*many, weak])
+        router.get(f"{API}/users/zed/orgs").respond(json=[])
+        router.route(url__startswith=API).respond(404, json={"message": "Not Found"})
+        batch = provider.recent_activity(["zed"], max_calls=2)
+    sigs = [s for s in batch.signals if s.signal_type == "new_project"]
+    assert [s.metadata["repo"] for s in sigs] == ["zed/agent-4", "zed/agent-3"][:NEW_PROJECTS_PER_PERSON]
+    assert all(s.metadata["new_repos_in_window"] == 5 for s in sigs)  # 'llm chat' alone is not thesis-relevant

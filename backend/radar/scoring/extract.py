@@ -36,7 +36,16 @@ from radar.models.core import (
     SignalEntity,
     Topic,
 )
-from radar.scoring.features import FORMATION_SIGNAL_TYPES, EntityFeatures, PersonFeatures, SignalLite
+from radar.scoring.features import (
+    FORMATION_EVENT_TYPES,
+    FORMATION_SIGNAL_TYPES,
+    LAB_ALUMNI_CLUSTER,
+    TRANSITION_SIGNAL_TYPES,
+    EntityFeatures,
+    PersonFeatures,
+    SignalLite,
+    parse_lab_contributions,
+)
 from radar.scoring.novelty import tokenize
 from radar.scoring.velocity import aggregate_velocity, compute_velocity
 from radar.thesis.loader import Thesis, get_thesis
@@ -184,6 +193,12 @@ def load_signal_index(session: Session, day: date, window_days: int = SIGNAL_WIN
     ).all()
     idx = SignalIndex()
     lites: dict[uuid.UUID, SignalLite] = {}
+    meta_types = FORMATION_EVENT_TYPES | {LAB_ALUMNI_CLUSTER}
+    metas: dict[uuid.UUID, dict] = {}
+    if any(r.signal_type in meta_types for r in rows):
+        metas = {sid: dict(m or {}) for sid, m in session.execute(
+            select(Signal.id, Signal.meta).where(Signal.event_at >= lo, Signal.event_at <= hi,
+                                                 Signal.signal_type.in_(sorted(meta_types))))}
     for r in rows:
         s = SignalLite(
             r.id,
@@ -197,6 +212,7 @@ def load_signal_index(session: Session, day: date, window_days: int = SIGNAL_WIN
             bool(r.is_demo),
             r.raw_value,
             r.entity_id,
+            metas.get(r.id),
         )
         lites[r.id] = s
         idx.by_entity[r.entity_id][r.id] = s
@@ -586,6 +602,48 @@ def person_affiliation_tier(p: Person, thesis: Thesis) -> AffiliationTier:
     return out
 
 
+def talent_sources_path():
+    """config/talent_sources.yaml (next to the thesis file, else the repository's config/)."""
+    from pathlib import Path
+
+    from radar.settings import get_settings
+
+    near = Path(get_settings().thesis_path).parent / "talent_sources.yaml"
+    return near if near.exists() else Path(__file__).resolve().parents[3] / "config" / "talent_sources.yaml"
+
+
+_TALENT_TIERS: dict[str, int] | None = None
+
+
+def talent_tiers() -> dict[str, int]:
+    """GitHub org login (lowercase) -> tier (1|2) from config/talent_sources.yaml; {} when absent/invalid.
+    Only used to fill a lab contribution recorded without a tier."""
+    global _TALENT_TIERS
+    if _TALENT_TIERS is None:
+        import yaml
+
+        out: dict[str, int] = {}
+        try:
+            with open(talent_sources_path()) as f:
+                data = yaml.safe_load(f) or {}
+            lists = [data] if isinstance(data, list) else [v for v in data.values() if isinstance(v, list)]
+            rows = [row for lst in lists for row in lst]
+            for row in rows:
+                if isinstance(row, dict) and row.get("org") and row.get("tier") in (1, 2):
+                    out[str(row["org"]).lower()] = int(row["tier"])
+        except (OSError, ValueError, AttributeError, TypeError, yaml.YAMLError):
+            out = {}
+        _TALENT_TIERS = out
+    return _TALENT_TIERS
+
+
+def person_lab_contributions(p: Person | None):
+    """Verified lab contributions of ``p`` (``Person.attrs['lab_contributions']``), strongest first."""
+    attrs = getattr(p, "attrs", None) or {}
+    return parse_lab_contributions(attrs.get("lab_contributions") if isinstance(attrs, dict) else None,
+                                   talent_tiers())
+
+
 def tier_phrase(t: AffiliationTier) -> str | None:
     """'public GitHub member of openai (OpenAI)' / None for non-public-org matches."""
     if t.basis != "public_github_org" or not t.org_login:
@@ -642,9 +700,11 @@ def build_person_features(
             .group_by(RepoContributor.repository_id)
         ):
             top_contrib[rid] = int(mx or 0)
+    labs = {p.id: person_lab_contributions(p) for p in people}
     key_repos: dict[uuid.UUID, list[tuple[Repository, float]]] = defaultdict(list)
     for pid in pids:
         seen: set[uuid.UUID] = set()
+        lab_names = {c.full_name.lower() for c in labs.get(pid, [])}
         for r in owned.get(pid, []):
             key_repos[pid].append((r, 1.0))
             seen.add(r.id)
@@ -653,7 +713,8 @@ def build_person_features(
                 continue
             top = top_contrib.get(r.id) or 0
             share = (rc.contributions or 0) / top if top else 0.0
-            if share >= KEY_CONTRIBUTOR_SHARE:
+            # Verified lab-repository history counts at its share even below the core-contributor threshold.
+            if share >= KEY_CONTRIBUTOR_SHARE or (share > 0 and (r.full_name or "").lower() in lab_names):
                 key_repos[pid].append((r, min(1.0, share)))
                 seen.add(r.id)
     key_ids = list({r.id for rows in key_repos.values() for r, _ in rows})
@@ -693,7 +754,13 @@ def build_person_features(
             s for s in index.for_entities([p.id])
             if s.signal_type not in FORMATION_SIGNAL_TYPES or s.entity_id == p.id
         ]
-        transition = [s.id for s in own if s.signal_type in FORMATION_SIGNAL_TYPES]
+        transition = [s.id for s in own if s.signal_type in TRANSITION_SIGNAL_TYPES]
+        events = [s for s in own if s.signal_type in FORMATION_EVENT_TYPES and s.entity_id == p.id]
+        new_projects = list(dict.fromkeys(
+            str((s.meta or {}).get("repo") or s.title) for s in events if s.signal_type == "new_project"))
+        joined_orgs = [str((s.meta or {}).get("org") or s.title) for s in events
+                       if s.signal_type == "joined_young_org"]
+        clusters = list(dict.fromkeys(s.title for s in own if s.signal_type == LAB_ALUMNI_CLUSTER))
         aff = person_affiliation_tier(p, thesis)
         affiliations, best_tier, best_match = aff.affiliations, aff.tier, aff.tier_match
         young = sorted(
@@ -706,6 +773,7 @@ def build_person_features(
                 if o in org_info and org_info[o][0] is not None and org_info[o][0] >= young_cut
             }
         )
+        young += [o for o in joined_orgs if o.lower() not in {y.lower() for y in young}]
         commits = weekly_sum(person_series.get((p.id, "commits_week"), []), day, range(4), None)
         if commits is None and keyed:
             # Proxy: each key repo's last-4-week commits, weighted by the person's contribution share.
@@ -751,12 +819,15 @@ def build_person_features(
                 signals=signals,
                 own_signals=own,
                 is_demo=bool(p.is_demo),
+                tier_basis=aff.basis,
+                tier_org_login=aff.org_login,
+                public_orgs=aff.public_orgs,
+                affiliation_self_reported=bool((p.attrs or {}).get("self_reported")),
+                lab_contributions=labs.get(p.id, []),
+                new_projects=new_projects,
+                lab_clusters=clusters,
             )
         )
-        # Not (yet) PersonFeatures fields: where the tier came from, for honest explanations (founder.pedigree).
-        out[-1].tier_basis = aff.basis  # type: ignore[attr-defined]
-        out[-1].tier_org_login = aff.org_login  # type: ignore[attr-defined]
-        out[-1].public_orgs = aff.public_orgs  # type: ignore[attr-defined]
     return out
 
 

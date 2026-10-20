@@ -73,7 +73,7 @@ from radar.providers.base import (
 )
 from radar.providers.domains import github_repos_in, registrable_domain
 from radar.providers.formation import _phrase_re, normalize_text
-from radar.providers.github import PUBLIC_ORGS_ATTR
+from radar.providers.github import PUBLIC_ORGS_ATTR, merge_lab_contributions
 from radar.thesis.loader import Thesis, get_thesis
 
 log = logging.getLogger("radar.pipeline.ingest")
@@ -85,6 +85,8 @@ _METRIC_PRIORITY = {"observed": 3, "backfill": 2, "demo": 1}
 SELF_REPORTED_NOTE = "self-reported on GitHub profile"
 SELF_REPORTED_SOURCE = "github:self-reported"
 PUBLIC_ORG_NOTE = "Public GitHub organization membership"
+LAB_CONTRIBUTIONS_NOTE = ("Public commit history to frontier-lab repositories (GitHub API); contribution is not "
+                          "employment")
 # Formation language looked for in a person's own profile (bio / company) on top of thesis.formation_phrases.
 # A current "founder" self-description stays a formation_language signal: it never becomes a FOUNDED relation.
 PROFILE_FORMATION_PHRASES = ("co-founder", "cofounder", "founder", "founding engineer", "stealth",
@@ -457,6 +459,7 @@ class _Ingestor:
         extra = dict(rec.attrs)
         if rec.email_domain:
             extra["email_domain"] = rec.email_domain
+        changed |= self._talent_attrs(p, extra)
         changed |= self._merge_attrs(p, extra)
         changed |= _refresh_normalized_affiliations(p)
         self._count_update(created, changed)
@@ -467,6 +470,37 @@ class _Ingestor:
             elif fld == "x_handle" and val:
                 val = val.lstrip("@")
             self._prov(p, "person", fld, val, url, self_reported=self._self_reported("person", rec.ref, fld))
+
+    def _talent_attrs(self, p: Person, extra: dict[str, Any]) -> bool:
+        """Talent-pool attrs that must merge rather than overwrite (pops them from ``extra``).
+
+        ``lab_contributions`` (VERIFIED commit history to frontier-lab repositories, never employment) merges
+        per repository; ``talent_pool_since`` is the first time the person entered the pool."""
+        new = extra.pop("lab_contributions", None)
+        seen_at = extra.pop("talent_pool_observed_at", None)
+        if new is None:
+            return False
+        attrs = dict(p.attrs or {})
+        merged = merge_lab_contributions(attrs.get("lab_contributions") or [], new)
+        before = (attrs.get("lab_contributions"), attrs.get("talent_pool_since"), attrs.get("talent_pool_observed_at"))
+        attrs["lab_contributions"] = merged
+        if seen_at:
+            attrs["talent_pool_observed_at"] = seen_at
+            attrs.setdefault("talent_pool_since", seen_at)
+        if before == (attrs.get("lab_contributions"), attrs.get("talent_pool_since"),
+                      attrs.get("talent_pool_observed_at")):
+            return False
+        p.attrs = attrs
+        if merged:
+            url = f"https://github.com/{p.github_handle}" if p.github_handle else canonical_url(p)
+            record_provenance(
+                self.s, "person", p.id, "lab_contributions",
+                [f"{e.get('commits')} commits to {e.get('repo')}" for e in merged][:20],
+                source_type=self.provider, source_url=url,
+                epistemic=Epistemic.INFERENCE.value if (self.is_demo or p.is_demo) else Epistemic.FACT.value,
+                confidence=1.0, note=LAB_CONTRIBUTIONS_NOTE,
+            )
+        return True
 
     def _person_affiliation(self, p: Person, rec: PersonRecord, url: str, *, emit: bool = True) -> bool:
         new = _clean_company(rec.current_company)
@@ -755,8 +789,12 @@ class _Ingestor:
             if not login:
                 continue
             prev = before.get(login.lower()) or {}
-            orgs.append({"login": login, "name": o.get("name") or login,
-                         "first_observed_at": prev.get("first_observed_at") or observed, "observed_at": observed})
+            entry = {"login": login, "name": o.get("name") or login,
+                     "first_observed_at": prev.get("first_observed_at") or observed, "observed_at": observed}
+            created = o.get("created_at") or prev.get("created_at")  # the org's own creation date, when checked
+            if created:
+                entry["created_at"] = created
+            orgs.append(entry)
         attrs = dict(p.attrs or {})
         attrs["github_orgs"] = orgs
         attrs["github_orgs_checked_at"] = observed

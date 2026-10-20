@@ -224,7 +224,34 @@ def data_note(is_demo: bool) -> str:
     return f"Real public data captured {a:%b %-d, %Y}" if a else "Live public data"
 
 
-def headline(p: Person) -> str | None:
+def _new_projects(snap: ScoreSnapshot | None) -> list[str]:
+    """Own new repositories the Founder Score's formation component recorded (``new_project`` events)."""
+    if snap is None:
+        return []
+    raw = (((snap.components or {}).get("formation") or {}).get("raw") or {})
+    return [str(x) for x in (raw.get("new_projects") or []) if x]
+
+
+def talent_line(p: Person, snap: ScoreSnapshot | None = None) -> str | None:
+    """'Contributor to google-deepmind/mujoco · now building ada/tactile-sim' from verified lab commits
+    (``Person.attrs['lab_contributions']``) and a recorded new project. Never claims employment; a new
+    repository is not a company."""
+    from radar.scoring.extract import person_lab_contributions
+
+    labs = person_lab_contributions(p)
+    if not labs:
+        return None
+    line = f"Contributor to {labs[0].full_name}"
+    projects = _new_projects(snap)
+    if projects:
+        line += f" \u00b7 now building {projects[0]}"
+    return line
+
+
+def headline(p: Person, snap: ScoreSnapshot | None = None) -> str | None:
+    talent = talent_line(p, snap)
+    if talent:
+        return talent
     h = (p.attrs or {}).get("headline")
     if h:
         return h
@@ -641,10 +668,20 @@ def person_why_now(p: Person, snap: ScoreSnapshot | None, limit: int = 4) -> lis
     """Deterministic founder 'why now' bullets from score evidence (formation signals first)."""
     if snap is None:
         return []
+    from radar.scoring.extract import person_lab_contributions
+
     comps = snap.components or {}
     order = [*PERSON_EVIDENCE_ORDER, "thesis_fit", "attention_gap"]
     bullets: list[str] = []
     seen: set[str] = set()
+    # Talent pool: the new project (possible formation) first, then the verified technical history.
+    labs = person_lab_contributions(p)
+    projects = _new_projects(snap)
+    if labs and projects:
+        bullets.append(f"Now building {projects[0]} \u2014 new repository of their own (possible formation)")
+    if labs:
+        bullets.append(labs[0].phrase(verb=False))
+    seen.update(bullets)
     for key in order + [k for k in comps if k not in order]:
         for e in component_evidence(comps.get(key)):
             t = e.get("title")
@@ -670,7 +707,7 @@ def person_cards(session: Session, people: Sequence[Person]) -> list[PersonCard]
         dn = display_name(p)
         out.append(PersonCard(
             id=str(p.id), slug=p.slug, name=dn.name, raw_name=dn.raw_if_changed, name_note=dn.note,
-            headline=headline(p), current_company=clean_label(p.current_company),
+            headline=headline(p, snap), current_company=clean_label(p.current_company),
             current_role=p.current_role or (cp.role if cp else None),
             prior_affiliations=[a for a in map(clean_label, p.prior_affiliations or []) if a],
             domains=p.domains or [], github_handle=p.github_handle, x_handle=p.x_handle,
@@ -741,7 +778,7 @@ def founder_intel_cards(session: Session, people: Sequence[Person], start_rank: 
             rank=start_rank + i, entity_type="person", id=str(p.id), slug=p.slug, name=dn.name,
             raw_name=dn.raw_if_changed, name_note=dn.note,
             kind_label=person_kind_label(p, links.get(p.id)),
-            one_liner=headline(p), score=round(snap.score) if snap else 0, delta_7d=d7.get(p.id),
+            one_liner=headline(p, snap), score=round(snap.score) if snap else 0, delta_7d=d7.get(p.id),
             delta_30d=d30.get(p.id), thesis_tags=tags.get(p.id, []), why_surfaced=why, why_anti=lines,
             attention_gap=ascore.attention_gap if ascore else None, collision=ascore.collision if ascore else None,
             sparkline=sparks.get(p.id, []), sparkline_label="Founder score · 30d" if p.id in sparks else None,

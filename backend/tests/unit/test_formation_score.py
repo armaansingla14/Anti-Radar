@@ -260,3 +260,87 @@ def test_curated_list_anchor():
     big = Repository(full_name="v-modal/engine", owner="v-modal", stars=900, description="Visual memory", topics=[])
     assert curated_list_anchor(co, [lst, big]) is None  # a real product leads; the list is a side repo
     assert curated_list_anchor(co, []) is None
+
+
+# ── talent pool: verified lab contributions ──────────────────────────────────
+
+
+def _labs(*rows):
+    from radar.scoring.features import parse_lab_contributions
+
+    return parse_lab_contributions([{"org": o, "label": o, "tier": t, "repo": r, "commits": n,
+                                     "first_commit_at": f, "last_commit_at": last}
+                                    for o, r, n, t, f, last in rows])
+
+
+def test_founder_quality_prefers_verified_lab_history_over_self_reported():
+    from radar.scoring.formation import founder_quality
+
+    lab = MemberInfo(A, "Ada", founder_score=40, lab_contributions=_labs(
+        ("google-deepmind", "mujoco", 412, 1, "2024-01-01", "2025-09-01")))
+    claimed = MemberInfo(A, "Ada", founder_score=40, tier=1.0, tier_match="NVIDIA", tier_basis="affiliation",
+                         self_reported=True)
+    v_lab, v_claim = founder_quality([lab]), founder_quality([claimed])
+    assert v_lab["value"] > v_claim["value"]
+    assert "Ada: contributed 412 commits to google-deepmind/mujoco (tier-1 lab repository, verified)" \
+        in v_lab["explanation"]
+    assert v_lab["raw"]["tier_basis"] == "lab_contribution" and not v_lab["raw"]["tier_self_reported"]
+    assert v_claim["raw"]["tier_self_reported"] and v_claim["raw"]["best_tier"] == 0.7
+    assert "412 commits to google-deepmind/mujoco (verified)" in v_lab["evidence"][0]["detail"]
+    assert "worked at" not in v_lab["explanation"].lower()
+
+
+def _talent_team(with_lab: bool) -> CandidateInput:
+    created = date(2026, 8, 1)
+    labs = {A: _labs(("NVIDIA", "cutlass", 412, 1, "2024-03-01", "2025-05-01")),
+            B: _labs(("NVIDIA", "cutlass", 57, 1, "2024-06-01", "2025-02-01"))} if with_lab else {}
+    members = [MemberInfo(A, "Ada", founder_score=45, lab_contributions=labs.get(A, [])),
+               MemberInfo(B, "Ben", founder_score=40, lab_contributions=labs.get(B, [])),
+               MemberInfo(C, "Cy", founder_score=None)]
+    conv = convergence([Member(m.id, m.name) for m in members], [], created, anchor_name="acme",
+                       families=["github", "community"], lab=labs)
+    facts = [
+        EvidenceFact("org_created", "GitHub organization acme created 2026-08-01", source_type="github",
+                     event_at=datetime(2026, 8, 1, 12, tzinfo=UTC)),
+        EvidenceFact("founding_team", "Two members committed to acme within 30 days of its creation",
+                     source_type="github", event_at=datetime(2026, 8, 20, tzinfo=UTC)),
+        EvidenceFact("launch", "Show HN: acme", source_type="hackernews", event_at=NOW - timedelta(days=5)),
+    ]
+    if with_lab:
+        facts.append(EvidenceFact("lab_alumni", "2 lab alumni committing to acme", source_type="github",
+                                  event_at=datetime(2026, 8, 20, tzinfo=UTC)))
+    return CandidateInput(
+        kind="team", anchor_type="company", anchor_id=uuid.UUID(int=60), anchor_name="acme", anchor_slug="acme",
+        created=created, first_seen_at=NOW - timedelta(days=20), members=members,
+        metrics={"commits_4w": 40.0, "stars_30d": 50.0, "new_contributors_30d": 1.0, "releases_90d": 1.0},
+        facts=facts, signals=[sig("hn_show", "hackernews", 5)], attention=None, thesis_fit=0.8, theme="ai",
+        convergence=conv)
+
+
+def test_verified_lab_alumni_team_can_reach_emerging_but_not_high():
+    with_lab = score_candidate(_talent_team(True), cohort(), TODAY)
+    without = score_candidate(_talent_team(False), cohort(), TODAY)
+    assert without.tier == "early"
+    assert with_lab.tier == "emerging" and with_lab.label == LABEL_TEAM
+    assert 50 <= with_lab.score < 70 and with_lab.families == ["community", "github"]
+    conv = with_lab.components["team_convergence"]["explanation"]
+    assert "Two of three members previously contributed to NVIDIA/cutlass (verified commits, 2024–2025)" in conv
+    assert "lab alumni committing together" in with_lab.components["formation_evidence"]["explanation"]
+    assert "founded" not in json.dumps(with_lab.components).lower()
+
+
+def test_talent_person_with_only_github_evidence_stays_early():
+    labs = _labs(("openai", "triton", 300, 1, "2024-01-01", "2026-01-01"))
+    p = CandidateInput(
+        kind="person", anchor_type="person", anchor_id=A, anchor_name="Ada", anchor_slug="ada", created=None,
+        first_seen_at=NOW - timedelta(days=3),
+        members=[MemberInfo(A, "Ada", founder_score=80, lab_contributions=labs)],
+        metrics={"commits_30d": 300.0, "stars_30d": 300.0},
+        facts=[EvidenceFact("new_project", "ada created ada/kernels", source_type="github",
+                            event_at=NOW - timedelta(days=10)),
+               EvidenceFact("young_org", "ada joined acme-labs", source_type="github",
+                            event_at=NOW - timedelta(days=8))],
+        signals=[], attention=None, thesis_fit=0.9)
+    sc = score_candidate(p, build_tech_cohort([]), TODAY)
+    assert sc.families == ["github"] and sc.tier in ("early", None) and sc.label in (LABEL_PERSON, None)
+    assert "new repository of their own" in sc.components["formation_evidence"]["explanation"]

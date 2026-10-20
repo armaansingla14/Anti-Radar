@@ -125,7 +125,7 @@ def test_founder_components_sum_to_at_most_100(thesis):
     assert 60 < total <= 100
     for comp in fs.components:
         assert 0 <= comp.value <= comp.max
-    assert next(x for x in fs.components if x.key == "pedigree").value == 15
+    assert next(x for x in fs.components if x.key == "pedigree").value == 15  # listed (not self-reported)
     form = next(x for x in fs.components if x.key == "formation")
     assert form.evidence and form.evidence[0][0].id == sig.id
     weak_total = sum(x.value for x in founder_score(weak, c, thesis, {}, TODAY).components)
@@ -224,3 +224,104 @@ def test_pedigree_from_public_github_org_membership():
     assert a3.basis == "affiliation" and pedigree(person(affiliations=a3.affiliations, tier=a3.tier,
                                                          tier_match=a3.tier_match)).explanation.startswith(
         "Affiliation with NVIDIA")
+
+
+# ── talent pool: verified lab contributions ──────────────────────────────────
+
+
+def _lab(org="google-deepmind", repo="mujoco", commits=412, tier=1, first="2024-02-01", last="2025-06-01"):
+    return {"org": org, "label": org, "tier": tier, "repo": repo, "commits": commits,
+            "first_commit_at": first, "last_commit_at": last}
+
+
+def test_parse_lab_contributions_validates_and_orders():
+    from radar.scoring.features import parse_lab_contributions
+
+    labs = parse_lab_contributions([
+        _lab(commits=2),  # too few commits: not technical history
+        _lab(org="NVIDIA", repo="cutlass", commits=40, tier=2),
+        _lab(),
+        _lab(org="openai", repo="openai/triton", commits=30, tier=None),  # tier filled from the lookup
+        _lab(org="nobody", repo="x", commits=50, tier=None),  # unknown tier: dropped
+        "garbage",
+    ], {"openai": 1})
+    assert [c.full_name for c in labs] == ["google-deepmind/mujoco", "openai/triton", "NVIDIA/cutlass"]
+    top = labs[0]
+    assert top.phrase() == "Contributed 412 commits to google-deepmind/mujoco (tier-1 lab repository, verified)"
+    assert top.years() == "2024\u20132025" and top.depth == pytest.approx(1.0)
+    assert labs[2].strength < labs[1].strength < top.strength <= 1.0
+
+
+def test_pedigree_prefers_verified_lab_contributions_over_self_reported():
+    from radar.scoring.features import SELF_REPORTED_FACTOR, parse_lab_contributions
+    from radar.scoring.founder import pedigree
+
+    labs = parse_lab_contributions([_lab(), _lab(org="NVIDIA", repo="cutlass", commits=37, tier=1)])
+    verified = pedigree(person(lab_contributions=labs))
+    assert verified.value == pytest.approx(15)
+    assert verified.explanation.startswith(
+        "Contributed 412 commits to google-deepmind/mujoco (tier-1 lab repository, verified); "
+        "also 37 commits to NVIDIA/cutlass")
+    assert "worked at" not in verified.explanation.lower() and "employ" not in verified.explanation.lower()
+    assert verified.raw["source"] == "lab_contribution" and verified.raw["lab_contributions"][0]["commits"] == 412
+    claimed = pedigree(person(affiliations=["NVIDIA"], tier=1.0, tier_match="NVIDIA", tier_basis="affiliation",
+                              affiliation_self_reported=True))
+    assert claimed.value == pytest.approx(15 * SELF_REPORTED_FACTOR) and claimed.value < verified.value
+    assert "self-reported" in claimed.explanation
+    # A few commits to a tier-2 lab repo: verified but modest; a stronger self-reported claim still shows.
+    small = parse_lab_contributions([_lab(org="NVIDIA", repo="cutlass", commits=3, tier=2)])
+    both = pedigree(person(lab_contributions=small, affiliations=["OpenAI"], tier=1.0, tier_match="OpenAI",
+                           tier_basis="affiliation", affiliation_self_reported=True))
+    assert both.raw["source"] == "affiliation" and both.value == pytest.approx(15 * SELF_REPORTED_FACTOR)
+    assert "Contributed 3 commits to NVIDIA/cutlass" in both.explanation and "Affiliation with OpenAI" in both.explanation
+
+
+def test_technical_output_mentions_verified_lab_repos(thesis):
+    from radar.scoring.features import parse_lab_contributions
+
+    labs = parse_lab_contributions([_lab()])
+    p = person(owned_repo_stars=900.0, key_repos=["ada/sim", "google-deepmind/mujoco"], commits_30d=40.0,
+               lab_contributions=labs)
+    c = people_cohort([p, person(owned_repo_stars=10.0)])
+    tech = next(x for x in founder_score(p, c, thesis, {}, TODAY).components if x.key == "technical_output")
+    assert "core contributor to ada/sim" in tech.explanation
+    assert "verified lab-repository commits (412 commits to google-deepmind/mujoco)" in tech.explanation
+    assert tech.raw["lab_repos"] == ["google-deepmind/mujoco"]
+
+
+def test_formation_counts_new_project_and_lab_cluster(thesis):
+    now = datetime(2026, 10, 1, tzinfo=UTC)
+    pid = uuid.uuid4()
+    np_sig = SignalLite(uuid.uuid4(), "new_project", "github", "ada created ada/tactile-sim", now, entity_id=pid,
+                        meta={"repo": "ada/tactile-sim"})
+    base = person(own_signals=[], signals=[])
+    proj = person(own_signals=[np_sig], signals=[np_sig], new_projects=["ada/tactile-sim"])
+    clus = person(own_signals=[np_sig], signals=[np_sig], new_projects=["ada/tactile-sim"],
+                  lab_clusters=["3 lab alumni committing to acme/robot"])
+    c = people_cohort([base])
+    f0, f1, f2 = (next(x for x in founder_score(q, c, thesis, {}, TODAY).components if x.key == "formation")
+                  for q in (base, proj, clus))
+    assert f0.value == 0 < f1.value < f2.value <= 20
+    assert "New repository of their own (ada/tactile-sim)" in f1.explanation and "possible formation" in f1.explanation
+    assert "founded" not in f1.explanation.lower()
+    assert f1.evidence and f1.evidence[0][0].id == np_sig.id
+    assert "lab-alumni cluster" in f2.explanation
+    # A new project is weaker than a stated transition.
+    tr = SignalLite(uuid.uuid4(), "affiliation_changed", "github", "Left X", now, entity_id=pid)
+    f3 = next(x for x in founder_score(person(own_signals=[tr], signals=[tr], recent_transition=True), c, thesis,
+                                       {}, TODAY).components if x.key == "formation")
+    assert f3.value > f1.value
+
+
+def test_formation_event_types_are_not_measurements():
+    from radar.scoring.features import (
+        FORMATION_EVENT_TYPES,
+        FORMATION_SIGNAL_TYPES,
+        MEASUREMENT_SIGNAL_TYPES,
+        TRANSITION_SIGNAL_TYPES,
+    )
+
+    assert FORMATION_EVENT_TYPES == {"new_project", "joined_young_org"}
+    assert FORMATION_EVENT_TYPES <= FORMATION_SIGNAL_TYPES
+    assert not FORMATION_EVENT_TYPES & MEASUREMENT_SIGNAL_TYPES
+    assert not FORMATION_EVENT_TYPES & TRANSITION_SIGNAL_TYPES

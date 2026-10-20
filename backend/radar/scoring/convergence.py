@@ -20,6 +20,16 @@ Score (0..1, deterministic)::
 
 Strength: HIGH >= 0.6, MEDIUM >= 0.35, else LOW.
 
+Lab alumni (talent pool): when ``lab`` ({member: verified lab contributions, ``features.LabContribution``}) is
+given and >= 2 members have verified lab-repository commits:
+
+* LAB_CO_CONTRIBUTED — both committed to the *same* lab repository, the later first commit before the
+  anchor was created: a strong prior tie (VERIFIED; CONTRIBUTED_WITH base weight, recency of the overlap's
+  end, floored at the shared-lab weight; counts as the co-contribution kind for kind diversity). Skipped when a CONTRIBUTED_WITH relationship already
+  carries the same repository (never counted twice).
+* LAB_SHARED_ORG — commits to repositories of the same lab org (different repositories, or dates unknown):
+  collaboration *context* only (weight 0.35, undated, adds no kind). It is never employment.
+
 Dates come from evidence (paper date; for co-contribution the later of the two people's
 ``RepoContributor.first_commit_at``). Co-contributions whose first-commit dates are unknown
 cannot be shown to predate the anchor: they never score, and the explanation says so.
@@ -38,6 +48,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
+from itertools import combinations
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -46,6 +57,7 @@ from sqlalchemy.orm import Session
 from radar.models.core import Relationship
 from radar.pipeline.aliases import org_key
 from radar.scoring.collision import number_word
+from radar.scoring.features import LabContribution
 
 COAUTHORED_WITH = "COAUTHORED_WITH"
 CONTRIBUTED_WITH = "CONTRIBUTED_WITH"
@@ -59,6 +71,12 @@ HIGH, MEDIUM = 0.6, 0.35
 W_COVERAGE, W_PAIRS, W_KINDS, W_FAMILIES = 0.45, 0.25, 0.15, 0.15
 MAX_FAMILIES = 4
 JOIN_WINDOW_DAYS = 30
+LAB_CO_CONTRIBUTED = "LAB_CO_CONTRIBUTED"
+LAB_SHARED_ORG = "LAB_SHARED_ORG"
+LAB_SHARED_ORG_WEIGHT = 0.35
+# Kind-diversity bucket per tie kind (lab context adds no kind of its own).
+KIND_BUCKET = {COAUTHORED_WITH: COAUTHORED_WITH, CONTRIBUTED_WITH: CONTRIBUTED_WITH, WORKED_WITH: WORKED_WITH,
+               LAB_CO_CONTRIBUTED: CONTRIBUTED_WITH}
 
 
 @dataclass(frozen=True)
@@ -105,6 +123,7 @@ class ConvergenceResult:
     undated_cocontributions: int = 0  # co-contributions elsewhere with unknown first-commit dates
     founding_members: list[uuid.UUID] = field(default_factory=list)  # first commit within the join window
     join_dates_unknown: int = 0  # members whose first commit on the anchor is unknown (when ``joined`` given)
+    lab_members: list[uuid.UUID] = field(default_factory=list)  # members with verified lab-repository commits
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -120,6 +139,7 @@ class ConvergenceResult:
             "undated_cocontributions": self.undated_cocontributions,
             "founding_members": [str(m) for m in self.founding_members],
             "join_dates_unknown": self.join_dates_unknown,
+            "lab_members": [str(m) for m in self.lab_members],
         }
 
 
@@ -200,6 +220,104 @@ def undated_cocontributions(rels: Iterable[RelLite], members: set[uuid.UUID],
     return n
 
 
+def _pair(a: uuid.UUID, b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
+    return (a, b) if str(a) < str(b) else (b, a)
+
+
+def lab_ties(lab: Mapping[uuid.UUID, Sequence[LabContribution]], anchor_created: date | datetime,
+             existing: Iterable[PriorTie] = ()) -> list[PriorTie]:
+    """Prior ties from verified lab contributions (see module docstring). ``existing`` ties (from the
+    relationships table) suppress a lab tie on the same pair and repository / org."""
+    created = _dt(anchor_created)
+    assert created is not None
+    have_repo: set[tuple[tuple[uuid.UUID, uuid.UUID], str]] = set()
+    have_org: set[tuple[tuple[uuid.UUID, uuid.UUID], str]] = set()
+    for t in existing:
+        if t.kind in (CONTRIBUTED_WITH, LAB_CO_CONTRIBUTED):
+            have_repo.add((_pair(t.a, t.b), (t.detail or "").lower()))
+        elif t.kind == WORKED_WITH:
+            have_org.add((_pair(t.a, t.b), org_key(t.detail or "")))
+    members = sorted((m for m, cs in lab.items() if cs), key=str)
+    out: list[PriorTie] = []
+    for a, b in combinations(members, 2):
+        pair = _pair(a, b)
+        la = {c.full_name.lower(): c for c in lab[a]}
+        lb = {c.full_name.lower(): c for c in lab[b]}
+        dated = False
+        for key in sorted(la.keys() & lb.keys()):
+            ca, cb = la[key], lb[key]
+            if (pair, key) in have_repo:
+                dated = True  # already a CONTRIBUTED_WITH tie on this repository
+                continue
+            if ca.first_commit_at is None or cb.first_commit_at is None:
+                continue
+            start = max(ca.first_commit_at, cb.first_commit_at)
+            if start >= created:
+                continue
+            dated = True
+            ends = [d for d in (ca.last_commit_at, cb.last_commit_at) if d is not None]
+            ev = {"title": ca.full_name,
+                  "detail": f"Both committed: {ca.commits:,} and {cb.commits:,} commits (verified)",
+                  "source_url": f"https://github.com/{ca.full_name}/graphs/contributors", "source_type": "github",
+                  "event_at": start.isoformat(), "end_at": max(ends).isoformat() if ends else None,
+                  "years": _span_years([ca.first_commit_at, cb.first_commit_at, *ends]), "verified": True}
+            # Recency of the overlap's end (both last active), never weaker than mere shared-lab context.
+            last_both = min(ends) if len(ends) == 2 else start
+            w = max(LAB_SHARED_ORG_WEIGHT, BASE_WEIGHT[CONTRIBUTED_WITH] * recency(min(last_both, created), created))
+            out.append(PriorTie(None, LAB_CO_CONTRIBUTED, pair[0], pair[1], w, start, ca.full_name, [ev],
+                                verified=True))
+        if dated:
+            continue
+        orgs_a = {c.org.lower(): c for c in lab[a]}
+        orgs_b = {c.org.lower(): c for c in lab[b]}
+        for org in sorted(orgs_a.keys() & orgs_b.keys()):
+            ca, cb = orgs_a[org], orgs_b[org]
+            if (pair, org_key(ca.label)) in have_org or (pair, org_key(ca.org)) in have_org:
+                continue
+            ev = {"title": f"{ca.label} repositories",
+                  "detail": f"{ca.full_name} ({ca.commits:,} commits) and {cb.full_name} ({cb.commits:,} commits), "
+                            "verified",
+                  "source_url": f"https://github.com/{ca.org}", "source_type": "github", "event_at": None,
+                  "verified": True}
+            out.append(PriorTie(None, LAB_SHARED_ORG, pair[0], pair[1], LAB_SHARED_ORG_WEIGHT, None, ca.label, [ev],
+                                verified=True))
+            break  # one shared-lab context tie per pair
+    return out
+
+
+def _mark_lab_cocontributions(ties: list[PriorTie], lab: Mapping[uuid.UUID, Sequence[LabContribution]]) -> None:
+    """A dated CONTRIBUTED_WITH tie (relationships table) on a lab repository both members have verified history
+    on is the same fact as a lab co-contribution: relabel it (same weight, same kind bucket) so it is explained
+    as lab history, with the years of both members' commits."""
+    for t in ties:
+        if t.kind != CONTRIBUTED_WITH:
+            continue
+        key = (t.detail or "").lower()
+        ca = next((c for c in lab.get(t.a, []) if c.full_name.lower() == key), None)
+        cb = next((c for c in lab.get(t.b, []) if c.full_name.lower() == key), None)
+        if ca is None or cb is None:
+            continue
+        ends = [d for d in (ca.last_commit_at, cb.last_commit_at) if d is not None]
+        t.kind, t.verified = LAB_CO_CONTRIBUTED, True
+        t.evidence = [{**e, "end_at": max(ends).isoformat() if ends else None,
+                       "years": _span_years([ca.first_commit_at, cb.first_commit_at, *ends]), "verified": True}
+                      for e in t.evidence]
+
+
+def _span_years(ds: Iterable[datetime | None]) -> str | None:
+    ys = sorted({d.year for d in ds if d is not None})
+    if not ys:
+        return None
+    return str(ys[0]) if len(ys) == 1 else f"{ys[0]}\u2013{ys[-1]}"
+
+
+def _count_of(k: int, n: int) -> str:
+    """'two of three members' / 'both members' / 'all three members' (the sentence start is capitalized)."""
+    if k == n:
+        return "both members" if n == 2 else f"all {number_word(n)} members"
+    return f"{number_word(k)} of {number_word(n)} members"
+
+
 def founding_members(joined: Mapping[uuid.UUID, datetime | date | None], anchor_created: date | datetime,
                      window_days: int = JOIN_WINDOW_DAYS) -> tuple[list[uuid.UUID], int]:
     """(members whose first commit on the anchor is within ``window_days`` of its creation, unknown count)."""
@@ -236,6 +354,29 @@ def explain(ties: list[PriorTie], members: dict[uuid.UUID, Member], n: int, anch
     by_kind: dict[str, list[PriorTie]] = defaultdict(list)
     for t in ties:
         by_kind[t.kind].append(t)
+    # Verified lab history leads.
+    if by_kind.get(LAB_CO_CONTRIBUTED):
+        repos: dict[str, list[PriorTie]] = defaultdict(list)
+        for t in by_kind[LAB_CO_CONTRIBUTED]:
+            repos[t.detail].append(t)
+        repo, ts = max(repos.items(), key=lambda kv: (len({p for t in kv[1] for p in (t.a, t.b)}), kv[0]))
+        people = {p for t in ts for p in (t.a, t.b)}
+        spans = [str(e["years"]) for t in ts for e in t.evidence if e.get("years")]
+        years = (_span_years(datetime(int(y), 1, 1, tzinfo=UTC) for sp in spans for y in sp.split("\u2013"))
+                 if spans else _span_years(_dt(x) for t in ts for e in t.evidence
+                                           for x in (e.get("event_at"), e.get("end_at"))))
+        sentence = (f"{_count_of(len(people), n)} previously contributed to {repo} (verified commits"
+                    f"{', ' + years if years else ''}), before {anchor_name} existed")
+        if len(repos) > 1:
+            sentence += f"; {len(repos) - 1} other shared lab repositor{'ies' if len(repos) > 2 else 'y'}"
+        parts.append(sentence)
+    if by_kind.get(LAB_SHARED_ORG):
+        orgs_l: dict[str, set[uuid.UUID]] = defaultdict(set)
+        for t in by_kind[LAB_SHARED_ORG]:
+            orgs_l[t.detail] |= {t.a, t.b}
+        org, ppl = max(orgs_l.items(), key=lambda kv: (len(kv[1]), kv[0]))
+        parts.append(f"{_count_of(len(ppl), n)} have verified commits to {org} repositories (shared lab context; "
+                     "not evidence of employment)")
     if by_kind.get(COAUTHORED_WITH):
         ts = by_kind[COAUTHORED_WITH]
         people = {p for t in ts for p in (t.a, t.b)}
@@ -302,10 +443,12 @@ def convergence(
     anchor_org_keys: set[str] | None = None,
     joined: Mapping[uuid.UUID, datetime | date | None] | None = None,
     join_window_days: int = JOIN_WINDOW_DAYS,
+    lab: Mapping[uuid.UUID, Sequence[LabContribution]] | None = None,
 ) -> ConvergenceResult:
     """Pure convergence score for ``members`` now sharing an anchor created at ``anchor_created``.
 
-    ``joined`` (optional): each member's first commit on the anchor's repositories (None = unknown)."""
+    ``joined`` (optional): each member's first commit on the anchor's repositories (None = unknown).
+    ``lab`` (optional): each member's verified lab contributions (lab-alumni ties, see module docstring)."""
     created = _dt(anchor_created)
     assert created is not None
     mem = {m.id: m for m in members}
@@ -319,6 +462,11 @@ def convergence(
         founders, join_unknown = founding_members({m: joined.get(m) for m in mem}, created, join_window_days)
     ties = [t for t in prior_ties(rels, created, anchor_repo_ids=anchor_repo_ids, anchor_org_keys=anchor_org_keys)
             if t.a in mem and t.b in mem and t.a != t.b]
+    lab_members = sorted((m for m in mem if lab and lab.get(m)), key=str)
+    if len(lab_members) >= 2:
+        assert lab is not None
+        _mark_lab_cocontributions(ties, lab)
+        ties += lab_ties({m: lab[m] for m in lab_members}, created, ties)
     pair_w: dict[tuple[uuid.UUID, uuid.UUID], list[float]] = defaultdict(list)
     for t in ties:
         pair_w[(t.a, t.b) if str(t.a) < str(t.b) else (t.b, t.a)].append(t.weight)
@@ -333,9 +481,10 @@ def convergence(
         member_best[y] = max(member_best[y], v)
     coverage = sum(member_best.values()) / n if n >= 2 else 0.0
     kinds = sorted({t.kind for t in ties})
+    kind_buckets = {KIND_BUCKET[t.kind] for t in ties if t.kind in KIND_BUCKET}
     fam_part = min(len(fams), MAX_FAMILIES) / MAX_FAMILIES
     if ties:
-        score = (W_COVERAGE * coverage + W_PAIRS * avg_pair + W_KINDS * min(len(kinds), 3) / 3
+        score = (W_COVERAGE * coverage + W_PAIRS * avg_pair + W_KINDS * min(len(kind_buckets), 3) / 3
                  + W_FAMILIES * fam_part)
     else:
         score = W_FAMILIES * fam_part * 0.5
@@ -356,6 +505,7 @@ def convergence(
         undated_cocontributions=undated,
         founding_members=founders,
         join_dates_unknown=join_unknown or 0,
+        lab_members=lab_members,
     )
 
 
@@ -419,5 +569,5 @@ def convergence_for(
                        anchor_org_keys=anchor_org_keys)
 
 
-__all__ = ["JOIN_WINDOW_DAYS", "ConvergenceResult", "Member", "founding_members", "undated_cocontributions", "PriorTie", "RelLite", "convergence", "convergence_for",
+__all__ = ["JOIN_WINDOW_DAYS", "LAB_CO_CONTRIBUTED", "LAB_SHARED_ORG", "lab_ties", "ConvergenceResult", "Member", "founding_members", "undated_cocontributions", "PriorTie", "RelLite", "convergence", "convergence_for",
            "load_member_relationships", "load_pair_relationships", "prior_ties", "strength_label"]

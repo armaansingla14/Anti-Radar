@@ -29,6 +29,12 @@ joined, so it carries no date. It is skipped for the young organizations that ar
 themselves (sharing the anchor is not prior history) and for orgs with > ``GIANT_ORG_PEOPLE`` tracked
 public members. A pair with both kinds of evidence keeps one WORKED_WITH edge, VERIFIED.
 
+TALENT POOL: repositories tagged ``attrs['talent_source']`` are frontier-lab repositories; their
+CONTRIBUTED_TO / CONTRIBUTED_WITH evidence says "N commits to org/repo" (verified public commit history,
+never employment) and CONTRIBUTED_WITH between two talent-pool people is a *prior collaboration* dated by
+their overlapping commit weeks. ``talent_signals`` then emits ``lab_alumni_cluster`` (>= 2 talent-pool
+people with >= 3 commits each to the same non-lab young org/repo) and commit-based ``joined_young_org``.
+
 Automation and AI coding-agent accounts (``providers.github.is_bot``) get no edges at all.
 
 The build is idempotent: rows are upserted on (src_id, dst_id, kind) and rows of the kinds
@@ -60,6 +66,7 @@ from radar.models.core import (
     RepoContributor,
     Repository,
     ResearchPaper,
+    Signal,
 )
 from radar.pipeline.aliases import normalize_org, org_key
 
@@ -253,15 +260,23 @@ def build(session: Session) -> dict[str, Any]:
     for rid, rows in repo_rows.items():
         repo = repos[rid]
         url = f"https://github.com/{repo.full_name}"
+        lab = lab_source(repo)
         for rc in rows:
             e = b.edge("person", rc.person_id, "repository", rid, CONTRIBUTED_TO,
                        is_demo=bool(repo.is_demo or getattr(people.get(rc.person_id), "is_demo", False)))
             e.see(_aware(rc.first_commit_at), _aware(rc.last_commit_at))
             e.weight = float(rc.contributions or 0)
-            e.evidence = [{"title": repo.full_name,
-                           "detail": f"{rc.contributions or 0} commits on the default branch",
-                           "source_url": f"{url}/graphs/contributors", "source_type": "github",
-                           "event_at": _iso(_aware(rc.first_commit_at)), "repo_id": str(rid)}]
+            ev = {"title": repo.full_name,
+                  "detail": f"{rc.contributions or 0} commits on the default branch",
+                  "source_url": f"{url}/graphs/contributors", "source_type": "github",
+                  "event_at": _iso(_aware(rc.first_commit_at)), "repo_id": str(rid)}
+            if lab:
+                ev["detail"] = (f"{rc.contributions or 0} commits to {repo.full_name}"
+                                + _span_text(rc.first_commit_at, rc.last_commit_at)
+                                + " (public commit history; not employment)")
+                ev.update({"lab": lab.get("label"), "lab_org": lab.get("org"), "lab_tier": lab.get("tier"),
+                           "last_commit_at": _iso(_aware(rc.last_commit_at))})
+            e.evidence = [ev]
         strong = sorted((rc for rc in rows if (rc.contributions or 0) >= MIN_CO_COMMITS),
                         key=lambda rc: (-(rc.contributions or 0), str(rc.person_id)))[:MAX_REPO_PAIR_CONTRIBUTORS]
         for x, y in combinations(strong, 2):
@@ -276,13 +291,20 @@ def build(session: Session) -> dict[str, Any]:
             e.is_demo = e.is_demo or bool(repo.is_demo) or _demo(people, x.person_id, y.person_id)
             e.see(start, end)
             e.weight += 1
-            e.evidence.append({
+            ev = {
                 "title": repo.full_name,
                 "detail": f"Both contributed: {x.contributions} and {y.contributions} commits",
                 "source_url": f"{url}/graphs/contributors", "source_type": "github",
                 "event_at": _iso(start), "repo_id": str(rid),
                 "company_id": str(repo.company_id) if repo.company_id else None,
-            })
+            }
+            if lab:  # prior collaboration on a frontier-lab repository (overlapping commit spans when known)
+                ev["detail"] = (f"Both contributed to {repo.full_name} ({lab.get('label')}): {x.contributions} and "
+                                f"{y.contributions} commits" + (f"; overlapping {start.date()}–{end.date()}"
+                                                                if start and end and start <= end else ""))
+                ev.update({"lab": lab.get("label"), "lab_org": lab.get("org"), "prior_collaboration": True,
+                           "last_commit_at": _iso(end)})
+            e.evidence.append(ev)
             co_contrib.add(ordered_pair(x.person_id, y.person_id))
 
     # ── company membership ──────────────────────────────────────────────────
@@ -358,7 +380,9 @@ def build(session: Session) -> dict[str, Any]:
                 e.weight = 1.5
 
     _public_org_edges(b, people, companies, repos)
-    return _persist(session, b)
+    out = _persist(session, b)
+    out.update(talent_signals(session, people, companies, repos, repo_rows))
+    return out
 
 
 def public_orgs_of(p: Person) -> list[dict[str, Any]]:
@@ -442,6 +466,213 @@ def _public_org_edges(b: _Builder, people: dict[uuid.UUID, Person], companies: d
             }, *e.evidence]
 
 
+# ── talent pool: lab alumni converging on a young org / repo ─────────────────
+
+TALENT_MIN_COMMITS_HERE = 3  # commits to the young org/repo for a talent-pool person to count as a member
+LAB_ALUMNI_MIN = 2
+
+
+def lab_source(repo: Repository) -> dict[str, Any] | None:
+    """The talent source of a frontier-lab repository (``attrs['talent_source']``), else None."""
+    v = (repo.attrs or {}).get("talent_source")
+    return v if isinstance(v, dict) else None
+
+
+def _span_text(first: datetime | None, last: datetime | None) -> str:
+    f, la = _aware(first), _aware(last)
+    if f and la:
+        return f" (weeks of {f.date()} to {la.date()})"
+    if la:
+        return f" (latest {la.date()})"
+    return ""
+
+
+def lab_contributions_of(p: Person) -> list[dict[str, Any]]:
+    return [e for e in ((p.attrs or {}).get("lab_contributions") or []) if isinstance(e, dict) and e.get("repo")]
+
+
+def _talent_lab_orgs(talent: dict[uuid.UUID, Person]) -> set[str]:
+    orgs = {str(e.get("org") or e["repo"].split("/")[0]).lower() for p in talent.values() for e in lab_contributions_of(p)}
+    try:
+        from radar.providers.github import load_talent_config
+
+        orgs |= set(load_talent_config().by_org())
+    except Exception:  # noqa: BLE001 — a broken config never blocks the relationship build
+        log.warning("talent_sources.yaml could not be read", exc_info=True)
+    return orgs
+
+
+def _insert_signal(session: Session, *, entity_type: str, entity_id: uuid.UUID, signal_type: str, title: str,
+                   description: str, source_url: str | None, event_at: datetime, dedup: str, meta: dict[str, Any],
+                   normalized_value: float, raw_value: float | None, is_demo: bool,
+                   links: list[tuple[uuid.UUID, str]]) -> bool:
+    import hashlib
+
+    from radar.models.core import Signal, SignalEntity
+
+    key = hashlib.sha256(dedup.encode()).hexdigest()
+    sid = session.scalar(
+        insert(Signal).values(
+            id=uuid.uuid4(), entity_id=entity_id, entity_type=entity_type, signal_type=signal_type,
+            source_type="github", source_url=source_url, title=title[:2000], description=description,
+            raw_value=raw_value, normalized_value=normalized_value, detected_at=clock.now(), event_at=event_at,
+            confidence=1.0, epistemic="FACT", dedup_key=key, is_demo=is_demo, meta=meta,
+        ).on_conflict_do_nothing(index_elements=["dedup_key"]).returning(Signal.id))
+    if sid is None:
+        return False
+    for eid, etype in links:
+        if eid != entity_id:
+            session.execute(insert(SignalEntity).values(id=uuid.uuid4(), signal_id=sid, entity_id=eid,
+                                                        entity_type=etype, relation="related")
+                            .on_conflict_do_nothing(constraint="uq_signal_entity"))
+    return True
+
+
+def talent_signals(session: Session, people: dict[uuid.UUID, Person], companies: dict[uuid.UUID, Company],
+                   repos: dict[uuid.UUID, Repository], repo_rows: dict[uuid.UUID, list[RepoContributor]],
+                   ) -> dict[str, int]:
+    """Signals from the talent pool's commit graph (FACT; idempotent via dedup keys):
+
+    * ``lab_alumni_cluster`` — >= 2 talent-pool people (verified frontier-lab commit history) with >= 3 commits
+      each to the same *non-lab* young org (entity: company) or young repository without a tracked org (entity:
+      repository; its owner counts as a member). A new member set is a new event.
+    * ``joined_young_org`` — a talent-pool person with >= 3 commits to a young org's repositories (complements the
+      public-membership check in ``GitHubProvider.recent_activity``; one per person and org)."""
+    from radar.scoring.formation import YOUNG_DAYS, _company_created, curated_list_anchor
+
+    talent = {pid: p for pid, p in people.items() if lab_contributions_of(p) and not p.dismissed}
+    out = {"lab_alumni_cluster": 0, "talent_joined_young_org": 0, "talent_pool": len(talent)}
+    if len(talent) < 1:
+        return out
+    lab_orgs = _talent_lab_orgs(talent)
+    today = clock.today()
+    by_company: dict[uuid.UUID, list[Repository]] = defaultdict(list)
+    for r in repos.values():
+        if r.company_id:
+            by_company[r.company_id].append(r)
+    young_company: dict[uuid.UUID, date] = {}
+    for cid, c in companies.items():
+        if c.dismissed or (c.github_org or "").lower() in lab_orgs:
+            continue
+        created = _company_created(c, by_company.get(cid, []))
+        if created is not None and 0 <= (today - created).days <= YOUNG_DAYS \
+                and curated_list_anchor(c, by_company.get(cid, [])) is None:
+            young_company[cid] = created
+
+    # anchor -> person -> {commits, first, repos}
+    anchors: dict[tuple[str, uuid.UUID], dict[uuid.UUID, dict[str, Any]]] = defaultdict(dict)
+    anchor_created: dict[tuple[str, uuid.UUID], date | None] = {}
+    for rid, rows in repo_rows.items():
+        repo = repos[rid]
+        if lab_source(repo) or (repo.owner or "").lower() in lab_orgs:
+            continue
+        if repo.company_id and repo.company_id in young_company:
+            anchor = ("company", repo.company_id)
+            anchor_created[anchor] = young_company[repo.company_id]
+        elif repo.company_id is None and repo.gh_created_at is not None \
+                and 0 <= (today - _aware(repo.gh_created_at).date()).days <= YOUNG_DAYS \
+                and not curated_list_anchor_repo(repo):
+            anchor = ("repository", rid)
+            anchor_created[anchor] = _aware(repo.gh_created_at).date()
+        else:
+            continue
+        for rc in rows:
+            p = talent.get(rc.person_id)
+            if p is None:
+                continue
+            owner = anchor[0] == "repository" and p.github_handle and p.github_handle.lower() == (repo.owner or "").lower()
+            if (rc.contributions or 0) < TALENT_MIN_COMMITS_HERE and not owner:
+                continue
+            m = anchors[anchor].setdefault(rc.person_id, {"commits": 0, "first": None, "repos": [], "owner": False})
+            m["commits"] += int(rc.contributions or 0)
+            m["owner"] = m["owner"] or bool(owner)
+            f = _aware(rc.first_commit_at)
+            if f and (m["first"] is None or f < m["first"]):
+                m["first"] = f
+            m["repos"].append(repo.full_name)
+
+    existing_joined = {(eid, str((meta or {}).get("org") or "").lower()) for eid, meta in session.execute(
+        select(Signal.entity_id, Signal.meta).where(Signal.signal_type == "joined_young_org",
+                                                    Signal.entity_id.in_(list(talent)))).all()}
+    for anchor, members in anchors.items():
+        kind, aid = anchor
+        created = anchor_created.get(anchor)
+        created_at = _aware(created) if created else None
+        if kind == "company":
+            c = companies[aid]
+            name, login = c.name, c.github_org
+            url = f"https://github.com/{login}" if login else None
+            # joined_young_org from commits (public membership is checked by the provider).
+            for pid, m in members.items():
+                if not login or m["commits"] < TALENT_MIN_COMMITS_HERE or (pid, login.lower()) in existing_joined:
+                    continue
+                p = talent[pid]
+                age = (today - created).days if created else None
+                if _insert_signal(
+                    session, entity_type="person", entity_id=pid, signal_type="joined_young_org",
+                    title=f"{p.github_handle or p.name} is committing to {name}, a GitHub organization created "
+                          f"{age} days ago",
+                    description=(f"{m['commits']} commits to {', '.join(sorted(set(m['repos'])))} (public commit "
+                                 f"history) in github.com/{login}, created {created}. A young organization is a "
+                                 "possible formation signal, not a company."),
+                    source_url=url, event_at=m["first"] or created_at or clock.now(),
+                    dedup=f"joined_young_org|{pid}|{login.lower()}",
+                    meta={"org": login, "org_name": name, "org_created_at": _iso(created_at), "commits": m["commits"],
+                          "repo": sorted(set(m["repos"]))[0], "public_member": False, "age_days": age,
+                          "basis": "repo_contributors commit counts"},
+                    normalized_value=0.75, raw_value=float(m["commits"]),
+                    is_demo=bool(p.is_demo or c.is_demo), links=[(aid, "company")],
+                ):
+                    out["talent_joined_young_org"] += 1
+                existing_joined.add((pid, login.lower()))
+        else:
+            r = repos[aid]
+            name, url = r.full_name, f"https://github.com/{r.full_name}"
+        if len(members) < LAB_ALUMNI_MIN:
+            continue
+        out["lab_alumni_cluster"] += 1
+        rows_m = []
+        for pid, m in sorted(members.items(), key=lambda kv: (-kv[1]["commits"], str(kv[0]))):
+            p = talent[pid]
+            labs = [{"org": e.get("org"), "label": e.get("label"), "tier": e.get("tier"), "repo": e.get("repo"),
+                     "commits": e.get("commits")} for e in lab_contributions_of(p)][:5]
+            rows_m.append({"person_id": str(pid), "login": p.github_handle, "name": p.name, "commits": m["commits"],
+                           "owner": m["owner"], "repos": sorted(set(m["repos"])),
+                           "first_commit_at": _iso(m["first"]), "labs": labs})
+        firsts = sorted(m["first"] for m in members.values() if m["first"])
+        event_at = firsts[1] if len(firsts) >= 2 else (created_at or clock.now())
+        lab_names = sorted({str(lb.get("label") or lb.get("org")) for m in rows_m for lb in m["labs"]})
+        tier1 = any(int(lb.get("tier") or 2) == 1 for m in rows_m for lb in m["labs"])
+        who = "; ".join(
+            f"{m['login'] or m['name']} ({m['commits']} commits here" + ("" if not m["owner"] else ", owner")
+            + "; previously " + ", ".join(f"{lb['commits']} commits to {lb['repo']}" for lb in m["labs"][:2]) + ")"
+            for m in rows_m[:8])
+        demo = any(talent[pid].is_demo for pid in members) or (kind == "company" and companies[aid].is_demo) \
+            or (kind == "repository" and repos[aid].is_demo)
+        n = len(members)
+        _insert_signal(
+            session, entity_type=kind, entity_id=aid, signal_type="lab_alumni_cluster",
+            title=f"{n} engineers with frontier-lab commit history are contributing to {name}",
+            description=(f"{who}. Lab history is verified public commit history ({', '.join(lab_names)}), not "
+                         "employment. Several lab alumni on one young project is a possible formation signal."),
+            source_url=url, event_at=event_at,
+            dedup=f"lab_alumni_cluster|{kind}|{aid}|" + ",".join(sorted(str(pid) for pid in members)),
+            meta={"anchor_type": kind, "anchor": name, "anchor_created_at": _iso(created_at), "members": rows_m,
+                  "lab_orgs": sorted({str(lb.get("org")) for m in rows_m for lb in m["labs"] if lb.get("org")}),
+                  "labs": lab_names, "min_commits": TALENT_MIN_COMMITS_HERE, "basis": "repo_contributors + "
+                  "Person.attrs.lab_contributions (GitHub commit history)"},
+            normalized_value=round(min(1.0, 0.5 + 0.15 * (n - 1) + (0.1 if tier1 else 0.0)), 4), raw_value=float(n),
+            is_demo=bool(demo), links=[(pid, "person") for pid in members],
+        )
+    return out
+
+
+def curated_list_anchor_repo(repo: Repository) -> bool:
+    from radar.providers.github import is_curated_list_repo
+
+    return is_curated_list_repo(repo.full_name, repo.description, repo.topics or [])
+
+
 def _persist(session: Session, b: _Builder) -> dict[str, Any]:
     now = clock.wall_now()
     rows = [e.values() for e in b.edges.values()]
@@ -470,5 +701,6 @@ def _persist(session: Session, b: _Builder) -> dict[str, Any]:
     return out
 
 
-__all__ = ["KINDS", "PERSON_PAIR_KINDS", "build", "employer_key", "membership_epistemic", "ordered_pair",
-           "public_org_alias", "public_org_display", "public_orgs_of"]
+__all__ = ["KINDS", "PERSON_PAIR_KINDS", "build", "employer_key", "lab_contributions_of", "lab_source",
+           "membership_epistemic", "ordered_pair", "public_org_alias", "public_org_display", "public_orgs_of",
+           "talent_signals"]

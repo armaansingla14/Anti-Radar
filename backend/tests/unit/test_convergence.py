@@ -160,3 +160,70 @@ def test_founding_members_window():
 
     got, unknown = founding_members({A: date(2026, 7, 25), B: date(2026, 8, 31), C: None}, CREATED, 30)
     assert got == sorted([A, B], key=str) and unknown == 1
+
+
+# ── lab alumni (talent pool) ─────────────────────────────────────────────────
+
+
+def _labs(*rows):
+    from radar.scoring.features import parse_lab_contributions
+
+    return parse_lab_contributions([{"org": o, "label": o, "tier": 1, "repo": r, "commits": n,
+                                     "first_commit_at": f, "last_commit_at": last} for o, r, n, f, last in rows])
+
+
+def test_same_lab_repo_before_anchor_is_a_strong_verified_tie():
+    lab = {A: _labs(("NVIDIA", "cutlass", 412, "2024-03-01", "2025-05-01")),
+           B: _labs(("NVIDIA", "cutlass", 57, "2024-06-01", "2025-02-01")),
+           C: []}
+    res = convergence(MEMBERS, [], CREATED, anchor_name="acme", families=["github"], lab=lab)
+    assert res.prior_relationships == 1 and res.connected_members == 2
+    assert res.lab_members == sorted([A, B], key=str)
+    (tie,) = res.ties
+    assert tie.kind == "LAB_CO_CONTRIBUTED" and tie.verified and tie.at.date() == date(2024, 6, 1)
+    assert "Two of three members previously contributed to NVIDIA/cutlass (verified commits, 2024–2025)" \
+        in res.explanation
+    assert "worked" not in res.explanation.lower()
+    # Recency from the overlap's end (Feb 2025), CONTRIBUTED_WITH base weight; two-person team -> MEDIUM.
+    assert 0.3 < tie.weight < 0.8
+    pair = convergence(MEMBERS[:2], [], CREATED, anchor_name="acme", families=["github"], lab=lab)
+    assert pair.strength == "MEDIUM" and res.strength == "LOW"
+    assert res.to_json()["lab_members"] == [str(m) for m in sorted([A, B], key=str)]
+
+
+def test_lab_tie_not_double_counted_with_relationship_and_needs_pre_anchor_dates():
+    lab = {A: _labs(("NVIDIA", "cutlass", 412, "2024-03-01", "2025-05-01")),
+           B: _labs(("NVIDIA", "cutlass", 57, "2024-06-01", "2025-02-01"))}
+    rel = cocontrib(A, B, "2024-06-01", "r1", title="NVIDIA/cutlass")
+    both = convergence(MEMBERS, [rel], CREATED, anchor_name="acme", lab=lab)
+    only_rel = convergence(MEMBERS, [rel], CREATED, anchor_name="acme")
+    assert both.score == only_rel.score and len(both.ties) == 1
+    # ... but explained as the verified lab history it is.
+    assert both.ties[0].kind == "LAB_CO_CONTRIBUTED"
+    assert "Two of three members previously contributed to NVIDIA/cutlass (verified commits, 2024–2025)" \
+        in both.explanation
+    # Started on the lab repo after the anchor existed: not prior history; same org -> context only.
+    late = {A: _labs(("NVIDIA", "cutlass", 412, "2026-08-10", "2026-09-01")),
+            B: _labs(("NVIDIA", "cutlass", 57, "2024-06-01", "2025-02-01"))}
+    res = convergence(MEMBERS, [], CREATED, anchor_name="acme", lab=late)
+    assert [t.kind for t in res.ties] == ["LAB_SHARED_ORG"]
+
+
+def test_shared_lab_org_is_weak_context_and_single_lab_member_gets_nothing():
+    lab = {A: _labs(("openai", "triton", 120, "2024-01-01", "2025-01-01")),
+           B: _labs(("openai", "whisper", 30, None, None))}
+    res = convergence(MEMBERS, [], CREATED, anchor_name="acme", families=["github"], lab=lab)
+    (tie,) = res.ties
+    assert tie.kind == "LAB_SHARED_ORG" and tie.at is None and tie.verified
+    assert "Two of three members have verified commits to openai repositories (shared lab context; " \
+           "not evidence of employment)" in res.explanation
+    assert res.strength == "LOW" and res.kinds == ["LAB_SHARED_ORG"]
+    strong = convergence(MEMBERS, [], CREATED, anchor_name="acme", families=["github"], lab={
+        A: _labs(("openai", "triton", 120, "2024-01-01", "2025-01-01")),
+        B: _labs(("openai", "triton", 30, "2024-02-01", "2025-01-01"))})
+    assert strong.score > res.score
+    solo = convergence(MEMBERS, [], CREATED, anchor_name="acme", lab={A: lab[A]})
+    assert solo.ties == [] and solo.lab_members == [A]
+    other_labs = convergence(MEMBERS, [], CREATED, anchor_name="acme", lab={
+        A: lab[A], B: _labs(("NVIDIA", "cutlass", 30, "2024-01-01", "2025-01-01"))})
+    assert other_labs.ties == []  # different labs: no shared context, no credit

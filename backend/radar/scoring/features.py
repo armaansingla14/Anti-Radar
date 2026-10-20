@@ -6,15 +6,26 @@ zero*. Scoring code must never treat the two the same way.
 
 from __future__ import annotations
 
+import math
 import uuid
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
-# Signal types that indicate someone is forming something new.
-FORMATION_SIGNAL_TYPES = frozenset(
+# A person's own statements/profile changes that suggest a transition (affiliation/bio change, formation language).
+TRANSITION_SIGNAL_TYPES = frozenset(
     {"affiliation_changed", "bio_changed", "formation_language", "x_formation_post"}
 )
+# Discrete, dated formation *events* about a person (dated at repo/org creation or first commit — never
+# observation time, so they are not measurement signals): a new non-fork repository of their own in a thesis
+# area, or becoming a contributor/public member of a young organization. A repository is not a company.
+FORMATION_EVENT_TYPES = frozenset({"new_project", "joined_young_org"})
+# Signal types that indicate someone is forming something new.
+FORMATION_SIGNAL_TYPES = TRANSITION_SIGNAL_TYPES | FORMATION_EVENT_TYPES
+# Several talent-pool people (verified lab contributors) committing to the same new org/repository. The signal's
+# primary entity is the org/repo; members are linked through signal_entities.
+LAB_ALUMNI_CLUSTER = "lab_alumni_cluster"
 # Measurement signals restate metric features (stars_30d, commits_4w, new contributors, open roles)
 # and are dated when observed, not when the change happened. They are evidence, never collision events:
 # counting them would double-count the metrics and make reconstructed history incomparable.
@@ -37,6 +48,8 @@ class SignalLite:
     is_demo: bool = False
     raw_value: float | None = None
     entity_id: uuid.UUID | None = None  # the signal's primary entity (who/what it is about)
+    # Signal metadata, loaded only for formation events / lab-alumni clusters (see extract.load_signal_index).
+    meta: dict[str, Any] | None = field(default=None, compare=False, hash=False)
 
     def evidence(self, weight: float | None = None) -> dict[str, Any]:
         """EvidenceItem-shaped dict (schemas/api.py)."""
@@ -50,6 +63,150 @@ class SignalLite:
         if weight is not None:
             out["weight"] = round(weight, 4)
         return out
+
+
+# ── Talent pool: verified lab / frontier-OSS contributions ─────────────────────
+# ``Person.attrs['lab_contributions']`` = [{org, label, tier, repo, commits, first_commit_at, last_commit_at}],
+# written from the GitHub API (commits on the default branch). "Contributed N commits to org/repo" is a VERIFIED
+# fact; it never implies employment ("worked at") — employment stays self-reported/INFERRED.
+
+LAB_TIER_WEIGHT = {1: 1.0, 2: 0.6}
+LAB_MIN_COMMITS = 3  # fewer commits (a typo fix) is not technical history
+LAB_FULL_COMMITS = 100  # depth reaches 1.0 at this many commits (log scale)
+LAB_DEPTH_FLOOR = 0.35
+# Self-reported / listed affiliation strings count for less than verified history (contributions, public org
+# membership observed via the GitHub API).
+SELF_REPORTED_FACTOR = 0.7
+
+
+def _as_dt(v: Any) -> datetime | None:
+    if v is None or v == "":
+        return None
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=UTC)
+    if isinstance(v, date):
+        return datetime(v.year, v.month, v.day, tzinfo=UTC)
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class LabContribution:
+    """One verified contribution history to a lab / frontier-OSS repository."""
+
+    org: str
+    label: str
+    tier: int
+    repo: str  # repository name (without the owner)
+    commits: int
+    first_commit_at: datetime | None = None
+    last_commit_at: datetime | None = None
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.org}/{self.repo}"
+
+    @property
+    def tier_label(self) -> str:
+        return f"tier-{self.tier}"
+
+    @property
+    def depth(self) -> float:
+        """0.35..1 by commits on a log scale (3 commits ~0.55, 20 ~0.78, >= 100 -> 1)."""
+        c = max(self.commits, 0)
+        return LAB_DEPTH_FLOOR + (1 - LAB_DEPTH_FLOOR) * min(1.0, math.log1p(c) / math.log1p(LAB_FULL_COMMITS))
+
+    @property
+    def strength(self) -> float:
+        return LAB_TIER_WEIGHT.get(self.tier, 0.0) * self.depth
+
+    def years(self) -> str | None:
+        """'2024–2025' / '2025' from first/last commit dates (None if unknown)."""
+        ys = sorted({d.year for d in (self.first_commit_at, self.last_commit_at) if d is not None})
+        if not ys:
+            return None
+        return str(ys[0]) if len(ys) == 1 else f"{ys[0]}\u2013{ys[-1]}"
+
+    def phrase(self, *, verb: bool = True) -> str:
+        """'Contributed 412 commits to google-deepmind/mujoco (tier-1 lab repository, verified)'."""
+        n = f"{self.commits:,} commit{'s' if self.commits != 1 else ''}"
+        head = f"Contributed {n} to" if verb else f"{n} to"
+        return f"{head} {self.full_name} ({self.tier_label} lab repository, verified)"
+
+    def to_json(self) -> dict[str, Any]:
+        return {"org": self.org, "label": self.label, "tier": self.tier, "repo": self.repo,
+                "full_name": self.full_name, "commits": self.commits,
+                "first_commit_at": self.first_commit_at.isoformat() if self.first_commit_at else None,
+                "last_commit_at": self.last_commit_at.isoformat() if self.last_commit_at else None}
+
+
+def parse_lab_contributions(
+    items: Iterable[Any] | None, tier_of: Callable[[str], int | None] | Mapping[str, int] | None = None,
+) -> list[LabContribution]:
+    """Validated lab contributions (>= LAB_MIN_COMMITS, known tier), strongest first, one per repository.
+
+    ``tier_of`` (org login -> 1|2) fills a missing tier (config/talent_sources.yaml)."""
+    best: dict[str, LabContribution] = {}
+    for it in items or []:
+        if not isinstance(it, Mapping):
+            continue
+        org, repo = str(it.get("org") or "").strip(), str(it.get("repo") or "").strip()
+        if "/" in repo:
+            owner, repo = repo.split("/", 1)
+            org = org or owner
+        if not org or not repo:
+            continue
+        try:
+            commits = int(it.get("commits") or 0)
+        except (TypeError, ValueError):
+            continue
+        if commits < LAB_MIN_COMMITS:
+            continue
+        tier = it.get("tier")
+        if tier is None and tier_of is not None:
+            tier = tier_of.get(org.lower()) if isinstance(tier_of, Mapping) else tier_of(org)
+        try:
+            tier = int(tier) if tier is not None else None
+        except (TypeError, ValueError):
+            tier = None
+        if tier not in LAB_TIER_WEIGHT:
+            continue
+        lc = LabContribution(org=org, label=str(it.get("label") or org), tier=tier, repo=repo, commits=commits,
+                             first_commit_at=_as_dt(it.get("first_commit_at")),
+                             last_commit_at=_as_dt(it.get("last_commit_at")))
+        key = lc.full_name.lower()
+        if key not in best or lc.commits > best[key].commits:
+            best[key] = lc
+    return sorted(best.values(), key=lambda c: (-c.strength, -c.commits, c.full_name.lower()))
+
+
+def lab_strength(labs: Iterable[LabContribution]) -> float:
+    """0..1: the strongest verified lab contribution (tier weight x commit depth)."""
+    return max((c.strength for c in labs), default=0.0)
+
+
+def pedigree_strength(tier: float, basis: str | None, labs: Iterable[LabContribution],
+                      self_reported: bool = True) -> tuple[float, str]:
+    """(0..1, source) — the best of verified lab contributions, a public GitHub org membership (observed), and
+    an affiliation string — discounted by ``SELF_REPORTED_FACTOR`` when it is self-reported (the person's own
+    profile; a curated/listed affiliation keeps its tier). Source: 'lab_contribution' | 'public_github_org' |
+    'affiliation' | 'none'."""
+    lab = lab_strength(labs)
+    discount = SELF_REPORTED_FACTOR if self_reported and basis != "public_github_org" else 1.0
+    other = tier * discount
+    if lab <= 0 and other <= 0:
+        return 0.0, "none"
+    if lab >= other:
+        return min(lab, 1.0), "lab_contribution"
+    return min(other, 1.0), ("public_github_org" if basis == "public_github_org" else "affiliation")
+
+
+def lab_summary(labs: list[LabContribution], limit: int = 2) -> str:
+    """'412 commits to google-deepmind/mujoco; 37 commits to NVIDIA/cutlass' (verified facts, no employment)."""
+    return "; ".join(c.phrase(verb=False).split(" (")[0] for c in labs[:limit])
 
 
 @dataclass
@@ -115,6 +272,16 @@ class PersonFeatures:
     # people's formation signals. Formation is scored only from these.
     own_signals: list[SignalLite] = field(default_factory=list)
     is_demo: bool = False
+    # Where the affiliation tier came from (honest explanations, founder.pedigree).
+    tier_basis: str | None = None
+    tier_org_login: str | None = None
+    public_orgs: list[str] = field(default_factory=list)
+    affiliation_self_reported: bool = False  # affiliation strings come from the person's own profile
+    # Verified talent-pool history (Person.attrs['lab_contributions']), strongest first.
+    lab_contributions: list[LabContribution] = field(default_factory=list)
+    # Own dated formation events (FORMATION_EVENT_TYPES) and lab-alumni clusters the person is part of.
+    new_projects: list[str] = field(default_factory=list)  # repo full names
+    lab_clusters: list[str] = field(default_factory=list)  # cluster signal titles
 
 
 @dataclass

@@ -29,6 +29,11 @@ Meet score (0..100, every input already stored by the scoring pipeline)
              not_interesting −4, already_known −4, wrong_thesis −3; total capped at ±10.
              (Global learned preference weights already act inside the Founder Score — not
              counted twice.)
+* talent     + up to 8 × verified lab strength (``features.lab_strength``: tier weight × commit depth of the
+             person's verified lab-repository commits, ``Person.attrs['lab_contributions']``) when the person
+             has a recent own formation event (new_project / joined_young_org / lab_alumni_cluster in the last
+             90 days); a quarter of that without one. Prefers talent-pool people who are starting something
+             over unknown contributors. The total is capped at 100.
 * obviousness −25 when the person has > 20k followers, or > 1k followers and a current affiliation
              with an established organization (``scoring.formation._established_employer``) —
              waived when the best Formation Score is ≥ 60 (exceptional formation evidence).
@@ -82,7 +87,14 @@ from radar.models import (
 from radar.pipeline.aliases import org_key
 from radar.providers.github import is_bot
 from radar.schemas.api import EvidenceItem, MeetCard, MeetFeed, MeetFormation
-from radar.scoring.features import MEASUREMENT_SIGNAL_TYPES
+from radar.scoring.extract import person_lab_contributions
+from radar.scoring.features import (
+    FORMATION_EVENT_TYPES,
+    LAB_ALUMNI_CLUSTER,
+    MEASUREMENT_SIGNAL_TYPES,
+    LabContribution,
+    lab_strength,
+)
 from radar.scoring.formation import FORMATION_FAMILY
 from radar.services import presenters as P
 from radar.services.formation import include_demo_default, subtopic_label
@@ -101,6 +113,9 @@ ESTABLISHED_PERSON_FOLLOWERS = 1_000
 EXCEPTIONAL_FORMATION = 60.0
 OBVIOUS_PENALTY = 25.0
 FEEDBACK_CAP = 10.0
+TALENT_POINTS = 8.0
+TALENT_NO_EVENT_SHARE = 0.25
+TALENT_EVENT_TYPES = FORMATION_EVENT_TYPES | {LAB_ALUMNI_CLUSTER}
 HISTORY_WEEKS = 26
 
 WEIGHTS: dict[str, float] = {"founder": 30, "formation": 25, "thesis": 10, "recency": 10, "attention": 10,
@@ -116,7 +131,8 @@ WHAT_CHANGED_LIMIT = 4
 # Signal types that describe a change worth mentioning under "what changed".
 CHANGE_TYPES = frozenset({"affiliation_changed", "bio_changed", "org_created", "repo_created", "formation_language",
                           "x_formation_post", "paper_published", "paper_with_code", "release_published", "hn_launch",
-                          "hn_show", "young_org_team", "author_recurrence"})
+                          "hn_show", "young_org_team", "author_recurrence", "new_project", "joined_young_org",
+                          LAB_ALUMNI_CLUSTER})
 _FOUNDER_COMPONENTS = ("technical_output", "research", "pedigree", "formation")
 
 
@@ -172,6 +188,7 @@ class Ranked:
     obvious: str | None
     feedback: dict[str, float]
     group: str | None
+    labs: list[LabContribution] = field(default_factory=list)  # verified lab-repository history
 
     @property
     def founder_score(self) -> float:
@@ -327,7 +344,16 @@ def confidence_for(n_families: int) -> str:
 
 
 def meet_score(features: dict[str, float]) -> float:
-    return round(max(0.0, sum(features.values())), 2)
+    return round(min(100.0, max(0.0, sum(features.values()))), 2)
+
+
+def formation_events(ev: Evidence) -> list[Signal]:
+    """The person's own recent formation events (newest first): new project, joined young org, lab cluster."""
+    return [s for s in ev.signals if s.signal_type in TALENT_EVENT_TYPES]
+
+
+def talent_points(labs: Sequence[LabContribution], has_event: bool) -> float:
+    return TALENT_POINTS * lab_strength(labs) * (1.0 if has_event else TALENT_NO_EVENT_SHARE)
 
 
 def rank_people(session: Session, *, include_demo: bool | None = None, limit: int = MEET_LIMIT) -> list[Ranked]:
@@ -367,6 +393,8 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
                 labels.setdefault(k, v)
         feedback = max(-FEEDBACK_CAP, min(FEEDBACK_CAP, sum(labels.values())))
         obvious = _obviousness(session, p, fscore, young_ids)
+        labs = person_lab_contributions(p)
+        events = formation_events(ev)
         features = {
             "founder": WEIGHTS["founder"] * float(snap.score) / 100,
             "formation": WEIGHTS["formation"] * fscore / 100,
@@ -374,12 +402,14 @@ def rank_people(session: Session, *, include_demo: bool | None = None, limit: in
             "recency": WEIGHTS["recency"] * recency,
             "attention": WEIGHTS["attention"] * _comp_ratio(snap, "attention_gap"),
             "collision": WEIGHTS["collision"] * min(len(families), COLLISION_FULL) / COLLISION_FULL,
+            "talent": talent_points(labs, bool(events)),
             "feedback": feedback,
             "obviousness": -OBVIOUS_PENALTY if obvious else 0.0,
         }
         features = {k: round(v, 2) for k, v in features.items()}
         out.append(Ranked(person=p, snap=snap, score=meet_score(features), features=features, families=families,
-                          evidence=ev, candidate=cand, obvious=obvious, feedback=labels, group=_group_key(p, cand)))
+                          evidence=ev, candidate=cand, obvious=obvious, feedback=labels, group=_group_key(p, cand),
+                          labs=labs))
     return select_diverse(out, limit)
 
 
@@ -452,9 +482,13 @@ def _anchor_affiliation(p: Person, anchor: Company | None) -> str | None:
 
 def why_person(r: Ranked, founder_of: Sequence[str], anchor: Company | None = None) -> list[str]:
     comps = r.snap.components or {}
-    out = [f"Founder Score {round(r.founder_score)}/100"]
+    # Verified technical history leads ('412 commits to google-deepmind/mujoco'); never phrased as employment.
+    out = [c.phrase(verb=False) for c in r.labs[:2]]
+    out.append(f"Founder Score {round(r.founder_score)}/100")
     for key in _FOUNDER_COMPONENTS:
         c = comps.get(key) or {}
+        if key == "pedigree" and r.labs and ((c.get("raw") or {}).get("source") in (None, "lab_contribution")):
+            continue  # already leading with the verified lab history
         if (c.get("value") or 0) > 0 and c.get("explanation"):
             text = c["explanation"]
             if key == "pedigree" and r.person.attrs and (r.person.attrs or {}).get("self_reported"):
@@ -481,8 +515,11 @@ def why_now(r: Ranked, now: datetime) -> list[EvidenceItem]:
     items: list[EvidenceItem] = []
     seen: set[str] = set()
     recent = now - timedelta(days=RECENCY_DAYS)
-    for s in r.evidence.signals:
-        if s.event_at < recent or s.title in seen:
+    # The new project / young org (formation events) first, within the evidence window; then the newest evidence.
+    events = [s for s in formation_events(r.evidence) if s.event_at <= now + timedelta(days=1)]
+    rest = [s for s in r.evidence.signals if s.event_at >= recent and s.signal_type not in TALENT_EVENT_TYPES]
+    for s in [*events, *rest]:
+        if s.title in seen:
             continue
         seen.add(s.title)
         items.append(P.evidence_from_signal(s))

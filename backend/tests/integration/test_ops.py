@@ -179,8 +179,8 @@ def test_failed_job_is_recorded_and_sweep_continues(db, monkeypatch):
 def test_sweep_step_order_and_cli_step_list_in_sync():
     from radar import cli
 
-    assert ops.SWEEP_STEPS == ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "meet",
-                               "brief")
+    assert ops.SWEEP_STEPS == ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "score",
+                               "meet", "brief")
     assert cli._ALL_STEPS == ops.ALL_STEPS
     assert [s for s in ops.ALL_STEPS if s in ops.SWEEP_STEPS] == list(ops.SWEEP_STEPS)
 
@@ -197,6 +197,8 @@ class _Run:
 def _fake_result(step: str):
     if step == "enrich":
         return {"anchors": 0, "runs": [(_Run(), None)]}
+    if step == "talent":
+        return {"runs": [(_Run(), None)], "pool_orgs": [], "activity_people": 0}
     return [(_Run(), None)] if step == "web" else (_Run(), None)
 
 

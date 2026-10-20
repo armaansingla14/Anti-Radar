@@ -330,13 +330,15 @@ def refine_topics_with_llm(limit: int = 60) -> int:
 # ── Sweep (one-shot; used by `radar sweep`, the worker and scheduled Actions) ──────────
 
 
-SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score",
-                                 "meet", "brief")
+SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe",
+                                 "score", "meet", "brief")
 # 'formation' (relationships + formation candidates) runs after 'score'. The default sweep does not list it
 # separately because 'score' (= recompute) already ends with it; `--only formation` refreshes just that part.
 # 'meet' stores the current ISO week's Who-Should-We-Meet ranking if it is missing (never reshuffles a stored week).
-ALL_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score",
+ALL_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "talent", "enrich", "web", "stats", "probe", "score",
                               "formation", "meet", "brief", "retention")
+# 'talent' refreshes a rotating slice of the verified talent pool (frontier-lab contributors, weekly per org) and
+# checks the pool's recent activity (new repos, young orgs) daily; see config/talent_sources.yaml.
 ORGS_QUERIES_PER_RUN = 10
 ORGS_MAX_PER_RUN = 60
 ORGS_CREATED_WITHIN_DAYS = 180
@@ -507,6 +509,8 @@ def _step_ingest(step: str) -> Any:
         return ingest_github()
     if step == "orgs":
         return ingest_young_orgs()
+    if step == "talent":
+        return ingest_talent()
     if step == "enrich":
         return enrich_formation_anchors()
     if step == "stats":
@@ -544,6 +548,8 @@ def run_step(step: str) -> dict[str, Any]:
         return {"status": "error", "errors": 1, "error": f"{type(e).__name__}: {e}"[:500]}
     if step == "enrich":
         return _enrich_status(res)
+    if step == "talent":
+        return _talent_status(res)
     if step == "stats" and res is None:
         return {"status": "ok", "signals": 0, "errors": 0, "repos": 0}
     if step == "web":
@@ -556,7 +562,8 @@ def run_step(step: str) -> dict[str, Any]:
 
 def sweep(steps: list[str] | tuple[str, ...] | None = None, *, github: bool = True, arxiv: bool = True,
           hn: bool = True, websites: bool = True) -> dict[str, Any]:
-    """One full sweep in order (hn, arxiv, github, orgs, enrich, web, stats, probe, score, brief) or the given steps.
+    """One full sweep in order (hn, arxiv, github, orgs, talent, enrich, web, stats, probe, score, meet, brief) or
+    the given steps.
 
     Steps always run in canonical order; each is recorded in ``ingestion_runs``. The legacy
     keyword flags remove steps from the default list."""
@@ -892,3 +899,186 @@ def retry_young_org_stats(limit: int = 80) -> Any:
     if not names:
         return None  # nothing missing: no provider run (an empty run would look like fresh GitHub data)
     return _run("github", lambda: gh.retry_stats(names), params, gh.client.stats)
+
+
+# ── Talent pool (verified frontier-lab contributors) + what they start ─────────────────
+
+
+def talent_config():
+    from radar.providers.github import load_talent_config
+
+    return load_talent_config()
+
+
+def talent_orgs_refreshed_since(days: int) -> set[str]:
+    """Lower-case orgs whose talent_pool fetch finished ok/partial within ``days`` (from ``ingestion_runs``)."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from radar.models import IngestionRun
+
+    cut = clock.wall_now() - timedelta(days=days)
+    out: set[str] = set()
+    with session_scope() as s:
+        for params, status in s.execute(
+            select(IngestionRun.params, IngestionRun.status)
+            .where(IngestionRun.provider == "github", IngestionRun.params["talent"].as_string() == "pool",
+                   IngestionRun.started_at >= cut)
+        ):
+            if status in ("ok", "partial"):
+                out |= {str(o).lower() for o in (params or {}).get("orgs") or []}
+    return out
+
+
+def talent_due_orgs(cfg=None, *, n: int | None = None) -> list[str]:
+    """Next talent orgs to refresh: those not fetched within ``refresh_days``, in config order, at most ``n``
+    (default ``orgs_per_run``) — so a full cycle completes over a few runs and each org refreshes weekly."""
+    cfg = cfg or talent_config()
+    done = talent_orgs_refreshed_since(cfg.limits.refresh_days)
+    due = [s.org for s in cfg.sources if s.org.lower() not in done]
+    return due[: (n if n is not None else cfg.limits.orgs_per_run)]
+
+
+def _known_profiles() -> set[str]:
+    """GitHub logins whose profile (/users/{u}) is already stored (no need to re-fetch it for the pool)."""
+    from sqlalchemy import select
+
+    from radar.models import Person
+
+    with session_scope() as s:
+        return {h.lower() for h, attrs in s.execute(
+            select(Person.github_handle, Person.attrs).where(Person.github_handle.is_not(None), Person.is_demo.is_(False)))
+            if isinstance(attrs, dict) and attrs.get("gh_created_at")}
+
+
+def ingest_talent_pool(orgs: list[str] | None = None, *, all_orgs: bool = False):
+    """Verified talent pool for the due orgs (or ``orgs`` / every configured org). Returns (run, stats) or None
+    when nothing is due."""
+    from radar.providers.github import GitHubProvider
+
+    cfg = talent_config()
+    by_org = cfg.by_org()
+    if orgs:
+        chosen = [by_org[o.lower()] for o in orgs if o.lower() in by_org]
+    elif all_orgs:
+        chosen = list(cfg.sources)
+    else:
+        due = {o.lower() for o in talent_due_orgs(cfg)}
+        chosen = [s for s in cfg.sources if s.org.lower() in due]
+    if not chosen:
+        return None
+    lim = cfg.limits
+    gh = GitHubProvider()
+    known = _known_profiles()
+    params = {"talent": "pool", "orgs": [s.org for s in chosen], "repos_per_org": lim.repos_per_org,
+              "contributors_per_repo": lim.contributors_per_repo, "min_commits": lim.min_commits,
+              "max_people": lim.max_people}
+    return _run("github", lambda: gh.talent_pool(chosen, repos_per_org=lim.repos_per_org,
+                                                 contributors_per_repo=lim.contributors_per_repo,
+                                                 max_people=lim.max_people, min_commits=lim.min_commits,
+                                                 known_profiles=sorted(known)),
+                params, gh.client.stats)
+
+
+def talent_activity_targets(limit: int | None = None, *, recheck_hours: int | None = None) -> list[str]:
+    """Talent-pool people (``attrs.lab_contributions``) to check for new activity: never-checked first, then the
+    oldest ``activity_checked_at``; people checked within ``recheck_hours`` are skipped. Bots/demo/dismissed never."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from radar.models import Person
+    from radar.providers.github import is_bot
+
+    lim = talent_config().limits
+    limit = lim.activity_people_per_run if limit is None else limit
+    recheck = lim.activity_recheck_hours if recheck_hours is None else recheck_hours
+    cut = clock.now() - timedelta(hours=recheck)
+    rows: list[tuple[datetime | None, str]] = []
+    with session_scope() as s:
+        for handle, attrs in s.execute(select(Person.github_handle, Person.attrs).where(
+                Person.github_handle.is_not(None), Person.is_demo.is_(False), Person.dismissed.is_(False))):
+            attrs = attrs if isinstance(attrs, dict) else {}
+            if not attrs.get("lab_contributions") or is_bot(handle):
+                continue
+            at = None
+            if attrs.get("activity_checked_at"):
+                try:
+                    at = datetime.fromisoformat(str(attrs["activity_checked_at"]))
+                    at = at if at.tzinfo else at.replace(tzinfo=cut.tzinfo)
+                except ValueError:
+                    at = None
+            if at is not None and recheck and at >= cut:
+                continue
+            rows.append((at, handle))
+    rows.sort(key=lambda r: (r[0] is not None, r[0] or clock.now(), r[1].lower()))
+    return [h for _, h in rows[:limit]]
+
+
+def _known_org_dates() -> dict[str, str | None]:
+    """GitHub org login -> created_at already known (tracked companies + checked public orgs of people)."""
+    from sqlalchemy import select
+
+    from radar.models import Company, Person
+
+    out: dict[str, str | None] = {}
+    with session_scope() as s:
+        for attrs in s.scalars(select(Person.attrs).where(Person.is_demo.is_(False))):
+            orgs = attrs.get("github_orgs") if isinstance(attrs, dict) else None
+            for o in orgs or []:
+                if isinstance(o, dict) and o.get("login") and o.get("created_at"):
+                    out[str(o["login"]).lower()] = str(o["created_at"])
+        for login, attrs in s.execute(select(Company.github_org, Company.attrs).where(Company.github_org.is_not(None))):
+            created = (attrs or {}).get("gh_org_created_at") if isinstance(attrs, dict) else None
+            if created:
+                out[str(login).lower()] = str(created)
+    return out
+
+
+def ingest_talent_activity(limit: int | None = None, *, recheck_hours: int | None = None):
+    """new_project / joined_young_org for the talent pool (oldest-checked first, capped). (run, stats) or None."""
+    from radar.providers.github import GitHubProvider
+
+    cfg = talent_config()
+    logins = talent_activity_targets(limit, recheck_hours=recheck_hours)
+    if not logins:
+        return None
+    gh = GitHubProvider()
+    known = _known_org_dates()
+    skip = sorted(cfg.by_org())
+    params = {"talent": "activity", "people": len(logins), "window_days": cfg.limits.new_repo_window_days,
+              "young_org_days": cfg.limits.young_org_days}
+    return _run("github", lambda: gh.recent_activity(logins, window_days=cfg.limits.new_repo_window_days,
+                                                     young_org_days=cfg.limits.young_org_days, known_orgs=known,
+                                                     skip_orgs=skip),
+                params, gh.client.stats)
+
+
+def ingest_talent(*, pool: bool = True, activity: bool = True, orgs: list[str] | None = None,
+                  all_orgs: bool = False, limit: int | None = None) -> dict[str, Any]:
+    """Sweep step 'talent': refresh the due slice of the talent pool, then check the pool's recent activity."""
+    out: dict[str, Any] = {"runs": []}
+    if pool:
+        res = ingest_talent_pool(orgs, all_orgs=all_orgs)
+        if res is not None:
+            out["runs"].append(res)
+            out["pool_orgs"] = list((res[0].params or {}).get("orgs") or [])
+        else:
+            out["pool_orgs"] = []
+    if activity:
+        res = ingest_talent_activity(limit)
+        if res is not None:
+            out["runs"].append(res)
+            out["activity_people"] = int((res[0].params or {}).get("people") or 0)
+        else:
+            out["activity_people"] = 0
+    return out
+
+
+def _talent_status(res: dict[str, Any]) -> dict[str, Any]:
+    runs = [r for r, _ in res.get("runs", [])]
+    bad = sum(1 for r in runs if r.status == "error")
+    status = "ok" if not bad else ("error" if bad == len(runs) else "partial")
+    return {"status": status, "signals": sum(r.signals_created for r in runs), "errors": bad,
+            "result": {k: v for k, v in res.items() if k != "runs"}}

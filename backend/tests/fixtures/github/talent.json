@@ -1,0 +1,562 @@
+{
+ "org_repos": [
+  {
+   "id": 80201923,
+   "name": "core",
+   "full_name": "acme-lab/core",
+   "html_url": "https://github.com/acme-lab/core",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": "Training framework",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 9000,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2019-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  },
+  {
+   "id": 86829373,
+   "name": "docs",
+   "full_name": "acme-lab/docs",
+   "html_url": "https://github.com/acme-lab/docs",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": "Documentation",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 99999,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2019-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  },
+  {
+   "id": 40655754,
+   "name": "old",
+   "full_name": "acme-lab/old",
+   "html_url": "https://github.com/acme-lab/old",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": null,
+   "fork": false,
+   "archived": true,
+   "topics": [],
+   "stargazers_count": 50000,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2018-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  },
+  {
+   "id": 62040717,
+   "name": "sim",
+   "full_name": "acme-lab/sim",
+   "html_url": "https://github.com/acme-lab/sim",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": "Physics simulator",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 3000,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2020-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  },
+  {
+   "id": 14159827,
+   "name": "awesome-things",
+   "full_name": "acme-lab/awesome-things",
+   "html_url": "https://github.com/acme-lab/awesome-things",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": "A curated list",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 8000,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2020-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  }
+ ],
+ "repos": {
+  "acme-lab/core": {
+   "id": 80201923,
+   "name": "core",
+   "full_name": "acme-lab/core",
+   "html_url": "https://github.com/acme-lab/core",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": "Training framework",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 9000,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2019-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  },
+  "acme-lab/sim": {
+   "id": 62040717,
+   "name": "sim",
+   "full_name": "acme-lab/sim",
+   "html_url": "https://github.com/acme-lab/sim",
+   "owner": {
+    "login": "acme-lab",
+    "type": "Organization"
+   },
+   "description": "Physics simulator",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 3000,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2020-01-01T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  }
+ },
+ "contributors": {
+  "acme-lab/core": [
+   {
+    "login": "dependabot[bot]",
+    "type": "Bot",
+    "contributions": 500
+   },
+   {
+    "login": "Ada",
+    "type": "User",
+    "contributions": 240
+   },
+   {
+    "login": "ben",
+    "type": "User",
+    "contributions": 31
+   },
+   {
+    "login": "claude",
+    "type": "User",
+    "contributions": 25
+   },
+   {
+    "login": "drive-by",
+    "type": "User",
+    "contributions": 4
+   }
+  ],
+  "acme-lab/sim": [
+   {
+    "login": "ben",
+    "type": "User",
+    "contributions": 77
+   },
+   {
+    "login": "cy",
+    "type": "User",
+    "contributions": 12
+   }
+  ]
+ },
+ "stats_core": [
+  {
+   "author": {
+    "login": "Ada",
+    "type": "User"
+   },
+   "total": 240,
+   "weeks": [
+    {
+     "w": 1615075200,
+     "c": 10
+    },
+    {
+     "w": 1762041600,
+     "c": 3
+    },
+    {
+     "w": 1767484800,
+     "c": 0
+    }
+   ]
+  },
+  {
+   "author": {
+    "login": "ben",
+    "type": "User"
+   },
+   "total": 31,
+   "weeks": [
+    {
+     "w": 1683417600,
+     "c": 2
+    },
+    {
+     "w": 1717286400,
+     "c": 1
+    }
+   ]
+  }
+ ],
+ "users": {
+  "ada": {
+   "login": "Ada",
+   "name": "Ada Lovelace",
+   "company": "@acme-lab",
+   "bio": "Robot learning.",
+   "blog": null,
+   "followers": 900,
+   "public_repos": 30,
+   "created_at": "2012-01-01T00:00:00Z",
+   "html_url": "https://github.com/Ada",
+   "type": "User"
+  },
+  "ben": {
+   "login": "ben",
+   "name": "Ben Ng",
+   "company": null,
+   "bio": null,
+   "blog": null,
+   "followers": 40,
+   "public_repos": 10,
+   "created_at": "2014-01-01T00:00:00Z",
+   "html_url": "https://github.com/ben",
+   "type": "User"
+  },
+  "cy": {
+   "login": "cy",
+   "name": "Cy Park",
+   "company": null,
+   "bio": null,
+   "blog": null,
+   "followers": 5,
+   "public_repos": 3,
+   "created_at": "2016-01-01T00:00:00Z",
+   "html_url": "https://github.com/cy",
+   "type": "User"
+  }
+ },
+ "user_repos": {
+  "ada": [
+   {
+    "id": 83459566,
+    "name": "tactile-policy",
+    "full_name": "Ada/tactile-policy",
+    "html_url": "https://github.com/Ada/tactile-policy",
+    "owner": {
+     "login": "Ada",
+     "type": "User"
+    },
+    "description": "Dexterous manipulation policy with tactile sensing",
+    "fork": false,
+    "archived": false,
+    "topics": [
+     "robot-learning",
+     "manipulation"
+    ],
+    "stargazers_count": 4,
+    "forks_count": 1,
+    "subscribers_count": 2,
+    "open_issues_count": 0,
+    "created_at": "2026-09-01T00:00:00Z",
+    "pushed_at": "2026-10-01T00:00:00Z",
+    "default_branch": "main",
+    "language": "Python",
+    "homepage": null,
+    "license": null,
+    "size": 100
+   },
+   {
+    "id": 26456931,
+    "name": "fast-thing",
+    "full_name": "Ada/fast-thing",
+    "html_url": "https://github.com/Ada/fast-thing",
+    "owner": {
+     "login": "Ada",
+     "type": "User"
+    },
+    "description": "Something fast",
+    "fork": false,
+    "archived": false,
+    "topics": [],
+    "stargazers_count": 55,
+    "forks_count": 1,
+    "subscribers_count": 2,
+    "open_issues_count": 0,
+    "created_at": "2026-08-20T00:00:00Z",
+    "pushed_at": "2026-10-01T00:00:00Z",
+    "default_branch": "main",
+    "language": "Python",
+    "homepage": null,
+    "license": null,
+    "size": 100
+   },
+   {
+    "id": 81587931,
+    "name": "dotfiles2",
+    "full_name": "Ada/dotfiles2",
+    "html_url": "https://github.com/Ada/dotfiles2",
+    "owner": {
+     "login": "Ada",
+     "type": "User"
+    },
+    "description": "my config",
+    "fork": false,
+    "archived": false,
+    "topics": [],
+    "stargazers_count": 1,
+    "forks_count": 1,
+    "subscribers_count": 2,
+    "open_issues_count": 0,
+    "created_at": "2026-09-20T00:00:00Z",
+    "pushed_at": "2026-10-01T00:00:00Z",
+    "default_branch": "main",
+    "language": "Python",
+    "homepage": null,
+    "license": null,
+    "size": 100
+   },
+   {
+    "id": 90324293,
+    "name": "Ada",
+    "full_name": "Ada/Ada",
+    "html_url": "https://github.com/Ada/Ada",
+    "owner": {
+     "login": "Ada",
+     "type": "User"
+    },
+    "description": "profile",
+    "fork": false,
+    "archived": false,
+    "topics": [],
+    "stargazers_count": 0,
+    "forks_count": 1,
+    "subscribers_count": 2,
+    "open_issues_count": 0,
+    "created_at": "2026-09-25T00:00:00Z",
+    "pushed_at": "2026-10-01T00:00:00Z",
+    "default_branch": "main",
+    "language": "Python",
+    "homepage": null,
+    "license": null,
+    "size": 100
+   },
+   {
+    "id": 28895768,
+    "name": "vllm",
+    "full_name": "Ada/vllm",
+    "html_url": "https://github.com/Ada/vllm",
+    "owner": {
+     "login": "Ada",
+     "type": "User"
+    },
+    "description": "LLM inference fork",
+    "fork": true,
+    "archived": false,
+    "topics": [],
+    "stargazers_count": 0,
+    "forks_count": 1,
+    "subscribers_count": 2,
+    "open_issues_count": 0,
+    "created_at": "2026-09-10T00:00:00Z",
+    "pushed_at": "2026-10-01T00:00:00Z",
+    "default_branch": "main",
+    "language": "Python",
+    "homepage": null,
+    "license": null,
+    "size": 100
+   },
+   {
+    "id": 13177345,
+    "name": "old-llm",
+    "full_name": "Ada/old-llm",
+    "html_url": "https://github.com/Ada/old-llm",
+    "owner": {
+     "login": "Ada",
+     "type": "User"
+    },
+    "description": "LLM inference",
+    "fork": false,
+    "archived": false,
+    "topics": [],
+    "stargazers_count": 900,
+    "forks_count": 1,
+    "subscribers_count": 2,
+    "open_issues_count": 0,
+    "created_at": "2025-01-01T00:00:00Z",
+    "pushed_at": "2026-10-01T00:00:00Z",
+    "default_branch": "main",
+    "language": "Python",
+    "homepage": null,
+    "license": null,
+    "size": 100
+   }
+  ],
+  "ben": [],
+  "cy": []
+ },
+ "user_orgs": {
+  "ada": [
+   {
+    "login": "acme-lab"
+   },
+   {
+    "login": "newco"
+   },
+   {
+    "login": "oldco"
+   }
+  ],
+  "ben": [
+   {
+    "login": "newco"
+   }
+  ],
+  "cy": []
+ },
+ "orgs": {
+  "newco": {
+   "login": "newco",
+   "name": "NewCo",
+   "description": "Robot hands",
+   "blog": null,
+   "created_at": "2026-08-01T00:00:00Z",
+   "html_url": "https://github.com/newco",
+   "public_repos": 2
+  },
+  "oldco": {
+   "login": "oldco",
+   "name": "OldCo",
+   "description": "x",
+   "blog": null,
+   "created_at": "2015-01-01T00:00:00Z",
+   "html_url": "https://github.com/oldco",
+   "public_repos": 9
+  }
+ },
+ "newco_repos": [
+  {
+   "id": 54797287,
+   "name": "engine",
+   "full_name": "newco/engine",
+   "html_url": "https://github.com/newco/engine",
+   "owner": {
+    "login": "newco",
+    "type": "Organization"
+   },
+   "description": "Tactile robot hand control",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 30,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2026-08-02T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  },
+  {
+   "id": 28459955,
+   "name": "site",
+   "full_name": "newco/site",
+   "html_url": "https://github.com/newco/site",
+   "owner": {
+    "login": "newco",
+    "type": "Organization"
+   },
+   "description": "website",
+   "fork": false,
+   "archived": false,
+   "topics": [],
+   "stargazers_count": 1,
+   "forks_count": 1,
+   "subscribers_count": 2,
+   "open_issues_count": 0,
+   "created_at": "2026-08-03T00:00:00Z",
+   "pushed_at": "2026-10-01T00:00:00Z",
+   "default_branch": "main",
+   "language": "Python",
+   "homepage": null,
+   "license": null,
+   "size": 100
+  }
+ ],
+ "newco_contributors": [
+  {
+   "login": "Ada",
+   "type": "User",
+   "contributions": 12
+  },
+  {
+   "login": "ben",
+   "type": "User",
+   "contributions": 2
+  }
+ ]
+}

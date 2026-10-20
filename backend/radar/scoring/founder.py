@@ -11,10 +11,14 @@ from radar.scoring.cohort import Cohort, ordinal
 from radar.scoring.collision import CollisionResult, collision
 from radar.scoring.features import (
     FORMATION_SIGNAL_TYPES,
+    LAB_ALUMNI_CLUSTER,
+    SELF_REPORTED_FACTOR,
     Component,
     EntityFeatures,
     PersonFeatures,
     SignalLite,
+    lab_summary,
+    pedigree_strength,
     top_signals,
 )
 from radar.scoring.momentum import lv
@@ -32,6 +36,8 @@ FOUNDER_MAX = {
 TECH_OUTPUT_WEIGHTS = {"owned_stars": 0.40, "recent_stars": 0.35, "commits": 0.25}
 PAPER_SATURATION = 3.0  # papers in 24 months at which research credit reaches ~63% of its paper share
 TOP_FOUNDER_WEIGHT = 0.6
+# A new repository of one's own is weaker formation evidence than a stated transition (it is not a company).
+NEW_PROJECT_CREDIT = 0.6
 
 
 @dataclass
@@ -65,9 +71,12 @@ def technical_output(p: PersonFeatures, cohort: Cohort, today: date) -> tuple[Co
     row = person_row(p, today)
     pcts = {k: v for k in TECH_OUTPUT_WEIGHTS if (v := cohort.pct(k, row[k])) is not None}
     mx = FOUNDER_MAX["technical_output"]
+    lab_names = {c.full_name.lower(): c for c in p.lab_contributions}
+    lab_keyed = [lab_names[r.lower()] for r in p.key_repos if r.lower() in lab_names]
     raw = {
         "key_repo_stars_weighted": p.owned_repo_stars,
         "key_repos": p.key_repos,
+        "lab_repos": [c.full_name for c in lab_keyed],
         "recent_repo_stars_30d": p.recent_repo_stars_30d,
         "commits_30d_proxy": p.commits_30d,
         "percentiles": {k: round(v, 4) for k, v in pcts.items()},
@@ -87,10 +96,16 @@ def technical_output(p: PersonFeatures, cohort: Cohort, today: date) -> tuple[Co
         TECH_OUTPUT_WEIGHTS[k] for k in pcts
     )
     raw["blend"] = round(blend, 4)
+    core = [r for r in p.key_repos if r.lower() not in lab_names]
     if p.key_repos:
         stars = f"{int(p.owned_repo_stars or 0):,}"
-        repos = ", ".join(p.key_repos[:2]) + (f" +{len(p.key_repos) - 2}" if len(p.key_repos) > 2 else "")
-        expl = (f"Technical output at the {ordinal(blend * 100)} percentile — core contributor to {repos} "
+        bits = []
+        if core:
+            repos = ", ".join(core[:2]) + (f" +{len(core) - 2}" if len(core) > 2 else "")
+            bits.append(f"core contributor to {repos}")
+        if lab_keyed:
+            bits.append(f"verified lab-repository commits ({lab_summary(lab_keyed)})")
+        expl = (f"Technical output at the {ordinal(blend * 100)} percentile — {'; '.join(bits)} "
                 f"({stars} share-weighted stars).")
     else:
         expl = f"Technical output at the {ordinal(blend * 100)} percentile (no key repositories identified)."
@@ -113,24 +128,40 @@ def research(p: PersonFeatures) -> Component:
 
 
 def pedigree(p: PersonFeatures) -> Component:
+    """Verified history first: commits to tier-1/2 lab repositories (GitHub API) and public GitHub org
+    membership count in full; a listed / self-reported affiliation counts at ``SELF_REPORTED_FACTOR``.
+    A contribution is never described as employment."""
     mx = FOUNDER_MAX["pedigree"]
-    basis = getattr(p, "tier_basis", None)
-    login = getattr(p, "tier_org_login", None)
-    public = list(getattr(p, "public_orgs", None) or [])
+    basis = p.tier_basis
+    login = p.tier_org_login
+    public = list(p.public_orgs or [])
+    labs = list(p.lab_contributions or [])
+    strength, source = pedigree_strength(p.tier, basis, labs, p.affiliation_self_reported)
+    parts: list[str] = []
+    if labs:
+        parts.append(labs[0].phrase())
+        if len(labs) > 1:
+            parts.append(f"also {lab_summary(labs[1:])}")
     if p.tier > 0 and p.tier_match:
         tier = "tier-1" if p.tier >= 1.0 else "tier-2"
         if basis == "public_github_org" and login:
             # Observed membership (GitHub API), not a claim of employment or its dates.
-            expl = f"Public GitHub member of {login} ({p.tier_match}, {tier})."
+            parts.append(f"Public GitHub member of {login} ({p.tier_match}, {tier})")
         else:
-            expl = f"Affiliation with {p.tier_match} ({tier})."
+            sr = (f"; self-reported, counted at {round(SELF_REPORTED_FACTOR * 100)}%"
+                  if p.affiliation_self_reported else "")
+            parts.append(f"Affiliation with {p.tier_match} ({tier}{sr})")
+    if parts:
+        expl = "; ".join(parts) + "."
     elif p.affiliations or public:
         expl = "Known affiliations are not on the thesis tier lists."
     else:
         expl = "No affiliations known."
     raw = {"affiliations": p.affiliations, "tier": p.tier, "matched": p.tier_match,
-           "basis": basis, "public_github_orgs": public, "org_login": login}
-    return Component("pedigree", "Pedigree", mx * p.tier, mx, expl, raw)
+           "basis": basis, "public_github_orgs": public, "org_login": login,
+           "source": source, "strength": round(strength, 4),
+           "lab_contributions": [c.to_json() for c in labs[:5]]}
+    return Component("pedigree", "Pedigree", mx * strength, mx, expl, raw)
 
 
 def formation(p: PersonFeatures, today: date, thesis: Thesis) -> tuple[Component, CollisionResult]:
@@ -138,12 +169,19 @@ def formation(p: PersonFeatures, today: date, thesis: Thesis) -> tuple[Component
     # Only signals about this person: a co-contributor's bio change or a repo-level measurement
     # is not evidence that *this* person is forming something.
     col = collision(p.own_signals, today, thesis.scoring.collision)
-    v = 0.5 * float(p.recent_transition) + 0.3 * col.score + 0.2 * float(p.joined_young_org)
+    new_project = bool(p.new_projects)
+    event = 1 - (1 - float(p.recent_transition)) * (1 - NEW_PROJECT_CREDIT * float(new_project))
+    young = p.joined_young_org or bool(p.lab_clusters)
+    v = 0.5 * event + 0.3 * col.score + 0.2 * float(young)
     parts = []
     if p.recent_transition:
         parts.append("recent transition signal (affiliation/bio/formation language)")
+    if new_project:
+        parts.append(f"new repository of their own ({', '.join(p.new_projects[:2])}) — possible formation")
     if p.joined_young_org:
         parts.append(f"joined a young organization ({', '.join(p.young_org_names[:2])})")
+    if p.lab_clusters:
+        parts.append(f"part of a lab-alumni cluster ({p.lab_clusters[0]})")
     parts.append(f"signal collision {col.score:.2f} ({col.summary})")
     raw = {
         "recent_transition": p.recent_transition,
@@ -151,8 +189,11 @@ def formation(p: PersonFeatures, today: date, thesis: Thesis) -> tuple[Component
         "young_orgs": p.young_org_names,
         "collision": round(col.score, 4),
         "transition_signal_ids": [str(i) for i in p.transition_evidence],
+        "new_projects": p.new_projects,
+        "lab_clusters": p.lab_clusters,
     }
-    evidence = top_signals(p.own_signals, lambda s: s.signal_type in FORMATION_SIGNAL_TYPES)
+    evidence = top_signals(p.own_signals,
+                           lambda s: s.signal_type in FORMATION_SIGNAL_TYPES or s.signal_type == LAB_ALUMNI_CLUSTER)
     expl = "; ".join(parts)
     return Component(
         "formation", "Formation Signal", mx * v, mx, expl[0].upper() + expl[1:] + ".", raw, evidence

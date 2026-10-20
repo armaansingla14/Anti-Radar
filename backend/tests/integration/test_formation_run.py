@@ -14,6 +14,7 @@ from radar.models.core import (
     EntityTopic,
     FormationCandidate,
     Job,
+    MetricSnapshot,
     PaperAuthor,
     Person,
     RepoContributor,
@@ -439,3 +440,88 @@ def test_contributing_to_a_curated_list_org_is_not_joining_a_young_org(db):
     feats = {f.person_id: f for f in build_person_features(db, DAY)}
     assert not feats[people[0].id].joined_young_org and feats[people[0].id].young_org_names == []
     assert feats[others[0].id].joined_young_org and feats[others[0].id].young_org_names == ["Realco"]
+
+
+# ── talent pool (verified lab contributions) ─────────────────────────────────
+
+
+def _lab_repo(db, full="NVIDIA/cutlass") -> Repository:
+    r = db.scalar(select(Repository).where(Repository.full_name == full))
+    if r is None:
+        owner = full.split("/")[0]
+        r = Repository(full_name=full, owner=owner, owner_type="Organization", stars=6000,
+                       gh_created_at=at(2000), pushed_at=at(1))
+        db.add(r)
+        db.flush()
+    return r
+
+
+def _make_talent(db, p: Person, commits: int, first_days_ago: int, last_days_ago: int, full="NVIDIA/cutlass"):
+    r = _lab_repo(db, full)
+    db.add(RepoContributor(repository_id=r.id, person_id=p.id, contributions=commits,
+                           first_commit_at=at(first_days_ago), last_commit_at=at(last_days_ago)))
+    org, repo = full.split("/")
+    p.attrs = {**(p.attrs or {}), "lab_contributions": [
+        {"org": org, "label": org, "tier": 1, "repo": repo, "commits": commits,
+         "first_commit_at": at(first_days_ago).isoformat(), "last_commit_at": at(last_days_ago).isoformat()}]}
+    db.flush()
+
+
+def test_lab_alumni_team_gets_verified_convergence_and_pedigree(db):
+    c, people = young_org(db, "kernl", prior_paper=False)
+    _make_talent(db, people[0], 412, 700, 200)
+    _make_talent(db, people[1], 57, 600, 250)
+    run_all(db)
+    fc = cand(db, c.id)
+    assert fc is not None
+    conv = fc.components["team_convergence"]
+    assert "Two of three members previously contributed to NVIDIA/cutlass (verified commits, 2024\u20132026)" \
+        in conv["explanation"]
+    fq = fc.components["founder_quality"]
+    assert "contributed 412 commits to NVIDIA/cutlass (tier-1 lab repository, verified)" in fq["explanation"]
+    assert fq["raw"]["tier_basis"] == "lab_contribution"
+    assert "worked at" not in json.dumps(fc.components).lower()
+    # Same team without the verified history scores lower (the lab history is what lifts it).
+    c2, _ = young_org(db, "plainco", prior_paper=False)
+    run_all(db)
+    assert cand(db, c2.id).score < cand(db, c.id).score
+
+
+def test_talent_person_new_project_is_a_person_candidate_but_unknown_person_is_not(db):
+    talent = Person(slug="ada-k", name="Ada K", github_handle="adak", first_seen_at=at(5), followers=40,
+                    attrs={"self_reported": True})
+    nobody = Person(slug="bo-k", name="Bo K", github_handle="bok", first_seen_at=at(5), followers=40,
+                    attrs={"self_reported": True})
+    db.add_all([talent, nobody])
+    db.flush()
+    _make_talent(db, talent, 300, 800, 30, full="openai/triton")
+    for p in (talent, nobody):
+        tag(db, p.id, "person", 0.9)
+        repo = Repository(full_name=f"{p.github_handle}/tactile-sim", owner=p.github_handle, owner_type="User",
+                          stars=25, gh_created_at=at(12), pushed_at=at(1))
+        db.add(repo)
+        db.flush()
+        s = signal(db, p, "person", "new_project", "github", 12, f"{p.name} created {repo.full_name}",
+                   related=[(repo, "repository")])
+        s.meta = {"repo": repo.full_name, "stars": 25, "created_at": at(12).isoformat(), "topics": ["robotics"]}
+        for d, v in ((DAY - timedelta(days=10), 5.0), (DAY, 25.0)):  # the new repo is gaining stars
+            db.add(MetricSnapshot(entity_type="repository", entity_id=repo.id, metric="stars", day=d, value=v))
+    db.flush()
+    run_all(db)
+    fc = cand(db, talent.id)
+    assert fc is not None and fc.kind == "person" and fc.label == formation.LABEL_PERSON
+    assert "new_project" in fc.components["formation_evidence"]["raw"]["kinds"]
+    assert "300 commits to openai/triton" in fc.components["founder_quality"]["explanation"]
+    assert cand(db, nobody.id) is None  # an unknown contributor's new repo alone is not a candidate
+    # The Founder Score records the new project (headline/why-now presenters read it).
+    from radar.models.core import ScoreSnapshot
+    from radar.services import presenters as P
+
+    snap = db.scalar(select(ScoreSnapshot).where(ScoreSnapshot.entity_id == talent.id))
+    assert snap.components["formation"]["raw"]["new_projects"] == ["adak/tactile-sim"]
+    assert snap.components["pedigree"]["explanation"].startswith(
+        "Contributed 300 commits to openai/triton (tier-1 lab repository, verified)")
+    assert P.headline(talent, snap) == "Contributor to openai/triton · now building adak/tactile-sim"
+    why = P.person_why_now(talent, snap)
+    assert why[0].startswith("Now building adak/tactile-sim") and why[1].startswith("300 commits to openai/triton")
+    assert P.headline(nobody, None) is None or "Contributor" not in (P.headline(nobody, None) or "")
