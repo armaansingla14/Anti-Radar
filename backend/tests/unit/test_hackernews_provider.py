@@ -221,3 +221,52 @@ def test_mentions_exact_match_and_error_reporting(monkeypatch):
 
     down = HackerNewsProvider(client=_StubClient(fail=True)).mentions("norirobotics.com")
     assert down["count"] == 0 and down["error"]
+
+
+# ── formation-anchor enrichment: probe + stories that link to the org ───────
+
+
+def test_story_links_to_requires_a_link_into_the_org():
+    from radar.providers.hackernews import story_links_to
+
+    gh = {"url": "https://github.com/FormingCo/engine", "links": ["https://github.com/FormingCo/engine"]}
+    assert story_links_to(gh, github_owner="formingco") == "https://github.com/FormingCo/engine"
+    pages = {"url": "https://formingco.github.io/demo", "links": ["https://formingco.github.io/demo"]}
+    assert story_links_to(pages, github_owner="formingco")
+    text = {"url": None, "links": ["https://docs.formingco.ai/start"]}
+    assert story_links_to(text, domain="formingco.ai") == "https://docs.formingco.ai/start"
+    # Naming the org, or a repo that merely contains the login, is not a link to it.
+    other = {"url": "https://github.com/someone/formingco-clone",
+             "links": ["https://github.com/someone/formingco-clone", "https://notformingco.ai/"]}
+    assert story_links_to(other, github_owner="formingco", domain="formingco.ai") is None
+    assert story_links_to({"url": None, "links": []}, github_owner="formingco") is None
+
+
+def test_org_attention_metrics_and_linked_signal(monkeypatch):
+    from radar.providers.base import gh_org_ref
+
+    monkeypatch.setattr("radar.providers.hackernews.clock.now", lambda: NOW)
+    monkeypatch.setattr("radar.providers.hackernews.clock.today", lambda: NOW.date())
+    page = json.loads((FIXTURES / "hn" / "topic_humanoid.json").read_text())
+    client = _StubClient({("story", 0): {**page, "nbPages": 1}})
+    ref = gh_org_ref("norirobotics")
+    b = HackerNewsProvider(client=client).org_attention(
+        ref, ["norirobotics.com", "norirobotics"], github_owner="norirobotics", domain="norirobotics.com")
+    metrics = {m.metric: m.value for m in b.metrics}
+    assert metrics == {"hn_probe_mentions": 1.0, "hn_probe_points": 201.0}  # deduplicated across terms
+    [sig] = b.signals
+    assert sig.entity == ref and sig.signal_type == "hn_launch" and sig.raw_value == 201
+    assert sig.source_url == "https://news.ycombinator.com/item?id=49525153"
+    assert sig.metadata["link"] == "https://www.norirobotics.com/" and sig.metadata["matched_via"] == "org_link"
+    assert sig.event_at.date().isoformat() == "2026-09-01" and b.errors == []
+
+    # Mentioned but not linked: counted as attention, never a signal.
+    b2 = HackerNewsProvider(client=client).org_attention(ref, ["norirobotics.com"], domain="elsewhere.ai")
+    assert b2.signals == [] and {m.metric: m.value for m in b2.metrics}["hn_probe_mentions"] == 1.0
+
+
+def test_org_attention_outage_emits_no_zero_metrics(monkeypatch):
+    from radar.providers.base import gh_org_ref
+
+    b = HackerNewsProvider(client=_StubClient(fail=True)).org_attention(gh_org_ref("x"), ["xco.ai"], domain="xco.ai")
+    assert b.metrics == [] and b.signals == [] and b.errors

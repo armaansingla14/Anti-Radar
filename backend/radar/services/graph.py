@@ -2,6 +2,12 @@
 
 Edges
 -----
+When the ``relationships`` table has rows it is the single source of truth for person edges
+(FOUNDED -> founder, MEMBER_OF -> member, CONTRIBUTED_TO -> contributor, AUTHORED -> author,
+WORKED_WITH / COAUTHORED_WITH / CONTRIBUTED_WITH -> person-person edges). Entities with no
+relationship rows yet (ingested after the last relationship build), and databases where the
+table is empty, fall back to deriving the same edges from the link tables:
+
 person -> company   founder | member
 person -> repository contributor
 person -> paper     author
@@ -20,7 +26,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from radar import clock
@@ -29,6 +35,7 @@ from radar.models import (
     CompanyPerson,
     PaperAuthor,
     Person,
+    Relationship,
     RepoContributor,
     Repository,
     ResearchPaper,
@@ -42,6 +49,21 @@ MAX_NODES = 120
 TOP_N = 25
 ORG_PREFIX = "org:"
 ORG_MEMBERS_LIMIT = 15  # an org node expands to at most this many people
+PEER_LIMIT = 8  # person-person relationships followed per person per hop (strongest first)
+
+# relationships.kind -> graph edge kind (edge direction is always src -> dst of the stored row).
+REL_EDGE_KIND = {
+    "FOUNDED": "founder",
+    "MEMBER_OF": "member",
+    "CONTRIBUTED_TO": "contributor",
+    "AUTHORED": "author",
+    "WORKED_WITH": "worked_with",
+    "COAUTHORED_WITH": "coauthored_with",
+    "CONTRIBUTED_WITH": "contributed_with",
+}
+PEER_KINDS = ("COAUTHORED_WITH", "CONTRIBUTED_WITH", "WORKED_WITH")
+_REL_ORDER = ("FOUNDED", "MEMBER_OF", "CONTRIBUTED_TO", "AUTHORED", *PEER_KINDS)
+_NODE_MODELS = {"company": Company, "person": Person, "repository": Repository, "paper": ResearchPaper}
 
 
 class GraphEntityNotFound(LookupError):
@@ -53,6 +75,7 @@ class _G:
     nodes: dict[str, GraphNode] = field(default_factory=dict)
     edges: dict[tuple[str, str, str], GraphEdge] = field(default_factory=dict)
     types: dict[str, str] = field(default_factory=dict)
+    use_relationships: bool = False
 
     def full(self) -> bool:
         return len(self.nodes) >= MAX_NODES
@@ -88,6 +111,84 @@ def _org_id(name: str) -> str:
     return ORG_PREFIX + name
 
 
+_table_seen = False
+
+
+def has_relationships(session: Session) -> bool:
+    """True when the relationships table exists (a DB not yet migrated to 0004 keeps the
+    derivation instead of erroring) and holds at least one row."""
+    global _table_seen
+    if not _table_seen:
+        if session.scalar(select(func.to_regclass(Relationship.__tablename__))) is None:
+            return False
+        _table_seen = True
+    return session.scalar(select(Relationship.id).limit(1)) is not None
+
+
+def _rel_order():
+    return case({k: i for i, k in enumerate(_REL_ORDER)}, value=Relationship.kind, else_=len(_REL_ORDER))
+
+
+def _load_entities(session: Session, ids_by_type: dict[str, set[uuid.UUID]]) -> dict[uuid.UUID, object]:
+    out: dict[uuid.UUID, object] = {}
+    for t, ids in ids_by_type.items():
+        model = _NODE_MODELS.get(t)
+        if model is not None and ids:
+            out.update({e.id: e for e in session.scalars(select(model).where(model.id.in_(list(ids))))})
+    return out
+
+
+def _relationship_edges(session: Session, g: _G, ids: list[uuid.UUID],
+                        link) -> set[uuid.UUID]:
+    """Add neighbours of ``ids`` from stored relationships (one query + one per entity type).
+
+    Returns the ids that have at least one relationship row — those are not re-derived."""
+    if not ids:
+        return set()
+    rows = list(session.scalars(
+        select(Relationship).where(Relationship.kind.in_(list(REL_EDGE_KIND)),
+                                   or_(Relationship.src_id.in_(ids), Relationship.dst_id.in_(ids)))
+        .order_by(_rel_order(), Relationship.weight.desc().nulls_last(), Relationship.last_seen_at.desc().nulls_last(),
+                  Relationship.id)))
+    idset = set(ids)
+    covered = {r.src_id for r in rows if r.src_id in idset} | {r.dst_id for r in rows if r.dst_id in idset}
+    peers: dict[uuid.UUID, int] = defaultdict(int)
+    keep = []
+    for r in rows:
+        if r.kind in PEER_KINDS:
+            # bound fan-out: each frontier person follows at most PEER_LIMIT peers per hop
+            owner = r.src_id if r.src_id in idset else r.dst_id
+            if peers[owner] >= PEER_LIMIT:
+                continue
+            peers[owner] += 1
+        keep.append(r)
+    want: dict[str, set[uuid.UUID]] = defaultdict(set)
+    for r in keep:
+        want[r.src_type].add(r.src_id)
+        want[r.dst_type].add(r.dst_id)
+    ents = _load_entities(session, want)
+    for r in keep:
+        a, b = ents.get(r.src_id), ents.get(r.dst_id)
+        if a is None or b is None:
+            continue
+        _add_entity(g, a)
+        _add_entity(g, b)
+        link(str(r.src_id), str(r.dst_id), REL_EDGE_KIND[r.kind])
+    return covered
+
+
+def _close_relationship_edges(session: Session, g: _G) -> None:
+    """Stored relationships between nodes already in the graph (one query)."""
+    ids = [uuid.UUID(n.id) for n in g.nodes.values() if n.type in _NODE_MODELS]
+    if not ids:
+        return
+    for src, dst, kind in session.execute(
+            select(Relationship.src_id, Relationship.dst_id, Relationship.kind)
+            .where(Relationship.kind.in_(list(REL_EDGE_KIND)), Relationship.src_id.in_(ids),
+                   Relationship.dst_id.in_(ids))).tuples():
+        g.edge(str(src), str(dst), REL_EDGE_KIND[kind])
+
+
 def _expand(session: Session, g: _G, frontier: set[str]) -> set[str]:
     """Add all neighbours of ``frontier`` nodes; return the newly added node ids."""
     by_type: dict[str, list] = defaultdict(list)
@@ -106,12 +207,21 @@ def _expand(session: Session, g: _G, frontier: set[str]) -> set[str]:
     companies, people = by_type.get("company", []), by_type.get("person", [])
     repos, papers, orgs = by_type.get("repository", []), by_type.get("paper", []), by_type.get("org", [])
 
+    # person edges: stored relationships first; derive only for entities without any rows
+    covered: set[uuid.UUID] = set()
+    if g.use_relationships:
+        covered = _relationship_edges(session, g, companies + people + repos + papers, link)
+    d_companies = [i for i in companies if i not in covered]
+    d_people = [i for i in people if i not in covered]
+    d_repos = [i for i in repos if i not in covered]
+    d_papers = [i for i in papers if i not in covered]
+
     # company/person memberships
-    if companies or people:
+    if d_companies or d_people:
         q = (select(CompanyPerson, Company, Person).join(Company, Company.id == CompanyPerson.company_id)
              .join(Person, Person.id == CompanyPerson.person_id)
-             .where(or_(CompanyPerson.company_id.in_(companies or [uuid.uuid4()]),
-                        CompanyPerson.person_id.in_(people or [uuid.uuid4()])))
+             .where(or_(CompanyPerson.company_id.in_(d_companies or [uuid.uuid4()]),
+                        CompanyPerson.person_id.in_(d_people or [uuid.uuid4()])))
              .order_by(CompanyPerson.is_founder.desc()))
         for cp, c, p in session.execute(q).tuples():
             _add_entity(g, c)
@@ -127,11 +237,11 @@ def _expand(session: Session, g: _G, frontier: set[str]) -> set[str]:
                                      .order_by(ResearchPaper.published_at.desc().nulls_last())):
             _add_entity(g, paper)
             link(str(paper.id), str(paper.company_id), "published_by")
-    if people or repos:
+    if d_people or d_repos:
         q = (select(RepoContributor, Repository, Person).join(Repository, Repository.id == RepoContributor.repository_id)
              .join(Person, Person.id == RepoContributor.person_id)
-             .where(or_(RepoContributor.person_id.in_(people or [uuid.uuid4()]),
-                        RepoContributor.repository_id.in_(repos or [uuid.uuid4()])))
+             .where(or_(RepoContributor.person_id.in_(d_people or [uuid.uuid4()]),
+                        RepoContributor.repository_id.in_(d_repos or [uuid.uuid4()])))
              .order_by(RepoContributor.contributions.desc()))
         for _rc, r, p in session.execute(q).tuples():
             _add_entity(g, r)
@@ -143,11 +253,11 @@ def _expand(session: Session, g: _G, frontier: set[str]) -> set[str]:
             _add_entity(g, c)
             link(str(c.id), str(r.id), "owns")
     # papers: authors and code repos
-    if people or papers:
+    if d_people or d_papers:
         q = (select(PaperAuthor, ResearchPaper, Person).join(ResearchPaper, ResearchPaper.id == PaperAuthor.paper_id)
              .join(Person, Person.id == PaperAuthor.person_id)
-             .where(or_(PaperAuthor.person_id.in_(people or [uuid.uuid4()]),
-                        PaperAuthor.paper_id.in_(papers or [uuid.uuid4()])))
+             .where(or_(PaperAuthor.person_id.in_(d_people or [uuid.uuid4()]),
+                        PaperAuthor.paper_id.in_(d_papers or [uuid.uuid4()])))
              .order_by(ResearchPaper.published_at.desc().nulls_last(), PaperAuthor.position))
         for _pa, paper, p in session.execute(q).tuples():
             _add_entity(g, paper)
@@ -243,6 +353,8 @@ def _close_code_edges(session: Session, g: _G) -> None:
 
 def _finish(session: Session, g: _G) -> GraphOut:
     _close_code_edges(session, g)
+    if g.use_relationships:
+        _close_relationship_edges(session, g)
     scored = [uuid.UUID(n.id) for n in g.nodes.values() if n.type in ("company", "person")]
     snaps = latest_snapshots(session, scored)
     nodes = []
@@ -255,7 +367,7 @@ def _finish(session: Session, g: _G) -> GraphOut:
 
 
 def founder_graph(session: Session, entity_id: str | None = None, depth: int = 1) -> GraphOut:
-    g = _G()
+    g = _G(use_relationships=has_relationships(session))
     if entity_id:
         center = _resolve(session, entity_id)
         if isinstance(center, str):

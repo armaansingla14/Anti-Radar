@@ -30,6 +30,7 @@ const ALLOWED_SECTIONS = new Set([
   "brief",
   "companies",
   "founders",
+  "formation",
   "signals",
   "thesis",
   "watchlist",

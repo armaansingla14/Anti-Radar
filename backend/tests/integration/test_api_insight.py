@@ -279,6 +279,28 @@ def test_graph_default_slug_org_and_errors(seeded, client):
     assert client.get("/api/graph", params={"depth": 3}).status_code == 422
 
 
+def test_graph_reads_relationships_table(seeded, client):
+    """Once relationships are built the graph reads them (same founder/contributor edges as the
+    derivation, plus person-person ties) and stays fast."""
+    from radar.pipeline.relationships import build
+
+    with session_scope() as s:
+        hid = str(s.query(Company.id).filter(Company.slug == "halcyon-dynamics").scalar())
+        build(s)
+    g = client.get("/api/graph", params={"entity_id": hid, "depth": 2}).json()
+    nodes = {n["id"]: n for n in g["nodes"]}
+    labels = {n["label"]: n for n in g["nodes"]}
+    kinds = {(e["source"], e["target"], e["kind"]) for e in g["edges"]}
+    assert (labels["Mira Okafor"]["id"], hid, "founder") in kinds
+    assert {"contributor", "code_for", "prior_affiliation"} <= {k for *_, k in kinds}
+    assert {"coauthored_with", "contributed_with", "worked_with"} & {k for *_, k in kinds}
+    assert all(e["source"] in nodes and e["target"] in nodes for e in g["edges"])
+    assert 0 < len(client.get("/api/graph").json()["nodes"]) <= 120
+    t = time.perf_counter()
+    assert client.get("/api/graph").status_code == 200
+    assert time.perf_counter() - t < 0.3
+
+
 def test_insight_endpoints_fast(seeded, client):
     for path in ("/api/thesis", "/api/status", "/api/retrospective", "/api/graph"):
         client.get(path)

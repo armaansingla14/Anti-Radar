@@ -7,7 +7,7 @@
     radar ingest x https://x.com/someone/status/123 [--text "..."]
     radar ingest orgs                # young GitHub orgs around thesis terms (formation discovery)
     radar ingest all                 # = radar sweep
-    radar sweep [--only hn|arxiv|github|orgs|web|probe|score|brief|retention ...]
+    radar sweep [--only hn|arxiv|github|orgs|enrich|web|stats|probe|score|formation|brief|retention ...]
     radar score                      # classify → stage → score
     radar brief [--save]             # print (and optionally persist) today's morning brief
     radar retention                  # prune old evidence/history, then VACUUM
@@ -32,6 +32,10 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
+
+# Same as ops.ALL_STEPS (asserted in tests); duplicated so `--help` does not import the pipeline.
+_ALL_STEPS = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score", "formation", "brief",
+              "retention")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="ANTI RADAR — Conviction Before Consensus.")
 ingest_app = typer.Typer(no_args_is_help=True, help="Pull signals from a source.")
@@ -137,14 +141,31 @@ def ingest_x(url: str, text: Annotated[str | None, typer.Option(help="Pasted pos
 @ingest_app.command("orgs")
 def ingest_orgs(
     term: Annotated[list[str] | None, typer.Option("--term", "-t", help="Search term (repeatable)")] = None,
-    created_within_days: int = 150,
-    max_orgs: int = 40,
+    created_within_days: int = 180,
+    max_orgs: int = 60,
 ) -> None:
     """Formation discovery: young GitHub organizations around thesis terms."""
     from radar import ops
 
     _banner("GitHub young orgs")
     _report(ops.ingest_young_orgs(terms=term, created_within_days=created_within_days, max_orgs=max_orgs))
+
+
+@ingest_app.command("enrich")
+def ingest_enrich(
+    limit: Annotated[int, typer.Option(help="Max formation anchors / young orgs to enrich")] = 40,
+    web: bool = True,
+    hn: bool = True,
+    arxiv: bool = True,
+) -> None:
+    """Website/hiring, Hacker News and arXiv evidence for formation anchors (young orgs)."""
+    from radar import ops
+
+    _banner("Enrich formation anchors")
+    res = ops.enrich_formation_anchors(limit, web=web, hn=hn, arxiv=arxiv)
+    for run, stats in res.pop("runs"):
+        _report((run, stats))
+    console.print(f"  [dim]{json.dumps(res, default=str)}[/dim]")
 
 
 @ingest_app.command("all")
@@ -178,10 +199,12 @@ def _sweep(steps: list[str]) -> dict:
 @app.command()
 def sweep(
     only: Annotated[list[str] | None, typer.Option(
-        "--only", help="Step to run (repeatable): hn, arxiv, github, orgs, web, probe, score, brief, retention")] = None,
+        "--only", help="Step to run (repeatable): " + ", ".join(_ALL_STEPS))] = None,
     strict: Annotated[bool, typer.Option(help="Exit 1 if any step ends in error")] = False,
 ) -> None:
-    """One-shot sweep: hn → arxiv → github → orgs → web → probe → score → brief (each recorded in ingestion_runs)."""
+    """One-shot sweep: hn → arxiv → github → orgs → enrich → web → stats → probe → score → brief (each recorded in
+    ingestion_runs). `enrich` adds website/hiring, HN and arXiv evidence to formation anchors (young orgs);
+    `stats` re-asks GitHub for statistics that were still being computed (202)."""
     from radar import ops
 
     steps = list(only) if only else list(ops.SWEEP_STEPS)

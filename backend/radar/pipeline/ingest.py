@@ -26,7 +26,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from dateutil import parser as dateparser
-from sqlalchemy import and_, exists, not_, select
+from sqlalchemy import and_, exists, func, not_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -47,7 +47,7 @@ from radar.models import (
     Source,
     WebPage,
 )
-from radar.pipeline.aliases import normalized_affiliations, same_org
+from radar.pipeline.aliases import normalize_org, normalized_affiliations, org_key, same_org
 from radar.pipeline.resolve import (
     CORROBORATED_AUTHOR_VIA,
     AuthorContext,
@@ -72,6 +72,7 @@ from radar.providers.base import (
     normalize_person_name,
 )
 from radar.providers.domains import github_repos_in, registrable_domain
+from radar.providers.formation import _phrase_re, normalize_text
 from radar.thesis.loader import Thesis, get_thesis
 
 log = logging.getLogger("radar.pipeline.ingest")
@@ -82,6 +83,35 @@ BIO_MATERIAL_CHANGE_RATIO = 0.9
 _METRIC_PRIORITY = {"observed": 3, "backfill": 2, "demo": 1}
 SELF_REPORTED_NOTE = "self-reported on GitHub profile"
 SELF_REPORTED_SOURCE = "github:self-reported"
+# Formation language looked for in a person's own profile (bio / company) on top of thesis.formation_phrases.
+# A current "founder" self-description stays a formation_language signal: it never becomes a FOUNDED relation.
+PROFILE_FORMATION_PHRASES = ("co-founder", "cofounder", "founder", "founding engineer", "stealth",
+                             "building something", "starting something", "new company", "day 1")
+PROFILE_FORMATION_VALUE = 0.7
+# Words just before a phrase (same clause) that make it past tense: "ex-founder", "formerly co-founder of X".
+_PAST_CUE = re.compile(r"(?<![a-z0-9])(?:ex|former|formerly|previously|prev|past|retired)(?![a-z0-9])")
+_CLAUSE_BREAK = re.compile(r"[.;|•·,\n()\[\]]|\s[-–—/]\s")
+# "stealth" alone is ambiguous ("Stealth Browser", stealth games): it counts only as a company status —
+# "in stealth", "@stealth", "stealth startup/mode/...", or the whole field / end of a clause.
+_STEALTH_STATUS = re.compile(
+    r"(?:(?<![a-z0-9])(?:in|at|@)\s*stealth(?![a-z0-9])|stealth\s+(?:startup|start-up|mode|company|co|ai|labs?|"
+    r"project|venture)s?(?![a-z0-9])|stealth\s*(?:[.,;:|!)\-–—]|$))")
+# Self-reported prior employers: "ex-Google", "ex @meta", "previously @stripe", "formerly Tesla Autopilot".
+_TOKEN = r"(?:[\w&+'-]|\.(?=\w))*"  # a dot only inside a word ("scale.ai"), never sentence-final
+_ORG_WORDS = rf"[A-Z0-9]{_TOKEN}(?:\s+[A-Z0-9]{_TOKEN}){{0,2}}"
+_PRIOR_ORG_PATTERNS = (
+    re.compile(rf"(?<![A-Za-z0-9])(?i:ex)\s?[-–]\s?@?(?P<org>[A-Za-z0-9]{_TOKEN}(?:\s+[A-Z0-9]{_TOKEN}){{0,2}})"),
+    re.compile(rf"(?<![A-Za-z0-9])(?i:ex)\s+@\s?(?P<org>[A-Za-z0-9]{_TOKEN})"),
+    re.compile(rf"(?<![A-Za-z0-9])(?i:formerly|previously|prev|former)[:,]?\s+(?:(?i:at)\s+)?@\s?(?P<org>[A-Za-z0-9]{_TOKEN})"),
+    re.compile(rf"(?<![A-Za-z0-9])(?i:formerly|previously|prev|former)[:,]?\s+(?:(?i:at|with)\s+)?(?P<org>{_ORG_WORDS})"),
+)
+# Captures that are roles or filler, not organizations ("ex-founder", "Former PhD student", "previously a ...").
+_NOT_AN_ORG = frozenset({
+    "a", "an", "the", "at", "in", "with", "and", "founder", "cofounder", "co-founder", "ceo", "cto", "coo", "cfo",
+    "vp", "phd", "ph.d", "engineer", "swe", "sde", "researcher", "scientist", "student", "intern", "lead", "head",
+    "director", "manager", "professor", "prof", "postdoc", "ml", "ai", "pm", "em", "faang", "startup", "startups",
+    "big", "academic", "academia", "consultant", "freelancer", "employee", "staff", "senior", "principal",
+})
 # Profile fields a user/org types themselves on GitHub (never VERIFIED).
 _SELF_REPORTED_FIELDS = {
     "person": {"bio", "current_company", "location", "personal_site", "x_handle"},
@@ -317,11 +347,11 @@ class _Ingestor:
 
     def _derive(self, entity: Entity, etype: str, ref_key: str, signal_type: str, title: str, *,
                 description: str | None, metadata: dict, discriminator: str, source_url: str | None,
-                normalized_value: float | None = None) -> None:
+                normalized_value: float | None = None, epistemic: str = "FACT") -> None:
         sig = NormalizedSignal(
             entity=EntityRef(type=etype, key=ref_key), signal_type=signal_type, source_type=self.provider,
             source_url=source_url, title=title, description=description, event_at=self.now,
-            epistemic="FACT", metadata=metadata, normalized_value=normalized_value,
+            epistemic=epistemic, metadata=metadata, normalized_value=normalized_value,
         )
         self.derived.append(_Derived(sig, entity, discriminator))
 
@@ -405,6 +435,8 @@ class _Ingestor:
 
     def _apply_person(self, p: Person, rec: PersonRecord, *, created: bool, affiliation_signal: bool = True) -> None:
         url = rec.source_url or canonical_url(p)
+        # What this provider saw last time (before the observations below overwrite it).
+        seen = dict(((p.attrs or {}).get("observed") or {}).get(self.provider) or {})
         changed = self._unstub(p)
         if changed:
             changed |= self._set(p, "name", rec.name)
@@ -417,6 +449,9 @@ class _Ingestor:
             changed = True
         changed |= self._person_affiliation(p, rec, url, emit=affiliation_signal)
         changed |= self._person_bio(p, rec, url)
+        if not _is_arxiv_author(rec.ref):  # a name-only identity never carries person signals
+            self._profile_formation_language(p, rec, url, seen)
+            changed |= self._profile_prior_affiliations(p, rec, url)
         extra = dict(rec.attrs)
         if rec.email_domain:
             extra["email_domain"] = rec.email_domain
@@ -460,15 +495,65 @@ class _Ingestor:
             description=new[:500], metadata={"old": prev, "new": new},
             discriminator=_hash(new), source_url=url, normalized_value=0.3,
         )
-        fresh = [ph for ph in formation_phrases_in(new, self.thesis) if ph not in formation_phrases_in(prev, self.thesis)]
-        if fresh:
-            self._derive(
-                p, "person", rec.ref.key, "formation_language",
-                f"{p.name}'s bio now mentions: {', '.join(fresh)}",
-                description=new[:500], metadata={"phrases": fresh, "field": "bio", "text": new[:500]},
-                discriminator=_hash(new), source_url=url, normalized_value=0.7,
-            )
         return True
+
+    def _profile_formation_language(self, p: Person, rec: PersonRecord, url: str, seen: dict[str, Any]) -> None:
+        """formation_language (INFERENCE) for each formation phrase in the person's bio / company field.
+
+        Emitted on the first observation as well as on changes; deduplicated per person + phrase, so a
+        phrase that stays in the profile is reported once. Profile text is a self-description, never proof."""
+        self_reported = self._self_reported("person", rec.ref, "bio")
+        where = "GitHub profile" if self_reported else "profile"
+        for fld, text in (("bio", rec.bio), ("current_company", rec.current_company)):
+            text = (text or "").strip()
+            if not text:
+                continue
+            before = seen.get(fld)
+            known = set(profile_formation_phrases(before, self.thesis)) if isinstance(before, str) else set()
+            for phrase in profile_formation_phrases(text, self.thesis):
+                label = "bio" if fld == "bio" else "company field"
+                verb = "now mentions" if before and phrase not in known else "mentions"
+                self._derive(
+                    p, "person", rec.ref.key, "formation_language",
+                    f"{p.name}'s {where} {label} {verb} '{phrase}'",
+                    description=f"Self-described ({label}): \u201c{text[:480]}\u201d" if self_reported else text[:500],
+                    metadata={"phrase": phrase, "phrases": [phrase], "field": fld, "text": text[:500],
+                              "self_reported": self_reported,
+                              "observation": "changed" if before and phrase not in known else "observed"},
+                    discriminator=f"phrase:{phrase}", source_url=url, normalized_value=PROFILE_FORMATION_VALUE,
+                    epistemic=Epistemic.INFERENCE.value,
+                )
+
+    def _profile_prior_affiliations(self, p: Person, rec: PersonRecord, url: str) -> bool:
+        """'ex-<org>' / 'previously @org' / 'formerly <org>' in a GitHub bio/company -> prior_affiliations.
+
+        Recorded as INFERENCE provenance with a self-reported note; the matched text is kept in
+        ``attrs['self_reported_prior_affiliations']``."""
+        if not self._self_reported("person", rec.ref, "bio"):
+            return False
+        found: list[dict[str, str]] = []
+        for fld, text in (("bio", rec.bio), ("current_company", rec.current_company)):
+            for org, quote in prior_orgs_in(text):
+                if not any(same_org(org, f["org"]) for f in found):
+                    found.append({"org": org, "text": quote, "field": fld})
+        if not found:
+            return False
+        changed = False
+        prior = list(p.prior_affiliations or [])
+        for f in found:
+            if same_org(f["org"], p.current_company) or any(same_org(f["org"], a) for a in prior):
+                continue
+            prior.append(f["org"])
+            changed = True
+        if changed:
+            p.prior_affiliations = prior
+        changed |= self._merge_attrs(p, {"self_reported_prior_affiliations": found})
+        record_provenance(
+            self.s, "person", p.id, "prior_affiliations", [f["org"] for f in found],
+            source_type=SELF_REPORTED_SOURCE, source_url=url, epistemic=Epistemic.INFERENCE.value, confidence=0.5,
+            note=f"{SELF_REPORTED_NOTE}: " + "; ".join(f"\u201c{f['text']}\u201d" for f in found)[:400],
+        )
+        return changed
 
     # ── arXiv authorship ────────────────────────────────────────────────────
 
@@ -650,15 +735,24 @@ class _Ingestor:
         vals: dict[str, Any] = {}
         if rel.attrs.get("contributions") is not None:
             vals["contributions"] = int(rel.attrs["contributions"])
-        for k in ("first_commit_at", "last_commit_at"):
-            if rel.attrs.get(k):
-                v = rel.attrs[k]
+        # Exact dates only: ``first_commit_at_approximate`` (repo created_at) is never persisted, it would
+        # pose as a real first commit. ``first_commit_week`` is the older attr name for the same fact.
+        raw = {"first_commit_at": rel.attrs.get("first_commit_at") or rel.attrs.get("first_commit_week"),
+               "last_commit_at": rel.attrs.get("last_commit_at")}
+        for k, v in raw.items():
+            if v:
                 vals[k] = _aware(v if isinstance(v, datetime) else dateparser.isoparse(str(v)))
+        if vals.get("first_commit_at") and vals.get("last_commit_at") and vals["last_commit_at"] < vals["first_commit_at"]:
+            vals["last_commit_at"] = vals["first_commit_at"]
         stmt = pg_insert(RepoContributor).values(
             id=uuid.uuid4(), repository_id=repo.id, person_id=person.id, **{"contributions": 0, **vals}
         )
         if vals:
-            stmt = stmt.on_conflict_do_update(constraint="uq_repo_contributor", set_={k: stmt.excluded[k] for k in vals})
+            # Merge across runs: earliest first commit, latest last commit (LEAST/GREATEST ignore NULLs).
+            merge = {"first_commit_at": func.least, "last_commit_at": func.greatest}
+            stmt = stmt.on_conflict_do_update(constraint="uq_repo_contributor", set_={
+                k: merge[k](getattr(RepoContributor.__table__.c, k), stmt.excluded[k]) if k in merge
+                else stmt.excluded[k] for k in vals})
         else:
             stmt = stmt.on_conflict_do_nothing(constraint="uq_repo_contributor")
         self.s.execute(stmt)
@@ -993,6 +1087,48 @@ def formation_phrases_in(text: str | None, thesis: Thesis) -> list[str]:
             if re.search(r"(?<![a-z0-9])" + re.escape(ph.lower()) + r"(?![a-z0-9])", t)]
 
 
+def profile_formation_phrases(text: str | None, thesis: Thesis) -> list[str]:
+    """Formation phrases in a person's own profile text, in order of appearance.
+
+    thesis.formation_phrases plus PROFILE_FORMATION_PHRASES, word-bounded and case-insensitive.
+    A phrase in a past-tense clause ("ex-founder", "formerly co-founder of X") is skipped, and a
+    phrase lying inside a longer matched one ("founder" in "co-founder") is dropped."""
+    if not text:
+        return []
+    norm = normalize_text(text)
+    phrases = list(dict.fromkeys(ph.lower() for ph in [*thesis.formation_phrases, *PROFILE_FORMATION_PHRASES]))
+    hits: list[tuple[int, int, str]] = []
+    for ph in phrases:
+        for m in _phrase_re(ph).finditer(norm):
+            clause = _CLAUSE_BREAK.split(norm[: m.start()])[-1]
+            if ph == "stealth" and not _STEALTH_STATUS.search(norm, max(0, m.start() - 4), m.end() + 12):
+                continue
+            if not _PAST_CUE.search(clause):
+                hits.append((m.start(), m.end(), ph))
+                break
+    kept = [h for h in hits if not any(o is not h and o[0] <= h[0] and h[1] <= o[1] and (o[1] - o[0]) > (h[1] - h[0])
+                                       for o in hits)]
+    return [ph for _, _, ph in sorted(kept)]
+
+
+def prior_orgs_in(text: str | None) -> list[tuple[str, str]]:
+    """Self-reported prior organizations: [(normalized org, matched text)] from 'ex-<org>',
+    'ex @org', 'previously @org' / 'previously at <Org>', 'formerly <Org>'."""
+    if not text:
+        return []
+    out: list[tuple[str, str]] = []
+    for pat in _PRIOR_ORG_PATTERNS:
+        for m in pat.finditer(text):
+            raw = m.group("org").strip().rstrip(".,;:'-")
+            first = raw.split()[0].lower().lstrip("@") if raw.split() else ""
+            if not raw or first in _NOT_AN_ORG or len(org_key(raw)) < 2:
+                continue
+            org = normalize_org(raw)
+            if org and not any(same_org(org, o) for o, _ in out):
+                out.append((org, m.group(0).strip()))
+    return out
+
+
 def classify_role(title: str, department: str | None, thesis: Thesis) -> str | None:
     from radar.providers.roles import classify_role as provider_classify
 
@@ -1059,4 +1195,5 @@ def _shared_context(s: Session, a: uuid.UUID, b: uuid.UUID) -> tuple[str, list[s
     return None
 
 
-__all__ = ["IngestStats", "classify_role", "formation_phrases_in", "ingest_batch"]
+__all__ = ["IngestStats", "classify_role", "formation_phrases_in", "ingest_batch", "prior_orgs_in",
+           "profile_formation_phrases"]

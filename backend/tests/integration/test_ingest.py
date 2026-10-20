@@ -24,11 +24,12 @@ from radar.models import (
     Source,
     WebPage,
 )
-from radar.pipeline.ingest import formation_phrases_in, ingest_batch
+from radar.pipeline.ingest import formation_phrases_in, ingest_batch, prior_orgs_in, profile_formation_phrases
 from radar.pipeline.runner import run_provider
 from radar.pipeline.stage import apply_stage_estimates, estimate_stage
 from radar.providers.base import (
     CompanyRecord,
+    EntityRef,
     JobRecord,
     MetricPoint,
     NormalizedSignal,
@@ -211,10 +212,93 @@ def test_affiliation_change_appends_prior_and_emits_signal(db):
     sig = _signals(db, "affiliation_changed")[0]
     assert sig.meta == {"from": "Google DeepMind", "to": "Tactica"} and sig.epistemic == "FACT"
     assert len(_signals(db, "bio_changed")) == 1
-    form = _signals(db, "formation_language")
-    assert len(form) == 1 and set(form[0].meta["phrases"]) == {"co-founder", "building something new"}
+    form = _signals(db, "formation_language")  # one per phrase ("founder" inside "co-founder" is not repeated)
+    assert sorted(f.meta["phrase"] for f in form) == ["building something new", "co-founder"]
+    assert all(f.epistemic == "INFERENCE" and f.meta["observation"] == "changed" for f in form)
     ingest_batch(db, _person("Tactica", "Co-founder @ Tactica. Building something new in tactile sensing."))
-    assert _count(db, Signal) == 3
+    assert _count(db, Signal) == 4
+
+
+def test_profile_formation_language_on_first_observation_dedup_per_phrase(db):
+    ingest_batch(db, _person("Stealth Startup", "Founder. Robot hands. Ex-Google, previously @stripe"))
+    p = db.scalars(select(Person)).one()
+    form = {(f.meta["phrase"], f.meta["field"]): f for f in _signals(db, "formation_language")}
+    assert set(form) == {("founder", "bio"), ("stealth", "current_company")}
+    f = form[("founder", "bio")]
+    assert f.epistemic == "INFERENCE" and f.meta["self_reported"] is True and f.meta["observation"] == "observed"
+    assert f.source_url == "https://github.com/ada" and "self" in (f.description or "").lower()
+    # A self-described founder is a signal, never a FOUNDED relation.
+    assert _count(db, CompanyPerson) == 0
+    # Self-reported prior employers -> prior_affiliations with INFERENCE provenance.
+    assert p.prior_affiliations == ["Google", "stripe"]
+    assert [a["text"] for a in p.attrs["self_reported_prior_affiliations"]] == ["Ex-Google", "previously @stripe"]
+    prov = db.scalars(select(FieldProvenance).where(FieldProvenance.field == "prior_affiliations")).one()
+    assert prov.epistemic == "INFERENCE" and prov.source_type == "github:self-reported"
+    assert "self-reported" in (prov.note or "")
+    # Same profile again: nothing new. A new phrase in the bio: exactly one new signal.
+    ingest_batch(db, _person("Stealth Startup", "Founder. Robot hands. Ex-Google, previously @stripe"))
+    assert len(_signals(db, "formation_language")) == 2
+    ingest_batch(db, _person("Stealth Startup", "Founder, building something in tactile sensing. Ex-Google"))
+    new = [f for f in _signals(db, "formation_language") if f.meta["phrase"] == "building something"]
+    assert len(new) == 1 and new[0].meta["observation"] == "changed" and "now mentions" in new[0].title
+    assert len(_signals(db, "formation_language")) == 3
+    db.refresh(p)
+    assert p.prior_affiliations == ["Google", "stripe"]  # dropping a mention never erases history
+
+
+def test_past_tense_founder_and_non_github_people_are_handled(db):
+    ingest_batch(db, _person(None, "Formerly co-founder of Foo; ex-founder. Now a robotics engineer."))
+    assert _signals(db, "formation_language") == []
+    assert db.scalars(select(Person)).one().prior_affiliations == []  # "ex-founder" is a role, not an org
+    web = ProviderBatch(provider="website", people=[PersonRecord(
+        ref=EntityRef(type="person", key="x:bea"), name="Bea", bio="ex-Meta. Founding engineer in stealth.")])
+    ingest_batch(db, web)
+    bea = db.scalars(select(Person).where(Person.name == "Bea")).one()
+    sigs = [f for f in _signals(db, "formation_language") if f.entity_id == bea.id]
+    assert sorted(f.meta["phrase"] for f in sigs) == ["founding engineer", "stealth"]
+    assert all(f.meta["self_reported"] is False for f in sigs)
+    assert bea.prior_affiliations == []  # only GitHub self-reported profiles feed prior affiliations
+
+
+def test_profile_phrase_and_prior_org_parsing(thesis):
+    assert profile_formation_phrases("Co-founder & CTO @ stealth. Day 1!", thesis) == ["co-founder", "stealth", "day 1"]
+    assert profile_formation_phrases("Day 10 of 100 days of code; stealthy", thesis) == []
+    assert profile_formation_phrases("Passionate about Stealth Browser and AI", thesis) == []
+    assert profile_formation_phrases("Founder & CTO at Stealth Startup", thesis) == ["founder", "stealth"]
+    assert profile_formation_phrases("Building in stealth", thesis) == ["stealth"]
+    assert profile_formation_phrases("Founding Engineer, building something new", thesis) == [
+        "founding engineer", "building something new"]
+    assert profile_formation_phrases("ex-cofounder @ Foo | now at a new company", thesis) == ["new company"]
+    assert prior_orgs_in("ex @openai · formerly Tesla Autopilot. Former PhD student at MIT") == [
+        ("OpenAI", "ex @openai"), ("Tesla Autopilot", "formerly Tesla Autopilot")]
+    assert prior_orgs_in("previously at Google DeepMind, ex-Scale.ai") == [
+        ("Scale.ai", "ex-Scale.ai"), ("Google DeepMind", "previously at Google DeepMind")]
+    assert prior_orgs_in("Alex - index-based ML, previously a researcher") == []
+
+
+def test_contributor_commit_dates_merge_min_max_and_skip_approximations(db):
+    def batch(**attrs):
+        b = _github_batch()
+        b.relations = [Relation(kind="contributor", src=gh_user_ref("ada"), dst=repo_ref("tactica/skin"),
+                                attrs={"contributions": 120, **attrs})]
+        return b
+
+    ingest_batch(db, batch(first_commit_at_approximate="2025-06-01T00:00:00+00:00",
+                           last_commit_at="2026-09-01T12:00:00+00:00"))
+    rc = db.scalars(select(RepoContributor)).one()
+    assert rc.first_commit_at is None  # the repo's created_at is never stored as a first commit
+    assert rc.last_commit_at == datetime(2026, 9, 1, 12, tzinfo=UTC)
+    ingest_batch(db, batch(first_commit_at="2026-03-01T00:00:00+00:00", last_commit_at="2026-08-02T00:00:00+00:00"))
+    db.refresh(rc)
+    assert rc.first_commit_at == datetime(2026, 3, 1, tzinfo=UTC)
+    assert rc.last_commit_at == datetime(2026, 9, 1, 12, tzinfo=UTC)  # an older last commit never wins
+    ingest_batch(db, batch(first_commit_week="2026-02-15", last_commit_at="2026-10-04T00:00:00+00:00"))
+    db.refresh(rc)
+    assert rc.first_commit_at == datetime(2026, 2, 15, tzinfo=UTC)
+    assert rc.last_commit_at == datetime(2026, 10, 4, tzinfo=UTC)
+    ingest_batch(db, batch())  # no dates: existing ones are kept
+    db.refresh(rc)
+    assert rc.first_commit_at == datetime(2026, 2, 15, tzinfo=UTC) and rc.contributions == 120
 
 
 def test_formation_phrases_are_word_bounded(thesis):

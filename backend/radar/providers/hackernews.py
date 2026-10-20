@@ -468,6 +468,7 @@ class HackerNewsProvider:
                 continue
             seen.add(sid)
             created = _created_at(h)
+            url = (h.get("url") or "").strip()
             stories.append(
                 {
                     "title": h.get("title"),
@@ -476,6 +477,10 @@ class HackerNewsProvider:
                     "num_comments": int(h.get("num_comments") or 0),
                     "created_at": created.isoformat() if created else None,
                     "objectID": sid,
+                    "author": h.get("author"),
+                    # Every outbound link of the story (its URL + links in the post text), so callers can
+                    # check that a story actually points at an entity rather than just naming it.
+                    "links": list(dict.fromkeys([u for u in [url, *_text_links(h.get("story_text"))] if u])),
                 }
             )
         stories.sort(key=lambda s: s["points"], reverse=True)
@@ -487,3 +492,116 @@ class HackerNewsProvider:
             "stories": stories,
             "error": "; ".join(errors) or None,
         }
+
+    def org_attention(
+        self,
+        entity: EntityRef,
+        terms: list[str],
+        *,
+        github_owner: str | None = None,
+        domain: str | None = None,
+        days: int = 180,
+        metric_days: int = 90,
+    ) -> ProviderBatch:
+        """Attention probe + linked stories for one organization (formation anchor).
+
+        * ``hn_probe_mentions`` / ``hn_probe_points`` on ``entity``: distinct stories mentioning any term in
+          the last ``metric_days`` days. Not emitted when any lookup failed (an outage is not zero attention).
+        * one ``hn_show`` / ``hn_launch`` / ``hn_discussion`` signal on ``entity`` per story whose URL or post
+          text actually links to the org (``github.com/<owner>/…``, ``<owner>.github.io`` or ``domain``).
+          Stories that only *name* a term are counted as mentions but never become signals.
+        """
+        batch = ProviderBatch(provider=SOURCE)
+        stories: dict[str, dict[str, Any]] = {}
+        failed = False
+        for term in dict.fromkeys(t.strip() for t in terms if t and t.strip()):
+            m = self.mentions(term, days=days)
+            if m.get("error"):
+                failed = True
+                batch.errors.append(f"probe {term}: {m['error']}")
+                continue
+            for st in m.get("stories") or []:
+                stories.setdefault(st["objectID"], st)
+        now = clock.now()
+        cutoff = now - timedelta(days=metric_days)
+        if not failed:
+            recent = [st for st in stories.values()
+                      if st.get("created_at") and datetime.fromisoformat(st["created_at"]) >= cutoff]
+            day = clock.today()
+            batch.metrics.append(MetricPoint(entity=entity, metric="hn_probe_mentions", day=day,
+                                             value=float(len(recent))))
+            batch.metrics.append(MetricPoint(entity=entity, metric="hn_probe_points", day=day,
+                                             value=float(sum(st["points"] for st in recent))))
+        for st in sorted(stories.values(), key=lambda x: x["objectID"]):
+            link = story_links_to(st, github_owner=github_owner, domain=domain)
+            if link is None:
+                continue
+            sig = linked_story_signal(st, entity, link)
+            if sig is None:
+                batch.rejected += 1
+                continue
+            batch.signals.append(sig)
+            batch.sources.append({
+                "url": sig.source_url,
+                "source_type": SOURCE,
+                "title": st.get("title"),
+                "snippet": link,
+                "content_hash": content_hash(f"{st.get('title')}\n{link}"),
+            })
+        return batch
+
+
+def _host_of(url: str) -> str:
+    return (urlparse(url).hostname or "").lower().removeprefix("www.")
+
+
+def story_links_to(story: dict[str, Any], *, github_owner: str | None = None,
+                   domain: str | None = None) -> str | None:
+    """The first link of a `mentions()` story that points into the org, or None.
+
+    Matches ``github.com/<owner>[/...]``, ``<owner>.github.io`` and the org's own domain (or a subdomain)."""
+    owner = (github_owner or "").strip().lower()
+    dom = (domain or "").strip().lower().removeprefix("www.")
+    for link in story.get("links") or ([story["url"]] if story.get("url") else []):
+        host = _host_of(link)
+        if not host:
+            continue
+        if owner:
+            if host == "github.com":
+                seg = urlparse(link).path.strip("/").split("/")[0].lower()
+                if seg == owner:
+                    return link
+            if host == f"{owner}.github.io":
+                return link
+        if dom and (host == dom or host.endswith("." + dom)):
+            return link
+    return None
+
+
+def linked_story_signal(story: dict[str, Any], entity: EntityRef, link: str) -> NormalizedSignal | None:
+    """FACT signal for a story that links to ``entity`` (verified by `story_links_to`)."""
+    sid = str(story.get("objectID") or "")
+    title = " ".join((story.get("title") or "").split())
+    raw = story.get("created_at")
+    created = datetime.fromisoformat(raw) if isinstance(raw, str) else None
+    if not sid or not title or created is None:
+        return None
+    kind = parse_hn_title(title)[0]
+    points = int(story.get("points") or 0)
+    comments = int(story.get("num_comments") or 0)
+    return NormalizedSignal(
+        entity=entity,
+        signal_type=SIGNAL_TYPE[kind],
+        source_type=SOURCE,
+        source_url=f"https://news.ycombinator.com/item?id={sid}",
+        title=title,
+        description=f"{points} points, {comments} comments on Hacker News "
+                    f"({created.date().isoformat()}); links to {link}",
+        raw_value=float(points),
+        normalized_value=hn_strength(points),
+        event_at=created,
+        confidence=1.0 if link == (story.get("url") or "") else 0.9,
+        metadata={"points": points, "num_comments": comments, "story_id": sid, "link": link,
+                  "link_source": "url" if link == (story.get("url") or "") else "story_text",
+                  "author": story.get("author"), "matched_via": "org_link"},
+    )

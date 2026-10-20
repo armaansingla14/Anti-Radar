@@ -450,3 +450,41 @@ class ArxivProvider:
         batch = self._run(params, window_days=None, recurrence_days=days)
         batch.rejected += len(ids) - len(valid)
         return batch
+
+    def search_code_for(
+        self, owner: str, phrases: list[str], *, max_results: int = 10, days: int = 21
+    ) -> ProviderBatch:
+        """Papers that release code inside the GitHub org/user ``owner``.
+
+        One phrase query over abstracts and comments (``abs:"…" OR co:"…"`` per phrase, e.g. the org's
+        ``github.com/<owner>`` URL prefix and its top repo name). The search is only a recall step: a paper
+        is kept *only* when one of its extracted code URLs is ``github.com/<owner>/…`` (verified link), so
+        a paper that merely shares a word with the repo name never becomes evidence."""
+        own = owner.strip().lower()
+        clean = [p for p in dict.fromkeys(_collapse(x).replace('"', "") for x in phrases) if p]
+        batch = ProviderBatch(provider=SOURCE)
+        if not own or not clean:
+            return batch
+        query = " OR ".join(f'abs:"{p}" OR co:"{p}"' for p in clean)
+        params = {"search_query": query, "sortBy": "submittedDate", "sortOrder": "descending", "start": 0,
+                  "max_results": max_results}
+        text = self._query(params, batch)
+        if text is None:
+            return batch
+        now = clock.now()
+        parsed = parse_feed(text, window_days=None, now=now)
+        batch.errors.extend(parsed.errors)
+        batch.rejected += parsed.rejected
+        for paper in parsed.papers:
+            verified = [u for u in paper.code_urls
+                        if u.removeprefix("https://github.com/").split("/")[0].lower() == own]
+            if not verified:
+                continue
+            paper.attrs["verified_code_urls"] = verified
+            batch.papers.append(paper)
+        enrich(batch, window_days=days, now=now)
+        for sig in batch.signals:
+            if sig.signal_type == "paper_with_code":
+                code_url = sig.metadata.get("code_url") or ""
+                sig.metadata["verified_link"] = code_url.removeprefix("https://github.com/").split("/")[0].lower() == own
+        return batch

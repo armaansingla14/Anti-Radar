@@ -8,10 +8,13 @@
  * backend address never ships to the client.
  */
 import type {
+  AntiScore,
   CompanyDetail,
   CompanySummary,
   DailyRadar,
   FeedbackRequest,
+  FormationDetail,
+  FormationFeed,
   GraphOut,
   IngestGithubRequest,
   IngestUrlRequest,
@@ -151,6 +154,14 @@ export const getThesis = () => get<ThesisMap>("/thesis");
 export const getStatus = () => get<SystemStatus>("/status");
 export const getRetrospective = () => get<Retrospective>("/retrospective");
 export const getGraph = (params?: QueryParams) => get<GraphOut>("/graph", params);
+
+// ── Formation Radar ──────────────────────────────────────────────────────────
+
+export const getFormation = (params?: { tier?: string; theme?: string; include_demo?: boolean }) =>
+  get<FormationFeed>("/formation", params);
+export const getFormationDetail = (slugOrId: string) => get<FormationDetail>(`/formation/${enc(slugOrId)}`);
+/** AntiScore-shaped breakdown (total = formation score) for the Why drawer. Fields beyond total/components may be absent. */
+export const getFormationScore = (id: string) => get<Partial<AntiScore> & Pick<AntiScore, "total" | "components">>(`/formation/${enc(id)}/score`);
 
 // ── Entities ─────────────────────────────────────────────────────────────────
 

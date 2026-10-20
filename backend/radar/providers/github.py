@@ -74,6 +74,15 @@ MIN_NEW_CONTRIBUTORS = 2
 NEW_CONTRIBUTOR_DAYS = 30
 CREATED_WINDOW_DAYS = 365
 RELEASE_WINDOW_DAYS = 90
+YOUNG_REPO_DAYS = 180  # repos/orgs this young get the /commits?author fallback when stats are unavailable
+COMMITS_FALLBACK_TOP = 6  # contributors probed per repo with /commits?author=<login>&per_page=1
+STATS_RETRY_ATTEMPTS = 4  # retry_stats(): re-requests after the first try ...
+STATS_RETRY_SPACING = 10.0  # ... spaced this many seconds apart
+STATS_ENDPOINTS = ("commit_activity", "contributors")
+CONTRIBUTOR_DATES_BASIS = "github stats/contributors (start of the UTC week of the first/last commit)"
+LAST_COMMIT_BASIS = "github commits?author= (newest commit on the default branch)"
+APPROX_FIRST_COMMIT_BASIS = ("approximate: repository created_at; the contributor's first commit is unknown "
+                             "and history may predate the repository")
 
 BOT_LOGINS = {
     "dependabot", "dependabot-preview", "renovate", "renovate-bot", "github-actions", "pre-commit-ci",
@@ -395,18 +404,54 @@ def commit_activity_to_points(data: Sequence[Mapping[str, Any]], entity: EntityR
     ]
 
 
-def contributor_stats_to_first_weeks(data: Sequence[Mapping[str, Any]]) -> dict[str, date]:
-    """/stats/contributors -> {login: week of first commit}. Bots and deleted users skipped."""
-    out: dict[str, date] = {}
+def contributor_stats_to_spans(data: Sequence[Mapping[str, Any]]) -> dict[str, tuple[date, date]]:
+    """/stats/contributors -> {login: (week of first commit, week of last commit)}.
+
+    Weeks are GitHub's Sunday-start UTC weeks; only weeks with at least one commit count.
+    Bots and deleted users are skipped."""
+    out: dict[str, tuple[date, date]] = {}
     for c in data:
         author = c.get("author") or {}
         login = author.get("login")
         if is_bot(login, author.get("type")):
             continue
-        weeks = [w["w"] for w in c.get("weeks") or [] if w.get("c", 0) > 0]
+        weeks = [w["w"] for w in c.get("weeks") or [] if "w" in w and w.get("c", 0) > 0]
         if weeks:
-            out[login] = _week_day(min(weeks))
+            out[login] = (_week_day(min(weeks)), _week_day(max(weeks)))
     return out
+
+
+def contributor_stats_to_first_weeks(data: Sequence[Mapping[str, Any]]) -> dict[str, date]:
+    """/stats/contributors -> {login: week of first commit}. Bots and deleted users skipped."""
+    return {lg: span[0] for lg, span in contributor_stats_to_spans(data).items()}
+
+
+def _week_start(d: date) -> str:
+    return datetime(d.year, d.month, d.day, tzinfo=UTC).isoformat()
+
+
+def contributor_date_attrs(first: date, last: date) -> dict[str, Any]:
+    """Relation attrs for a contributor's commit span from /stats/contributors.
+
+    Both values are the *start* of the (UTC, Sunday) week holding the first/last commit: the
+    first is exact to the week, the last is a lower bound within its week."""
+    return {"first_commit_week": first.isoformat(), "first_commit_at": _week_start(first),
+            "last_commit_at": _week_start(last), "commit_dates_basis": CONTRIBUTOR_DATES_BASIS}
+
+
+def last_commit_from_commits(data: Any) -> datetime | None:
+    """Newest commit date from ``/commits?author=<login>&per_page=1`` (author date, else committer)."""
+    if not isinstance(data, list) or not data or not isinstance(data[0], Mapping):
+        return None
+    commit = data[0].get("commit") or {}
+    for who in ("author", "committer"):
+        try:
+            at = _dt((commit.get(who) or {}).get("date"))
+        except ValueError:
+            at = None
+        if at is not None:
+            return at
+    return None
 
 
 def contributors_cumulative_points(first_weeks: Mapping[str, date], entity: EntityRef) -> list[MetricPoint]:
@@ -750,6 +795,21 @@ def build_young_org_team_signal(
     )
 
 
+def split_login(ref: EntityRef) -> str:
+    """'github_user:alice' -> 'alice'."""
+    return ref.key.split(":", 1)[1] if ":" in ref.key else ref.key
+
+
+def _is_young(repo: RepoRecord, company: CompanyRecord | None, today: date, days: int = YOUNG_REPO_DAYS) -> bool:
+    """An org-owned repo whose org (or the repo itself) was created within ``days``."""
+    if company is None:
+        return False
+    created = [repo.gh_created_at]
+    if iso := company.attrs.get("gh_org_created_at"):
+        created.append(datetime.fromisoformat(iso))
+    return any(c is not None and (today - c.date()).days <= days for c in created)
+
+
 # ── provider ─────────────────────────────────────────────────────────────────
 
 
@@ -779,6 +839,9 @@ class GitHubProvider:
         self._orgs: dict[str, dict[str, Any] | None] = {}
         self._users: dict[str, dict[str, Any] | None] = {}
         self.young_org_report: dict[str, list[str]] = {}  # rejection reason -> org logins (last discovery)
+        # (repo full_name, stats endpoint) pairs that were still 202 "computing" when given up on; a later
+        # fetch_pending_stats() / retry_stats() in the same process fills them in.
+        self.pending_stats: list[tuple[str, str]] = []
         # Anonymous access (60 req/h) cannot afford deep history; degrade instead of failing.
         self.max_star_pages = 40 if self.token else 3
         self.max_contributors_cap = 30 if self.token else 3
@@ -841,7 +904,11 @@ class GitHubProvider:
             self._sleep(delay)
             r = self._get(path)
         if r.status_code == 202:
-            errors.append(f"{label}: statistics still being computed after {len(STATS_BACKOFF)} retries (202); skipped")
+            errors.append(f"{label}: statistics still being computed after {len(STATS_BACKOFF)} retries (202); "
+                          "queued for a later retry")
+            m = re.match(r"^/repos/([^/]+/[^/]+)/stats/([a-z_]+)$", path)
+            if m and (m.group(1), m.group(2)) not in self.pending_stats:
+                self.pending_stats.append((m.group(1), m.group(2)))
             return None
         if r.status_code == 204:
             return []
@@ -994,7 +1061,8 @@ class GitHubProvider:
         related_owner = [company.ref] if company else []
 
         if deep:
-            self._deep(batch, repo, owner_person, related_owner, today, max_contributors, star_pages)
+            young = company is not None and _is_young(repo, company, today)
+            self._deep(batch, repo, owner_person, related_owner, today, max_contributors, star_pages, young=young)
         elif owner_person:
             batch.people.append(owner_person)
             batch.relations.append(Relation(kind="contributor", src=owner_person.ref, dst=repo.ref,
@@ -1004,7 +1072,7 @@ class GitHubProvider:
 
     def _deep(self, batch: ProviderBatch, repo: RepoRecord, owner_person: PersonRecord | None,
               related_owner: list[EntityRef], today: date, max_contributors: int,
-              star_pages: int | None = None) -> None:
+              star_pages: int | None = None, *, young: bool = False) -> None:
         full = repo.full_name
         html_url = repo.attrs["html_url"]
         # Prime both stats computations first; GitHub computes them in the background meanwhile.
@@ -1051,44 +1119,26 @@ class GitHubProvider:
         weekly = self._stats(f"/repos/{full}/stats/commit_activity", primed_commits, batch.errors,
                              f"{full} commit_activity")
         if weekly:
-            pts = commit_activity_to_points(weekly, repo.ref)
-            batch.metrics.extend(pts)
-            sig = build_commit_acceleration_signal(repo, [p.value for p in sorted(pts, key=lambda p: p.day)],
-                                                   related=related_owner)
+            self._commit_activity(batch, repo, weekly, related_owner)
         else:
             # Fallback (signal only): rolling-week totals, not aligned to commit_activity's Sunday weeks.
             part = self._get(f"/repos/{full}/stats/participation")
             counts = (part.json() or {}).get("all") if part.status_code == 200 and part.content else None
             sig = build_commit_acceleration_signal(repo, counts or [], basis="stats/participation",
                                                    related=related_owner)
-        if sig:
-            batch.signals.append(sig)
+            if sig:
+                batch.signals.append(sig)
 
-        # Contributor first-commit weeks.
+        # Contributor first/last-commit weeks.
         cstats = self._stats(f"/repos/{full}/stats/contributors", primed_contrib, batch.errors,
                              f"{full} stats/contributors")
         if cstats:
-            first = contributor_stats_to_first_weeks(cstats)
-            if len(cstats) < 100:  # stats cover only the top 100 authors; a truncated series would be wrong
-                batch.metrics.extend(p for p in contributors_cumulative_points(first, repo.ref) if p.day < today)
-                # Today's point uses the same definition as the backfill (distinct non-bot authors), so
-                # window deltas over 'contributors' measure newcomers, not a change of definition.
-                batch.metrics.append(MetricPoint(entity=repo.ref, metric="contributors", day=today,
-                                                 value=float(len(first))))
-            for login, wk in first.items():
-                if login.lower() in relations:
-                    relations[login.lower()].attrs["first_commit_week"] = wk.isoformat()
-            newcomers = new_contributors(first, today)
-            for login in newcomers[:10]:
-                key = login.lower()
-                if key not in people and self._budget_ok(1) and (u := self._user(login)):
-                    people[key] = parse_user(u)
-                if key not in relations:
-                    relations[key] = Relation(kind="contributor", src=gh_user_ref(login), dst=repo.ref,
-                                              attrs={"first_commit_week": first[login].isoformat()},
-                                              source_url=f"{html_url}/graphs/contributors")
-            if sig := build_new_contributors_signal(repo, newcomers, first, stats_truncated=len(cstats) >= 100):
-                batch.signals.append(sig)
+            self._contributor_stats(batch, repo, cstats, relations, people, today)
+        elif cstats is None and young:
+            # Stats unavailable for a young org's repo: newest commit per top contributor (exact),
+            # and the repository's creation date only as a labelled approximation of the first commit.
+            self._probe_last_commits(repo, [relations[c["login"].lower()] for c in humans
+                                            if c["login"].lower() in relations and c["login"].lower() in people])
         if repo.contributors_count is not None:
             # /contributors count (includes bots, Link-header estimate): a different measure, kept separate.
             batch.metrics.append(MetricPoint(entity=repo.ref, metric="contributors_total", day=today,
@@ -1111,6 +1161,166 @@ class GitHubProvider:
         batch.people.extend(people.values())
         # A contributor edge is only emitted when its person record is in the batch.
         batch.relations.extend(r for k, r in relations.items() if k in people)
+
+    def _commit_activity(self, batch: ProviderBatch, repo: RepoRecord, weekly: list,
+                         related: Sequence[EntityRef]) -> NormalizedSignal | None:
+        """commits_week backfill + commit_acceleration signal from /stats/commit_activity."""
+        pts = commit_activity_to_points(weekly, repo.ref)
+        batch.metrics.extend(pts)
+        sig = build_commit_acceleration_signal(repo, [p.value for p in sorted(pts, key=lambda p: p.day)],
+                                               related=related)
+        if sig:
+            batch.signals.append(sig)
+        return sig
+
+    def _contributor_stats(self, batch: ProviderBatch, repo: RepoRecord, cstats: list,
+                           relations: dict[str, Relation], people: dict[str, PersonRecord], today: date) -> None:
+        """contributors backfill, first/last commit dates on contributor edges, new_contributors signal."""
+        html_url = repo.attrs.get("html_url") or f"{WEB}/{repo.full_name}"
+        spans = contributor_stats_to_spans(cstats)
+        first = {lg: sp[0] for lg, sp in spans.items()}
+        if len(cstats) < 100:  # stats cover only the top 100 authors; a truncated series would be wrong
+            batch.metrics.extend(p for p in contributors_cumulative_points(first, repo.ref) if p.day < today)
+            # Today's point uses the same definition as the backfill (distinct non-bot authors), so
+            # window deltas over 'contributors' measure newcomers, not a change of definition.
+            batch.metrics.append(MetricPoint(entity=repo.ref, metric="contributors", day=today,
+                                             value=float(len(first))))
+        for login, (f, last) in spans.items():
+            if login.lower() in relations:
+                relations[login.lower()].attrs.update(contributor_date_attrs(f, last))
+        newcomers = new_contributors(first, today)
+        for login in newcomers[:10]:
+            key = login.lower()
+            if key not in people and self._budget_ok(1) and (u := self._user(login)):
+                people[key] = parse_user(u)
+            if key not in relations:
+                relations[key] = Relation(kind="contributor", src=gh_user_ref(login), dst=repo.ref,
+                                          attrs=contributor_date_attrs(*spans[login]),
+                                          source_url=f"{html_url}/graphs/contributors")
+        if sig := build_new_contributors_signal(repo, newcomers, first, stats_truncated=len(cstats) >= 100):
+            batch.signals.append(sig)
+
+    def _probe_last_commits(self, repo: RepoRecord, rels: Sequence[Relation], *,
+                            top: int = COMMITS_FALLBACK_TOP) -> None:
+        """``/commits?author=<login>&per_page=1`` for the top contributors: exact newest-commit date.
+
+        Only a contributor confirmed to have a commit also gets the repository's created_at, stored
+        under ``first_commit_at_approximate`` (never ``first_commit_at``) with its basis spelled out."""
+        full = repo.full_name
+        ranked = sorted(rels, key=lambda r: -int(r.attrs.get("contributions") or 0))
+        for rel in ranked[:top]:
+            if rel.attrs.get("last_commit_at") or not self._budget_ok(1):
+                continue
+            login = split_login(rel.src)
+            r = self._get(f"/repos/{full}/commits", params={"author": login, "per_page": 1})
+            if r.status_code != 200:
+                continue
+            try:
+                at = last_commit_from_commits(r.json() if r.content else [])
+            except ValueError:
+                at = None
+            if at is None:
+                continue
+            rel.attrs["last_commit_at"] = at.isoformat()
+            rel.attrs["last_commit_basis"] = LAST_COMMIT_BASIS
+            if repo.gh_created_at and not rel.attrs.get("first_commit_at"):
+                rel.attrs["first_commit_at_approximate"] = repo.gh_created_at.isoformat()
+                rel.attrs["first_commit_basis"] = APPROX_FIRST_COMMIT_BASIS
+
+    # ── stats retry (202 "computing" responses) ──
+    def fetch_pending_stats(self, *, attempts: int = STATS_RETRY_ATTEMPTS,
+                            spacing: float = STATS_RETRY_SPACING) -> ProviderBatch:
+        """Re-request every stats endpoint that answered 202 earlier in this process (see ``pending_stats``)."""
+        names = list(dict.fromkeys(fn for fn, _ in self.pending_stats))
+        endpoints = {(fn, ep) for fn, ep in self.pending_stats}
+        self.pending_stats = []
+        if not names:
+            return ProviderBatch(provider=self.name)
+        return self.retry_stats(names, attempts=attempts, spacing=spacing, only=endpoints)
+
+    def retry_stats(self, full_names: list[str], *, attempts: int = STATS_RETRY_ATTEMPTS,
+                    spacing: float = STATS_RETRY_SPACING, max_contributors: int = 12,
+                    only: set[tuple[str, str]] | None = None) -> ProviderBatch:
+        """Fetch /stats/contributors + /stats/commit_activity for ``full_names``.
+
+        All requests go out first; those still answering 202 are re-requested in rounds spaced
+        ``spacing`` seconds apart, at most ``attempts`` more times. Returns commits_week and
+        contributors metrics, contributor edges with first/last commit dates (plus their profiles)
+        and the commit_acceleration / new_contributors signals. No repository records are emitted
+        (fields already ingested are left untouched). Endpoints still computing at the end are put
+        back on ``pending_stats``."""
+        batch = ProviderBatch(provider=self.name)
+        today = clock.today()
+        todo = [(fn, ep) for fn in dict.fromkeys(full_names) for ep in STATS_ENDPOINTS
+                if only is None or (fn, ep) in only]
+        results: dict[tuple[str, str], list] = {}
+        stopped = False
+        for attempt in range(attempts + 1):
+            if attempt:
+                self._sleep(spacing)
+            still: list[tuple[str, str]] = []
+            for i, (fn, ep) in enumerate(todo):
+                if not self._budget_ok(1):
+                    batch.errors.append("stats retry: core rate-limit budget reached; stopping")
+                    stopped = True
+                    break
+                try:
+                    r = self._get(f"/repos/{fn}/stats/{ep}")
+                except GitHubRateLimitError as e:
+                    batch.errors.append(f"stats retry: {e}; stopping")
+                    stopped = True
+                    break
+                except httpx.HTTPError as e:
+                    batch.errors.append(f"{fn} stats/{ep}: {e}")
+                    continue
+                if r.status_code == 202:
+                    still.append((fn, ep))
+                elif r.status_code == 204:
+                    results[(fn, ep)] = []
+                elif r.status_code >= 400:
+                    batch.errors.append(f"{fn} stats/{ep}: HTTP {r.status_code}; skipped")
+                else:
+                    try:
+                        data = r.json() if r.content else []
+                    except ValueError:
+                        batch.errors.append(f"{fn} stats/{ep}: response too large to parse; skipped")
+                        continue
+                    results[(fn, ep)] = data if isinstance(data, list) else []
+            if stopped:
+                still += todo[i:]
+            todo = still
+            if not todo or stopped:
+                break
+        for fn, ep in todo:
+            if not stopped:
+                batch.errors.append(f"{fn} stats/{ep}: still being computed after {attempts} retries (202)")
+            if (fn, ep) not in self.pending_stats:
+                self.pending_stats.append((fn, ep))
+
+        for fn in dict.fromkeys(full_names):
+            repo = RepoRecord(ref=repo_ref(fn), full_name=fn, owner=fn.split("/")[0],
+                              attrs={"html_url": f"{WEB}/{fn}"})
+            if weekly := results.get((fn, "commit_activity")):
+                self._commit_activity(batch, repo, weekly, [])
+            cstats = results.get((fn, "contributors"))
+            if not cstats:
+                continue
+            relations: dict[str, Relation] = {}
+            people: dict[str, PersonRecord] = {}
+            ranked = sorted((c for c in cstats if not is_bot((c.get("author") or {}).get("login"),
+                                                                (c.get("author") or {}).get("type"))),
+                            key=lambda c: -int(c.get("total") or 0))
+            for c in ranked[:max_contributors]:
+                login = c["author"]["login"]
+                if self._budget_ok(1) and (u := self._user(login)):
+                    people[login.lower()] = parse_user(u)
+                relations[login.lower()] = Relation(kind="contributor", src=gh_user_ref(login), dst=repo.ref,
+                                                    attrs={"contributions": int(c.get("total") or 0)},
+                                                    source_url=f"{WEB}/{fn}/graphs/contributors")
+            self._contributor_stats(batch, repo, cstats, relations, people, today)
+            batch.people.extend(people.values())
+            batch.relations.extend(r for k, r in relations.items() if k in people)
+        return batch
 
     def fetch_org(self, org: str, *, max_repos: int = 6) -> ProviderBatch:
         """Org company record + its most relevant repos (top 3 deep, rest shallow)."""
@@ -1370,6 +1580,17 @@ class GitHubProvider:
                                                   attrs={"contributions": n},
                                                   source_url=f"{WEB}/{full}/graphs/contributors"))
                     have_edges.add(edge)
+        # Shallow repos get no stats: probe newest commits of their top members (young org by definition).
+        deep_full = repos[0]["full_name"].lower() if repos else None
+        by_repo: dict[str, list[Relation]] = {}
+        for rel in sub.relations:
+            if rel.kind == "contributor" and rel.dst.type == "repository" and not rel.attrs.get("last_commit_at"):
+                by_repo.setdefault(rel.dst.key, []).append(rel)
+        records = {r.ref.key: r for r in sub.repositories}
+        for key, rels in by_repo.items():
+            rec = records.get(key)
+            if rec is not None and rec.full_name.lower() != deep_full:
+                self._probe_last_commits(rec, rels)
         sub.signals.append(build_young_org_team_signal(
             company, list(members.values()), age_days=age_days, age_basis=age_basis, created_on=created_on,
             min_commits=min_commits, window_days=window_days, repos=[r["full_name"] for r in repos],

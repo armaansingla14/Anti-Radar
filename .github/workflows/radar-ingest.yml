@@ -18,7 +18,7 @@ on:
         required: true
         default: score
         type: choice
-        options: [hn, github, orgs, arxiv, web, probe, score, brief, retention]
+        options: [hn, github, orgs, enrich, arxiv, web, stats, probe, score, brief, retention]
 
 concurrency:
   group: radar-ingest
@@ -50,15 +50,15 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "$SCHEDULE" in
-            "17 */3 * * *") jobs="hn probe score" ;;
-            "41 */6 * * *") jobs="github orgs score" ;;
+            "17 */3 * * *") jobs="hn stats probe score" ;;
+            "41 */6 * * *") jobs="github orgs enrich score" ;;
             "23 4 * * *")   jobs="arxiv score" ;;
             "53 5 * * *")   jobs="web score" ;;
             "0 11 * * *")   jobs="brief" ;;
             "29 3 * * 0")   jobs="retention" ;;
             *)              jobs="$INPUT_JOB" ;;
           esac
-          case " hn github orgs arxiv web probe score brief retention " in *" ${jobs%% *} "*) ;; *)
+          case " hn github orgs enrich arxiv web stats probe score brief retention " in *" ${jobs%% *} "*) ;; *)
             echo "unknown job list: '$jobs'" >&2; exit 1 ;; esac
           echo "list=$jobs" >> "$GITHUB_OUTPUT"
           echo "Running: $jobs" >> "$GITHUB_STEP_SUMMARY"

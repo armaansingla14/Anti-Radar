@@ -248,8 +248,10 @@ def probe_attention(limit: int = 60):
 # ── Derivation ───────────────────────────────────────────────────────────────
 
 
-def recompute(day: date | None = None, *, use_llm_topics: bool = False) -> dict[str, Any]:
-    """classify → stage estimates → scores. Deterministic; safe to run any time."""
+def recompute(day: date | None = None, *, use_llm_topics: bool = False, formation: bool = True) -> dict[str, Any]:
+    """classify → stage estimates → relationships → scores → formation candidates.
+
+    Deterministic; safe to run any time. ``formation=False`` stops after scoring."""
     from radar.pipeline.stage import apply_stage_estimates
     from radar.scoring.run import score_all
     from radar.thesis.classifier import classify_entities, ensure_topics
@@ -262,9 +264,34 @@ def recompute(day: date | None = None, *, use_llm_topics: bool = False) -> dict[
         refine_topics_with_llm()
     with session_scope() as s:
         staged = apply_stage_estimates(s)
+    out: dict[str, Any] = {"classified": classified, "staged": staged}
+    if formation:
+        out["relationships"] = build_relationships()
     with session_scope() as s:
-        scored = score_all(s, day or clock.today(), thesis)
-    return {"classified": classified, "staged": staged, "scored": scored}
+        out["scored"] = score_all(s, day or clock.today(), thesis)
+    if formation:
+        out["formation"] = compute_formation(day, rebuild_relationships=False)
+    return out
+
+
+def build_relationships() -> dict[str, Any]:
+    """Rebuild the relationships table from paper authors, contributors, memberships and affiliations."""
+    from radar.pipeline import relationships
+
+    with session_scope() as s:
+        return relationships.build(s)
+
+
+def compute_formation(day: date | None = None, *, rebuild_relationships: bool = True) -> dict[str, Any]:
+    """FORMATION RADAR: (relationships →) formation candidates for ``day``. Reads today's score snapshots."""
+    from radar.scoring import formation
+
+    out: dict[str, Any] = {}
+    if rebuild_relationships:
+        out["relationships"] = build_relationships()
+    with session_scope() as s:
+        out.update(formation.run(s, day or clock.today()))
+    return out
 
 
 def refine_topics_with_llm(limit: int = 60) -> int:
@@ -303,9 +330,15 @@ def refine_topics_with_llm(limit: int = 60) -> int:
 # ── Sweep (one-shot; used by `radar sweep`, the worker and scheduled Actions) ──────────
 
 
-SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "web", "probe", "score", "brief")
-ALL_STEPS: tuple[str, ...] = (*SWEEP_STEPS, "retention")
+SWEEP_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score",
+                                 "brief")
+# 'formation' (relationships + formation candidates) runs after 'score'. The default sweep does not list it
+# separately because 'score' (= recompute) already ends with it; `--only formation` refreshes just that part.
+ALL_STEPS: tuple[str, ...] = ("hn", "arxiv", "github", "orgs", "enrich", "web", "stats", "probe", "score",
+                              "formation", "brief", "retention")
 ORGS_QUERIES_PER_RUN = 10
+ORGS_MAX_PER_RUN = 60
+ORGS_CREATED_WITHIN_DAYS = 180
 
 
 def rotating_subset(items: list[str], n: int, day: date) -> list[str]:
@@ -316,18 +349,47 @@ def rotating_subset(items: list[str], n: int, day: date) -> list[str]:
     return [items[(start + i) % len(items)] for i in range(n)]
 
 
-def ingest_young_orgs(*, terms: list[str] | None = None, created_within_days: int = 150, max_orgs: int = 40,
-                      n_terms: int = ORGS_QUERIES_PER_RUN):
+def rotation_window(items: list[str], n: int, index: int) -> list[str]:
+    """Window number ``index`` of ``n`` consecutive items (wrapping), so successive runs cover every item."""
+    if len(items) <= n:
+        return list(items)
+    start = (index * n) % len(items)
+    return [items[(start + i) % len(items)] for i in range(n)]
+
+
+def _young_org_runs_so_far() -> int:
+    """How many young-org discovery runs were recorded before (the rotation index for the next run)."""
+    from sqlalchemy import func, select
+
+    from radar.models import IngestionRun
+
+    with session_scope() as s:
+        return int(s.scalar(
+            select(func.count()).select_from(IngestionRun)
+            .where(IngestionRun.provider == "github", IngestionRun.params["discovery"].as_string() == "young_orgs")
+        ) or 0)
+
+
+def ingest_young_orgs(*, terms: list[str] | None = None, created_within_days: int = ORGS_CREATED_WITHIN_DAYS,
+                      max_orgs: int = ORGS_MAX_PER_RUN, n_terms: int = ORGS_QUERIES_PER_RUN):
     """Formation discovery: young GitHub organizations around thesis terms (pre-company projects).
 
     Uses ``GitHubProvider.discover_young_orgs`` (search repos created recently, keep org owners,
-    filter academic/hackathon/bot orgs, require >=2 non-bot contributors with >=3 commits)."""
+    filter academic/hackathon/bot orgs, require >=2 non-bot contributors with >=3 commits).
+    Without explicit ``terms`` every thesis discovery query is covered: each run takes the next window of
+    ``n_terms`` queries (rotation index = number of earlier young-org runs), so ⌈queries / n_terms⌉
+    consecutive runs search them all while each run stays inside the GitHub search budget."""
     from radar.providers.github import GitHubProvider
 
     gh = GitHubProvider()
-    qs = terms or rotating_subset(list(get_thesis().discovery_queries), n_terms, clock.today())
+    rotation = None
+    if terms:
+        qs = terms
+    else:
+        rotation = _young_org_runs_so_far()
+        qs = rotation_window(list(get_thesis().discovery_queries), n_terms, rotation)
     params = {"discovery": "young_orgs", "terms": qs, "created_within_days": created_within_days,
-              "max_orgs": max_orgs}
+              "max_orgs": max_orgs, "rotation": rotation}
     if not hasattr(gh, "discover_young_orgs"):
         def missing() -> ProviderBatch:
             return ProviderBatch(provider="github", errors=["discover_young_orgs not available in this build"])
@@ -436,6 +498,10 @@ def _step_ingest(step: str) -> Any:
         return ingest_github()
     if step == "orgs":
         return ingest_young_orgs()
+    if step == "enrich":
+        return enrich_formation_anchors()
+    if step == "stats":
+        return retry_young_org_stats()
     if step == "probe":
         return probe_attention()
     if step == "web":
@@ -450,6 +516,9 @@ def run_step(step: str) -> dict[str, Any]:
     if step == "score":
         run, res = run_job("score", recompute)
         return _job_status(run, res)
+    if step == "formation":
+        run, res = run_job("formation", compute_formation)
+        return _job_status(run, res)
     if step == "brief":
         run, res = run_job("brief", persist_morning_brief)
         return _job_status(run, res)
@@ -461,6 +530,10 @@ def run_step(step: str) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001 — provider construction failures etc.; keep sweeping
         log.exception("sweep step %s failed", step)
         return {"status": "error", "errors": 1, "error": f"{type(e).__name__}: {e}"[:500]}
+    if step == "enrich":
+        return _enrich_status(res)
+    if step == "stats" and res is None:
+        return {"status": "ok", "signals": 0, "errors": 0, "repos": 0}
     if step == "web":
         runs = [r[0] for r in res]
         bad = sum(1 for r in runs if r.status == "error")
@@ -471,7 +544,7 @@ def run_step(step: str) -> dict[str, Any]:
 
 def sweep(steps: list[str] | tuple[str, ...] | None = None, *, github: bool = True, arxiv: bool = True,
           hn: bool = True, websites: bool = True) -> dict[str, Any]:
-    """One full sweep in order (hn, arxiv, github, orgs, web, probe, score, brief) or the given steps.
+    """One full sweep in order (hn, arxiv, github, orgs, enrich, web, stats, probe, score, brief) or the given steps.
 
     Steps always run in canonical order; each is recorded in ``ingestion_runs``. The legacy
     keyword flags remove steps from the default list."""
@@ -501,3 +574,229 @@ def _job_status(run, result) -> dict[str, Any]:
 def _status(result) -> dict[str, Any]:
     run = result[0]
     return {"status": run.status, "signals": run.signals_created, "errors": len(run.errors or [])}
+
+
+def _enrich_status(res: dict[str, Any]) -> dict[str, Any]:
+    runs = [r for r, _ in res.get("runs", [])]
+    bad = sum(1 for r in runs if r.status == "error")
+    status = "ok" if not bad else ("error" if bad == len(runs) else "partial")
+    if not runs:
+        status = "ok"
+    return {"status": status, "anchors": res.get("anchors", 0), "sites": res.get("sites", 0),
+            "signals": sum(r.signals_created for r in runs), "errors": bad,
+            "result": {k: v for k, v in res.items() if k != "runs"}}
+
+
+# ── Formation-anchor enrichment (multi-source evidence for young orgs) ─────────────────
+
+
+ENRICH_MAX_ANCHORS = 40
+ENRICH_KINDS = ("project", "company", "stealth")
+ENRICH_RECRAWL_DAYS = 3
+HN_ENRICH_DAYS = 180
+_MIN_LOGIN_TERM = 5  # shorter logins are too ambiguous as free-text HN search terms
+
+
+def enrichment_targets(limit: int = ENRICH_MAX_ANCHORS, day: date | None = None) -> list[dict[str, Any]]:
+    """Formation anchors to enrich: today's/latest company-anchored formation candidates (by score), then other
+    young orgs (created <= YOUNG_DAYS ago, kind project/company/stealth, non-academic, not dismissed)."""
+    from sqlalchemy import select
+
+    from radar.models import Company, FormationCandidate, Repository
+    from radar.providers.domains import company_domain, is_academic_domain
+    from radar.scoring.formation import YOUNG_DAYS, _company_created
+
+    day = day or clock.today()
+    with session_scope() as s:
+        cand_ids = list(dict.fromkeys(s.scalars(
+            select(FormationCandidate.anchor_id)
+            .where(FormationCandidate.anchor_type == "company", FormationCandidate.is_demo.is_(False))
+            .order_by(FormationCandidate.score.desc())
+        )))
+        companies = {c.id: c for c in s.scalars(
+            select(Company).where(Company.is_demo.is_(False), Company.dismissed.is_(False),
+                                  Company.kind.in_(ENRICH_KINDS)))}
+        repos_by: dict[Any, list[Any]] = {}
+        if companies:
+            for r in s.scalars(select(Repository).where(Repository.company_id.in_(list(companies)))):
+                repos_by.setdefault(r.company_id, []).append(r)
+        young: list[tuple[date, Any]] = []
+        for c in companies.values():
+            if c.id in cand_ids:
+                continue
+            created = _company_created(c, repos_by.get(c.id, []))
+            if created is not None and 0 <= (day - created).days <= YOUNG_DAYS:
+                young.append((created, c))
+        young.sort(key=lambda x: (x[0], x[1].name), reverse=True)  # youngest first
+        ordered = [companies[i] for i in cand_ids if i in companies] + [c for _, c in young]
+        out: list[dict[str, Any]] = []
+        for c in ordered[:limit]:
+            repos = sorted(repos_by.get(c.id, []), key=lambda r: (-(r.stars or 0), r.full_name))
+            dom = company_domain(c.website) if c.website else None
+            dom = dom or c.domain
+            if dom and is_academic_domain(dom):
+                dom = None
+            website = (c.website or "").strip() or (f"https://{dom}" if dom else None)
+            if website and "://" not in website:
+                website = f"https://{website}"
+            out.append({
+                "id": c.id, "name": c.name, "login": c.github_org, "domain": dom,
+                "website": website if dom else None,
+                "repos": [r.full_name for r in repos],
+                "top_repo": repos[0].full_name if repos else None,
+                "candidate": c.id in cand_ids,
+            })
+    return out
+
+
+def _entity_ref(t: dict[str, Any]):
+    from radar.providers.base import domain_ref, gh_org_ref
+
+    if t.get("login"):
+        return gh_org_ref(t["login"])
+    return domain_ref(t["domain"]) if t.get("domain") else None
+
+
+def _recently_crawled(company_id: Any, days: int) -> bool:
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from radar.models import WebPage
+
+    with session_scope() as s:
+        return s.scalar(select(WebPage.id).where(
+            WebPage.company_id == company_id, WebPage.last_fetched_at >= clock.wall_now() - timedelta(days=days)
+        ).limit(1)) is not None
+
+
+def enrich_formation_anchors(limit: int = ENRICH_MAX_ANCHORS, *, web: bool = True, hn: bool = True,
+                             arxiv: bool = True, recrawl_days: int = ENRICH_RECRAWL_DAYS) -> dict[str, Any]:
+    """Multi-source evidence for formation anchors (young orgs), each source recorded via ``run_provider``.
+
+    (a) WEB/HIRING — the org's own (non-platform, non-academic) website is crawled (robots.txt respected;
+        careers pages + ATS boards → jobs → ``job_posted`` / ``hiring_active``; formation language).
+    (b) COMMUNITY — HN probe for the domain, org login and top repo: ``hn_probe_*`` metrics plus one
+        ``hn_show``/``hn_launch``/``hn_discussion`` signal per story that actually links to the org.
+    (c) RESEARCH — arXiv phrase search for ``github.com/<login>`` / the top repo name; only papers whose code
+        URLs point into the org are kept (``code_for`` relations + ``paper_with_code`` on the repo, and the
+        repo is attached to the org that owns it on GitHub)."""
+    from radar.providers.base import ProviderBatch as _PB
+
+    targets = enrichment_targets(limit)
+    out: dict[str, Any] = {"anchors": len(targets), "candidates": sum(1 for t in targets if t["candidate"]),
+                           "sites": 0, "sites_skipped_recent": 0, "runs": []}
+    if not targets:
+        return out
+
+    if web:
+        for t in targets:
+            if not t.get("website"):
+                continue
+            if recrawl_days and _recently_crawled(t["id"], recrawl_days):
+                out["sites_skipped_recent"] += 1
+                continue
+            try:
+                out["runs"].append(ingest_url(t["website"], company_name=t["name"]))
+                out["sites"] += 1
+            except Exception as e:  # noqa: BLE001 — unsafe URL etc.; recorded where possible, keep going
+                log.warning("enrich crawl failed for %s: %s", t["website"], e)
+
+    if hn:
+        from radar.providers.hackernews import HackerNewsProvider
+
+        hnp = HackerNewsProvider()
+        hn_targets = []
+        for t in targets:
+            ref = _entity_ref(t)
+            login = t.get("login") or ""
+            terms = [x for x in (t.get("domain"), t.get("top_repo"),
+                                 login if len(login) >= _MIN_LOGIN_TERM else None) if x]
+            if ref is not None and terms:
+                hn_targets.append((ref, terms, login or None, t.get("domain")))
+
+        def hn_fn() -> ProviderBatch:
+            batch = _PB(provider="hackernews")
+            for ref, terms, login, dom in hn_targets:
+                batch.extend(hnp.org_attention(ref, terms, github_owner=login, domain=dom, days=HN_ENRICH_DAYS))
+            return batch
+
+        if hn_targets:
+            run, _ = _run("hackernews", hn_fn, {"enrich": "formation_anchors", "targets": len(hn_targets)},
+                          hnp.client.stats)
+            out["runs"].append((run, None))
+
+    if arxiv:
+        from radar.providers.arxiv import ArxivProvider
+        from radar.providers.base import Relation, gh_org_ref
+
+        ax = ArxivProvider()
+        ax_targets = []
+        for t in targets:
+            login = t.get("login")
+            if not login:
+                continue
+            phrases = [f"github.com/{login}"]
+            if t.get("top_repo"):
+                name = t["top_repo"].split("/", 1)[1]
+                if len(name) >= _MIN_LOGIN_TERM and name.lower() != login.lower():
+                    phrases.append(name)
+            ax_targets.append((login, phrases))
+
+        def ax_fn() -> ProviderBatch:
+            batch = _PB(provider="arxiv")
+            for login, phrases in ax_targets:
+                b = ax.search_code_for(login, phrases)
+                for repo in b.repositories:  # the org owns repos under github.com/<login>/ (a fact of the URL)
+                    if repo.owner.lower() == login.lower():
+                        b.relations.append(Relation(kind="owns", src=gh_org_ref(login), dst=repo.ref,
+                                                    source_url=f"https://github.com/{repo.full_name}"))
+                batch.extend(b)
+            return batch
+
+        if ax_targets:
+            run, _ = _run("arxiv", ax_fn, {"enrich": "formation_anchors", "targets": len(ax_targets)},
+                          ax.client.stats)
+            out["runs"].append((run, None))
+    return out
+
+
+def young_org_repos_missing_stats(limit: int = 80) -> list[str]:
+    """Repos of young orgs (enrichment targets) with no ``commits_week`` or no ``contributors`` metric yet."""
+    from sqlalchemy import select
+
+    from radar.models import MetricSnapshot, Repository
+
+    targets = enrichment_targets(limit=ENRICH_MAX_ANCHORS * 2)
+    names = [n for t in targets for n in t["repos"]]
+    if not names:
+        return []
+    with session_scope() as s:
+        repos = {r.id: r.full_name for r in s.scalars(select(Repository).where(Repository.full_name.in_(names)))}
+        have: dict[Any, set[str]] = {}
+        for eid, metric in s.execute(
+            select(MetricSnapshot.entity_id, MetricSnapshot.metric).distinct()
+            .where(MetricSnapshot.entity_id.in_(list(repos)),
+                   MetricSnapshot.metric.in_(("commits_week", "contributors")))
+        ):
+            have.setdefault(eid, set()).add(metric)
+    order = {n: i for i, n in enumerate(names)}
+    missing = [fn for rid, fn in repos.items() if have.get(rid, set()) != {"commits_week", "contributors"}]
+    return sorted(missing, key=lambda n: order.get(n, 0))[:limit]
+
+
+def retry_young_org_stats(limit: int = 80) -> Any:
+    """Re-ask GitHub for statistics (commit activity / contributors) that answered 202 "computing" earlier."""
+    from radar.providers.github import GitHubProvider
+
+    gh = GitHubProvider()
+    names = young_org_repos_missing_stats(limit)
+    params = {"stats_retry": True, "repos": names}
+    if not hasattr(gh, "retry_stats"):
+        def missing() -> ProviderBatch:
+            return ProviderBatch(provider="github", errors=["retry_stats not available in this build"])
+
+        return _run("github", missing, params, gh.client.stats)
+    if not names:
+        return None  # nothing missing: no provider run (an empty run would look like fresh GitHub data)
+    return _run("github", lambda: gh.retry_stats(names), params, gh.client.stats)

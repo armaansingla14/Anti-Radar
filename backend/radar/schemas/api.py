@@ -699,3 +699,104 @@ class IngestOut(BaseModel):
     entity: IngestEntityRef | None = None
     info: dict[str, Any] = Field(default_factory=dict)  # e.g. X text_source: oembed | user_provided
     recomputed: bool = False
+
+
+# ── Formation radar (relationships, team convergence) ────────────────────────
+
+
+RelationshipKind = Literal["WORKED_WITH", "COAUTHORED_WITH", "CONTRIBUTED_WITH", "MEMBER_OF", "FOUNDED",
+                           "AUTHORED", "CONTRIBUTED_TO"]
+FormationTier = Literal["high", "emerging", "early"]
+
+
+class EntityRef(BaseModel):
+    type: str  # company | person | repository | paper
+    id: str
+    slug: str | None = None
+    name: str
+
+
+class RelationshipOut(BaseModel):
+    """A stored relationship. WORKED_WITH from shared self-reported org strings is INFERRED;
+    co-authorship / co-contribution observed in source data is VERIFIED."""
+
+    id: str
+    kind: str
+    epistemic: Verification
+    src: EntityRef
+    dst: EntityRef
+    first_seen_at: datetime | None = None  # earliest evidence date (paper date, first commit, org creation)
+    last_seen_at: datetime | None = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+
+
+class FormationMember(BaseModel):
+    id: str
+    slug: str
+    name: str  # display name
+    headline: str | None = None
+    avatar_url: str | None = None
+    founder_score: int | None = None
+    affiliations: list[str] = Field(default_factory=list)  # self-reported (GitHub profile), cleaned
+    is_demo: bool = False
+
+
+class FormationCard(BaseModel):
+    id: str
+    slug: str
+    kind: Literal["team", "person"]
+    title: str
+    label: str  # EMERGING TEAM | POSSIBLE FORMATION | FORMATION SIGNALS DETECTED — never "founded"
+    tier: FormationTier
+    score: int
+    components: list[ScoreComponent]
+    theme: str | None = None
+    theme_label: str | None = None
+    subtopic_label: str | None = None
+    members: list[FormationMember] = Field(default_factory=list)
+    previous_affiliations: list[str] = Field(default_factory=list)  # union of members' normalized prior orgs
+    previous_affiliations_status: Verification = "INFERRED"
+    previous_affiliations_note: str | None = None  # "Self-reported on GitHub profile"
+    independent_signals: int = 0
+    families: list[str] = Field(default_factory=list)
+    first_detected_at: datetime | None = None
+    latest_activity_at: datetime | None = None
+    why_now: list[EvidenceItem] = Field(default_factory=list)
+    anchor: EntityRef
+    is_demo: bool = False
+    data_age: DataAge | None = None
+
+
+class FormationCounts(BaseModel):
+    high: int = 0
+    emerging: int = 0
+    early: int = 0
+    total: int = 0
+
+
+class FormationFeed(BaseModel):
+    as_of: date
+    is_snapshot: bool = False
+    counts: FormationCounts
+    high: list[FormationCard] = Field(default_factory=list)
+    emerging: list[FormationCard] = Field(default_factory=list)
+    early: list[FormationCard] = Field(default_factory=list)
+
+
+class Convergence(BaseModel):
+    score: float  # 0..1
+    strength: Literal["HIGH", "MEDIUM", "LOW"]
+    explanation: str
+    prior_relationships: int = 0
+    families: list[str] = Field(default_factory=list)
+
+
+class FormationDetail(BaseModel):
+    card: FormationCard
+    convergence: Convergence
+    relationships: list[RelationshipOut] = Field(default_factory=list)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
+    repositories: list[RepoCard] = Field(default_factory=list)
+    papers: list[PaperCard] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[SourceRef] = Field(default_factory=list)

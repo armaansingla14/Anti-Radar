@@ -169,3 +169,30 @@ def test_fetch_ids_strips_versions_and_rejects_garbage():
     b = ArxivProvider(client=client).fetch_ids(["2610.06850v1", "2610.06850", "../etc"])
     assert client.calls[0]["id_list"] == "2610.06850"
     assert b.rejected == 1 and [p.arxiv_id for p in b.papers] == ["2610.06850"]
+
+
+# ── formation-anchor enrichment: verified code links only ───────────────────
+
+
+def test_search_code_for_keeps_only_papers_with_code_in_the_org(monkeypatch):
+    monkeypatch.setattr("radar.providers.arxiv.clock.now", lambda: NOW)
+    client = _StubClient(XML)
+    b = ArxivProvider(client=client).search_code_for("ModelTC", ["github.com/ModelTC", "LightX2V"])
+    q = client.calls[0]["search_query"]
+    assert q == ('abs:"github.com/ModelTC" OR co:"github.com/ModelTC" OR abs:"LightX2V" OR co:"LightX2V"')
+    assert client.calls[0]["max_results"] == 10
+    assert len(b.papers) >= 1
+    for p in b.papers:
+        assert any(u.lower().startswith("https://github.com/modeltc/") for u in p.code_urls)
+        assert p.attrs["verified_code_urls"]
+    pwc = [s for s in b.signals if s.signal_type == "paper_with_code"]
+    assert pwc and any(s.entity == repo_ref("ModelTC/LightX2V") and s.metadata["verified_link"] for s in pwc)
+    assert any(r.kind == "code_for" and r.dst == repo_ref("ModelTC/LightX2V") for r in b.relations)
+
+
+def test_search_code_for_drops_unverified_matches_and_handles_errors():
+    b = ArxivProvider(client=_StubClient(XML)).search_code_for("nobody-org", ["github.com/nobody-org"])
+    assert b.papers == [] and b.signals == [] and b.relations == []
+    assert ArxivProvider(client=_StubClient(XML)).search_code_for("", ["x"]).papers == []
+    down = ArxivProvider(client=_StubClient("", status=503)).search_code_for("ModelTC", ["github.com/ModelTC"])
+    assert down.papers == [] and down.errors

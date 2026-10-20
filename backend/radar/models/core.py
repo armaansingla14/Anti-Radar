@@ -583,3 +583,66 @@ class LLMCache(Base):
     model: Mapped[str] = mapped_column(String(80))
     response: Mapped[dict] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Relationships & formation (M2) ───────────────────────────────────────────
+
+
+class Relationship(Base, TimestampMixin):
+    """A deterministic edge between two entities, rebuilt by ``pipeline.relationships.build``.
+
+    Person-person kinds (WORKED_WITH, COAUTHORED_WITH, CONTRIBUTED_WITH) are stored once with
+    ``str(src_id) < str(dst_id)``. ``first_seen_at``/``last_seen_at`` are evidence dates (paper
+    date, first commit, …), never ingestion times; NULL when the evidence carries no date
+    (e.g. a shared self-reported affiliation)."""
+
+    __tablename__ = "relationships"
+    __table_args__ = (
+        UniqueConstraint("src_id", "dst_id", "kind", name="uq_relationship"),
+        Index("ix_relationships_kind", "kind"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    src_type: Mapped[str] = mapped_column(String(20))
+    src_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    dst_type: Mapped[str] = mapped_column(String(20))
+    dst_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    # WORKED_WITH | COAUTHORED_WITH | CONTRIBUTED_WITH | MEMBER_OF | FOUNDED | AUTHORED | CONTRIBUTED_TO
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    epistemic: Mapped[str] = mapped_column(String(20), default="VERIFIED")  # VERIFIED | INFERRED
+    evidence: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    # [{title, detail, source_url, source_type, event_at}]
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class FormationCandidate(Base):
+    """A possible formation (team around a young org, or one person) with its FORMATION SCORE.
+
+    Rebuilt by ``scoring.formation.run``; rows that no longer qualify are deleted."""
+
+    __tablename__ = "formation_candidates"
+    __table_args__ = (Index("ix_formation_tier_score", "tier", "score"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    slug: Mapped[str] = mapped_column(String(220), unique=True)
+    kind: Mapped[str] = mapped_column(String(10))  # team | person
+    anchor_type: Mapped[str] = mapped_column(String(20))  # company | person
+    anchor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True)
+    title: Mapped[str] = mapped_column(String(400))
+    theme: Mapped[str | None] = mapped_column(String(60))
+    subtopic: Mapped[str | None] = mapped_column(String(120))
+    member_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list, server_default="{}")
+    score: Mapped[float] = mapped_column(Float)
+    tier: Mapped[str] = mapped_column(String(10))  # high | emerging | early
+    label: Mapped[str] = mapped_column(String(40))  # EMERGING TEAM | POSSIBLE FORMATION | FORMATION SIGNALS DETECTED
+    components: Mapped[dict] = mapped_column(JSONType, default=dict)
+    convergence: Mapped[dict] = mapped_column(JSONType, default=dict)
+    signal_families: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    independent_signals: Mapped[int] = mapped_column(Integer, default=0)
+    first_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    latest_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    why_now: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
+    day: Mapped[date] = mapped_column(Date)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

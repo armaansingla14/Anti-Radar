@@ -14,9 +14,12 @@ import httpx
 import pytest
 import respx
 
-from radar.providers.base import EntityRef, domain_ref, gh_org_ref, gh_user_ref, repo_ref
+from radar.providers.base import EntityRef, ProviderBatch, domain_ref, gh_org_ref, gh_user_ref, repo_ref
 from radar.providers.github import (
     API,
+    APPROX_FIRST_COMMIT_BASIS,
+    CONTRIBUTOR_DATES_BASIS,
+    LAST_COMMIT_BASIS,
     GitHubProvider,
     GitHubRateLimitError,
     StarHistory,
@@ -30,9 +33,11 @@ from radar.providers.github import (
     commit_activity_to_points,
     compact_series,
     contributor_stats_to_first_weeks,
+    contributor_stats_to_spans,
     contributors_cumulative_points,
     is_bot,
     is_list_repo,
+    last_commit_from_commits,
     new_contributors,
     noise_org_reason,
     parse_org,
@@ -286,7 +291,8 @@ def test_build_search_query():
 # ── HTTP orchestration (respx) ───────────────────────────────────────────────
 
 
-def _mock_org_repo(router: respx.Router, *, commit_statuses: list[int]) -> None:
+def _mock_org_repo(router: respx.Router, *, commit_statuses: list[int], contrib_statuses: list[int] | None = None,
+                   ) -> None:
     base = f"{API}/repos/{REPO}"
     router.get(base).respond(json=load("repo_org.json"))
     router.get(f"{base}/readme").respond(text=(FX / "readme_graspnet.md").read_text())
@@ -294,7 +300,11 @@ def _mock_org_repo(router: respx.Router, *, commit_statuses: list[int]) -> None:
     ca = [httpx.Response(s, json=load("commit_activity.json") if s == 200 else {}) for s in commit_statuses]
     router.get(f"{base}/stats/commit_activity").mock(side_effect=ca)
     router.get(f"{base}/stats/participation").respond(202, json={})
-    router.get(f"{base}/stats/contributors").respond(json=load("stats_contributors.json"))
+    if contrib_statuses is None:
+        router.get(f"{base}/stats/contributors").respond(json=load("stats_contributors.json"))
+    else:
+        router.get(f"{base}/stats/contributors").mock(side_effect=[
+            httpx.Response(s, json=load("stats_contributors.json") if s == 200 else {}) for s in contrib_statuses])
     router.get(f"{base}/contributors").respond(json=load("contributors.json"))
     for u in ("alice", "bob", "carol"):
         router.get(f"{API}/users/{u}").respond(json=load(f"user_{u}.json"))
@@ -325,7 +335,12 @@ def test_fetch_repo_org_deep_end_to_end(provider, sleeps):
     assert logins == ["alice", "bob", "carol"]
     contrib = {r.src.key: r for r in batch.relations if r.kind == "contributor"}
     assert set(contrib) == {"github_user:alice", "github_user:bob", "github_user:carol"}
-    assert contrib["github_user:bob"].attrs == {"contributions": 22, "first_commit_week": "2026-09-13"}
+    assert contrib["github_user:bob"].attrs == {
+        "contributions": 22, "first_commit_week": "2026-09-13", "first_commit_at": "2026-09-13T00:00:00+00:00",
+        "last_commit_at": "2026-09-20T00:00:00+00:00", "commit_dates_basis": CONTRIBUTOR_DATES_BASIS}
+    assert contrib["github_user:alice"].attrs["first_commit_at"] == "2026-03-01T00:00:00+00:00"
+    assert contrib["github_user:alice"].attrs["last_commit_at"] == "2026-09-27T00:00:00+00:00"
+    assert provider.pending_stats == []
     assert any(r.kind == "owns" and r.src == gh_org_ref("acme-robotics") for r in batch.relations)
     # Observed metrics for today, backfill strictly before today.
     observed = {(m.metric, m.value) for m in batch.metrics if m.source == "observed"}
@@ -360,6 +375,91 @@ def test_stats_202_exhausted_is_recorded_not_raised(provider, sleeps):
     assert not any(m.metric == "commits_week" for m in batch.metrics)
     assert "commit_acceleration" not in {s.signal_type for s in batch.signals}
     assert "star_velocity" in {s.signal_type for s in batch.signals}  # rest of the batch intact
+    assert provider.pending_stats == [(REPO, "commit_activity")]
+
+
+def test_contributor_spans_and_last_commit_parsing():
+    spans = contributor_stats_to_spans(load("stats_contributors.json"))
+    assert spans == {"alice": (date(2026, 3, 1), date(2026, 9, 27)), "dave": (date(2026, 8, 23), date(2026, 8, 23)),
+                     "bob": (date(2026, 9, 13), date(2026, 9, 20)), "carol": (date(2026, 9, 20), date(2026, 9, 20))}
+    assert last_commit_from_commits(load("commits_by_author.json")) == datetime(2026, 10, 2, 17, 45, tzinfo=UTC)
+    committer_only = [{"commit": {"committer": {"date": "2026-10-01T00:00:00Z"}}}]
+    assert last_commit_from_commits(committer_only) == datetime(2026, 10, 1, tzinfo=UTC)
+    assert last_commit_from_commits([]) is None and last_commit_from_commits({"message": "x"}) is None
+
+
+def test_pending_stats_are_filled_later_in_the_same_process(provider, sleeps):
+    with respx.mock(assert_all_called=False) as router:
+        # 202 on the primed call + 3 backoff retries, then (on the later retry) 202 once more, then ready.
+        _mock_org_repo(router, commit_statuses=[202] * 4 + [202, 200])
+        provider.fetch_repo(REPO, deep=True)
+        assert provider.pending_stats == [(REPO, "commit_activity")]
+        sleeps.clear()
+        later = provider.fetch_pending_stats()
+        calls = [str(c.request.url) for c in router.calls]
+    assert sleeps == [10.0]
+    assert later.errors == [] and provider.pending_stats == []
+    assert later.repositories == []  # never overwrites already-ingested repository fields
+    weeks = [m for m in later.metrics if m.metric == "commits_week"]
+    assert weeks and all(m.entity == repo_ref(REPO) and m.source == "backfill" for m in weeks)
+    assert [s.signal_type for s in later.signals] == ["commit_acceleration"]
+    # Only the endpoint that was pending is re-requested.
+    assert not any(u.endswith("/stats/contributors") for u in calls[-2:])
+    assert provider.fetch_pending_stats().counts() == ProviderBatch(provider="github").counts()
+
+
+def test_retry_stats_fills_contributor_dates_and_gives_up_after_four_retries(provider, sleeps):
+    base = f"{API}/repos/{REPO}"
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{base}/stats/contributors").mock(side_effect=[
+            httpx.Response(202, json={}), httpx.Response(200, json=load("stats_contributors.json"))])
+        ca = router.get(f"{base}/stats/commit_activity").respond(202, json={})
+        for u in ("alice", "bob", "carol"):
+            router.get(f"{API}/users/{u}").respond(json=load(f"user_{u}.json"))
+        router.get(f"{API}/users/dave").respond(404, json={"message": "Not Found"})
+        batch = provider.retry_stats([REPO, REPO])
+    assert sleeps == [10.0] * 4 and ca.call_count == 5
+    assert batch.errors == [f"{REPO} stats/commit_activity: still being computed after 4 retries (202)"]
+    assert provider.pending_stats == [(REPO, "commit_activity")]
+    edges = {r.src.key: r.attrs for r in batch.relations}
+    assert set(edges) == {"github_user:alice", "github_user:bob", "github_user:carol"}  # dave has no profile
+    assert edges["github_user:alice"]["first_commit_at"] == "2026-03-01T00:00:00+00:00"
+    assert edges["github_user:alice"]["last_commit_at"] == "2026-09-27T00:00:00+00:00"
+    assert edges["github_user:alice"]["contributions"] == 2  # stats "total"
+    assert {m.metric for m in batch.metrics} == {"contributors"}
+    assert [s.signal_type for s in batch.signals] == ["new_contributors"]
+
+
+def test_young_org_repo_without_stats_probes_newest_commits(provider, sleeps):
+    base = f"{API}/repos/{REPO}"
+    with respx.mock(assert_all_called=False) as router:
+        _mock_org_repo(router, commit_statuses=[200], contrib_statuses=[202] * 4)
+        commits = router.get(f"{base}/commits").mock(side_effect=lambda req: httpx.Response(
+            200, json=load("commits_by_author.json") if req.url.params["author"] == "alice" else []))
+        batch = provider.fetch_repo(REPO, deep=True)
+    assert provider.pending_stats == [(REPO, "contributors")]
+    assert sorted(c.request.url.params["author"] for c in commits.calls) == ["alice", "bob", "carol"]
+    assert all(c.request.url.params["per_page"] == "1" for c in commits.calls)
+    edges = {r.src.key: r.attrs for r in batch.relations if r.kind == "contributor"}
+    alice = edges["github_user:alice"]
+    assert alice["last_commit_at"] == "2026-10-02T17:45:00+00:00" and alice["last_commit_basis"] == LAST_COMMIT_BASIS
+    # The repo's creation date is only an approximation, never written as first_commit_at.
+    assert "first_commit_at" not in alice
+    assert alice["first_commit_at_approximate"] == "2026-06-01T10:00:00+00:00"
+    assert alice["first_commit_basis"] == APPROX_FIRST_COMMIT_BASIS
+    assert edges["github_user:bob"] == {"contributions": 22}  # no commit found: nothing invented
+
+
+def test_old_org_repo_without_stats_is_not_probed(provider):
+    old_org = {**load("org_acme.json"), "created_at": "2019-01-01T00:00:00Z"}
+    old_repo = {**load("repo_org.json"), "created_at": "2020-01-01T00:00:00Z"}
+    with respx.mock(assert_all_called=False) as router:
+        _mock_org_repo(router, commit_statuses=[200], contrib_statuses=[202] * 4)
+        router.get(f"{API}/orgs/acme-robotics").respond(json=old_org)
+        router.get(f"{API}/repos/{REPO}").respond(json=old_repo)
+        commits = router.get(f"{API}/repos/{REPO}/commits").respond(json=load("commits_by_author.json"))
+        provider.fetch_repo(REPO, deep=True)
+    assert not commits.called
 
 
 def test_user_owned_repo_is_not_a_company(provider):
@@ -544,6 +644,10 @@ def test_discover_young_orgs_filters_and_emits_team_signal(provider):
     assert {"alice", "bob", "carol"} <= set(people) and all(p.attrs["self_reported"] for p in people.values())
     edges = {(r.src.key, r.dst.key) for r in batch.relations if r.kind == "contributor"}
     assert ("github_user:carol", "repo:newbot-ai/sim") in edges
+    # The shallow repo has no stats: its members' newest commits are probed (404 here -> no dates invented).
+    assert any("/repos/newbot-ai/sim/commits?author=carol" in u for u in urls)
+    sim = next(r for r in batch.relations if r.kind == "contributor" and r.dst == repo_ref("newbot-ai/sim"))
+    assert "last_commit_at" not in sim.attrs and "first_commit_at_approximate" not in sim.attrs
     # Young repo: star history capped at 3 pages even with a token.
     assert routes["star_history"].call_count == 1 and routes["star_page3"].call_count == 1
     assert not any("page=4" in str(c.request.url) or str(c.request.url).endswith("/z") for c in routes["other"].calls)

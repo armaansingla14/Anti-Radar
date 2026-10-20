@@ -1,5 +1,6 @@
 """Demo seeding: replay the committed real-data snapshot, optionally add the labeled
-fictional set, import pre-generated LLM outputs, then classify + score.
+fictional set, import pre-generated LLM outputs, then classify + score, then build the
+relationship graph and FORMATION RADAR candidates.
 
     radar seed-demo                          # verified snapshot only (fictional per DEMO_SYNTHETIC)
     radar seed-demo --if-empty --no-fictional  # demo backend startup: seed once, never synthetic
@@ -258,6 +259,18 @@ def score_history(days: tuple[int, ...] = (30, 21, 14, 10, 7, 5, 3, 2, 1)) -> in
     return n + 1
 
 
+def seed_formation() -> dict[str, Any]:
+    """Relationships + FORMATION RADAR candidates for the seeded day (deterministic, no LLM), so demo and
+    snapshot backends show formation candidates without waiting for a scheduled run."""
+    from radar.ops import compute_formation
+
+    try:
+        return compute_formation(clock.today())
+    except Exception as e:  # noqa: BLE001 — formation is additive; never fail the whole seed over it
+        log.exception("seed: formation step failed")
+        return {"error": str(e)[:300]}
+
+
 def synthetic_default() -> bool:
     """Whether the fictional dataset is included when the caller does not say (DEMO_SYNTHETIC, default False)."""
     from radar.settings import get_settings
@@ -300,6 +313,7 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
 
         with session_scope() as s:
             score_all(s, clock.today())
+    out["formation"] = seed_formation()
     from radar.demo.warm import import_reports
 
     out["reports"] = import_reports() if llm_outputs else 0

@@ -9,7 +9,8 @@ export interface NavItem {
 
 export const NAV_PRIMARY: NavItem[] = [
   { href: "/", label: "Radar", jump: "r", description: "Today's ranked intelligence feed" },
-  { href: "/daily", label: "Daily", jump: "d", description: "What changed since your last visit" },
+  { href: "/formation", label: "Formation", jump: "o", description: "Technical teams before the company announcement" },
+  { href: "/meet", label: "Meet", jump: "m", description: "Who to meet this week" },
   { href: "/founders", label: "Founders", jump: "f", description: "Technical founders surfacing now" },
   { href: "/companies", label: "Companies", jump: "c", description: "Emerging companies and projects" },
   { href: "/thesis", label: "Thesis", jump: "t", description: "Momentum versus attention by thesis area" },
@@ -18,6 +19,7 @@ export const NAV_PRIMARY: NavItem[] = [
 ];
 
 export const NAV_SECONDARY: NavItem[] = [
+  { href: "/daily", label: "Daily", jump: "d", description: "What changed since your last visit" },
   { href: "/brief", label: "Brief", jump: "b", description: "Morning brief" },
   { href: "/retrospective", label: "Retrospective", description: "How the framework reads known breakouts" },
   { href: "/status", label: "Status", description: "Providers, freshness, LLM usage" },

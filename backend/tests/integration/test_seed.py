@@ -55,3 +55,25 @@ def test_demo_snapshot_pins_clock_to_manifest_regardless_of_live_runs(db, monkey
         assert clock.init_from_db() == expected and clock.as_of() == expected
     finally:
         clock.set_as_of(None)
+
+
+def test_seed_builds_relationships_and_formation(seeded):
+    from radar.models.core import FormationCandidate, Relationship
+
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(Relationship)) > 0
+        halcyon = s.scalar(select(Company).where(Company.name == "Halcyon Dynamics"))
+        fc = s.scalar(select(FormationCandidate).where(FormationCandidate.anchor_id == halcyon.id))
+        assert fc is not None and fc.is_demo and fc.kind == "team" and fc.why_now
+
+
+def test_seed_reports_formation_summary(db_url, monkeypatch):
+    from radar.demo.seed import reset_database, seed_demo
+
+    reset_database()
+    try:
+        out = seed_demo(snapshot=False, fictional=True, history=False, llm_outputs=False)
+        assert "error" not in out["formation"], out["formation"]
+        assert out["formation"]["stored"] >= 1 and "relationships" in out["formation"]
+    finally:
+        reset_database()

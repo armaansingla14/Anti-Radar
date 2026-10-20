@@ -694,6 +694,118 @@ export interface GraphOut {
   edges: GraphEdge[];
 }
 
+// ── Formation Radar ──────────────────────────────────────────────────────────
+
+export type RelationshipKind =
+  | "WORKED_WITH"
+  | "COAUTHORED_WITH"
+  | "CONTRIBUTED_WITH"
+  | "MEMBER_OF"
+  | "FOUNDED"
+  | "AUTHORED"
+  | "CONTRIBUTED_TO";
+
+/** VERIFIED = observed in a primary record; INFERRED = derived (e.g. shared self-reported org strings). */
+export type RelationshipEpistemic = "VERIFIED" | "INFERRED";
+
+export interface EntityRef {
+  type: string;
+  id: string;
+  slug: string | null;
+  name: string;
+}
+
+export interface RelationshipOut {
+  id: string;
+  kind: RelationshipKind | string;
+  epistemic: RelationshipEpistemic | string;
+  src: EntityRef;
+  dst: EntityRef;
+  first_seen_at: ISODateTime | null;
+  last_seen_at: ISODateTime | null;
+  evidence: EvidenceItem[];
+}
+
+export type FormationTier = "high" | "emerging" | "early";
+export type FormationLabel = "EMERGING TEAM" | "POSSIBLE FORMATION" | "FORMATION SIGNALS DETECTED";
+
+export interface FormationMember {
+  id: string;
+  slug: string;
+  name: string;
+  headline: string | null;
+  avatar_url: string | null;
+  founder_score: number | null;
+  /** Self-reported / inferred affiliation strings. */
+  affiliations: string[];
+  is_demo: boolean;
+}
+
+export interface FormationCard {
+  id: string;
+  slug: string;
+  kind: "team" | "person" | string;
+  title: string;
+  label: FormationLabel | string;
+  tier: FormationTier | string;
+  score: number;
+  components: ScoreComponent[];
+  theme: string | null;
+  theme_label: string | null;
+  subtopic_label: string | null;
+  members: FormationMember[];
+  /** Union of members' normalized prior orgs. */
+  previous_affiliations: string[];
+  /** INFERRED when taken from self-reported profile fields. */
+  previous_affiliations_status?: Verification;
+  /** e.g. "Self-reported on GitHub profile". */
+  previous_affiliations_note?: string | null;
+  independent_signals: number;
+  /** Source families: github, research, hiring, web, community, social. */
+  families: string[];
+  first_detected_at: ISODateTime | null;
+  latest_activity_at: ISODateTime | null;
+  why_now: EvidenceItem[];
+  anchor: EntityRef;
+  is_demo: boolean;
+  data_age?: DataAge | null;
+}
+
+export interface FormationCounts {
+  high: number;
+  emerging: number;
+  early: number;
+  total: number;
+}
+
+export interface FormationFeed {
+  as_of: ISODate;
+  is_snapshot: boolean;
+  counts: FormationCounts;
+  high: FormationCard[];
+  emerging: FormationCard[];
+  early: FormationCard[];
+}
+
+export interface FormationConvergence {
+  score: number;
+  strength: "HIGH" | "MEDIUM" | "LOW" | string;
+  explanation: string;
+  prior_relationships: number;
+  families: string[];
+}
+
+export interface FormationDetail {
+  card: FormationCard;
+  convergence: FormationConvergence;
+  relationships: RelationshipOut[];
+  timeline: TimelineEvent[];
+  repositories: RepoCard[];
+  papers: PaperCard[];
+  jobs: JsonObject[];
+  sources: SourceRef[];
+}
+
 // ── Not modelled in api.py (backend returns ad-hoc JSON) ─────────────────────
 
 /**

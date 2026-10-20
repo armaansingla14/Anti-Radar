@@ -1,0 +1,12 @@
+[
+ {
+  "sha": "4f1c2b0e9d8a7c6b5a4f3e2d1c0b9a8f7e6d5c4b",
+  "html_url": "https://github.com/acme-robotics/graspnet/commit/4f1c2b0e9d8a7c6b5a4f3e2d1c0b9a8f7e6d5c4b",
+  "commit": {
+   "author": {"name": "Alice Example", "date": "2026-10-02T17:45:00Z"},
+   "committer": {"name": "GitHub", "date": "2026-10-02T17:46:10Z"},
+   "message": "Add grasp quality head"
+  },
+  "author": {"login": "alice", "type": "User"}
+ }
+]

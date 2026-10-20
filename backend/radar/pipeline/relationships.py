@@ -1,0 +1,375 @@
+"""Deterministic relationship graph: the single table every team/convergence feature reads.
+
+``build(session)`` derives edges from stored facts only — no LLM, no fuzzy guessing:
+
+==================  =====================  ===========================================  =========
+kind                endpoints              source                                       epistemic
+==================  =====================  ===========================================  =========
+AUTHORED            person -> paper        paper_authors                                VERIFIED
+COAUTHORED_WITH     person <-> person      two authors on one paper (<= 25 authors)     VERIFIED
+CONTRIBUTED_TO      person -> repository   repo_contributors                            VERIFIED
+CONTRIBUTED_WITH    person <-> person      both >= 3 commits to the same repository     VERIFIED
+MEMBER_OF/FOUNDED   person -> company      company_people (FOUNDED when is_founder)     VERIFIED only with a
+                                                                                        non-self-reported source
+WORKED_WITH         person <-> person      same normalized current/prior affiliation    INFERRED
+==================  =====================  ===========================================  =========
+
+Dates are evidence dates (paper date, first/last commit), never ingestion time; a shared
+self-reported affiliation carries no date, so its ``first_seen_at`` is NULL.
+Person-person edges are stored once with ``str(src_id) < str(dst_id)``.
+
+WORKED_WITH is skipped for very common organizations (> ``GIANT_ORG_PEOPLE`` tracked people
+list it — "both list Google" says little) unless the pair also co-contributed somewhere.
+
+The build is idempotent: rows are upserted on (src_id, dst_id, kind) and rows of the kinds
+built here that are no longer supported by the data are deleted.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import uuid
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, time
+from itertools import combinations
+from typing import Any
+
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from radar import clock
+from radar.models.core import (
+    Company,
+    CompanyPerson,
+    PaperAuthor,
+    Person,
+    Relationship,
+    RepoContributor,
+    Repository,
+    ResearchPaper,
+)
+from radar.pipeline.aliases import normalize_org, org_key
+
+log = logging.getLogger(__name__)
+
+WORKED_WITH = "WORKED_WITH"
+COAUTHORED_WITH = "COAUTHORED_WITH"
+CONTRIBUTED_WITH = "CONTRIBUTED_WITH"
+MEMBER_OF = "MEMBER_OF"
+FOUNDED = "FOUNDED"
+AUTHORED = "AUTHORED"
+CONTRIBUTED_TO = "CONTRIBUTED_TO"
+KINDS = (WORKED_WITH, COAUTHORED_WITH, CONTRIBUTED_WITH, MEMBER_OF, FOUNDED, AUTHORED, CONTRIBUTED_TO)
+PERSON_PAIR_KINDS = frozenset({WORKED_WITH, COAUTHORED_WITH, CONTRIBUTED_WITH})
+
+VERIFIED = "VERIFIED"
+INFERRED = "INFERRED"
+
+MIN_CO_COMMITS = 3  # both people need this many commits to a repo for CONTRIBUTED_WITH
+MAX_REPO_PAIR_CONTRIBUTORS = 30  # only the top-N qualifying contributors of a huge repo form pairs
+MAX_PAPER_AUTHORS = 25  # larger author lists (consortium papers) are too weak for pairwise edges
+GIANT_ORG_PEOPLE = 40
+MAX_EVIDENCE = 10
+
+# Affiliation strings that are not an employer anyone "worked with" someone at.
+NON_EMPLOYERS = frozenset({
+    "independent", "freelance", "freelancer", "self employed", "self", "student", "none", "n a", "na",
+    "home", "personal", "open source", "opensource", "stealth", "stealth startup", "stealth mode",
+    "unemployed", "retired", "remote", "github", "private", "me", "myself", "hobbyist", "researcher",
+    "phd student", "university", "startup", "my company", "looking for job", "looking for work",
+})
+_PROFILE_URL = re.compile(r"^https?://(www\.)?github\.com/[^/]+/?$", re.I)
+
+
+def ordered_pair(a: uuid.UUID, b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
+    """Canonical (src, dst) for symmetric person-person kinds: string-compare of the uuids."""
+    return (a, b) if str(a) < str(b) else (b, a)
+
+
+def _iso(d: datetime | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def _aware(d: datetime | date | None) -> datetime | None:
+    if d is None:
+        return None
+    if isinstance(d, datetime):
+        return d if d.tzinfo else d.replace(tzinfo=UTC)
+    return datetime.combine(d, time.min, tzinfo=UTC)
+
+
+def is_self_reported_source(url: str | None) -> bool:
+    """A membership whose only source is a GitHub *profile* (what the person typed) is self-reported."""
+    return bool(url) and bool(_PROFILE_URL.match(url or ""))
+
+
+def membership_epistemic(source_url: str | None, role: str | None) -> str:
+    """VERIFIED only when backed by a non-self-reported source (a repo commit graph, a team page…)."""
+    if not source_url or is_self_reported_source(source_url):
+        return INFERRED
+    return VERIFIED
+
+
+def employer_key(name: str | None) -> tuple[str, str] | None:
+    """(grouping key, display name) for an affiliation string, or None when it is not an employer."""
+    n = normalize_org(name)
+    if not n:
+        return None
+    k = org_key(n)
+    if not k or k in NON_EMPLOYERS or len(k) < 2:
+        return None
+    return k, n
+
+
+def keep_evidence(items: list[dict[str, Any]], limit: int = MAX_EVIDENCE) -> list[dict[str, Any]]:
+    """Newest first, capped — but always keep the *oldest* dated items too: convergence asks whether a
+    collaboration predates an anchor, and that answer lives in the earliest evidence."""
+    ordered = sorted(items, key=lambda e: (e.get("event_at") or "", e.get("title") or ""), reverse=True)
+    if len(ordered) <= limit:
+        return ordered
+    dated = [e for e in ordered if e.get("event_at")]
+    oldest = dated[-(limit // 2):] if dated else []
+    head = [e for e in ordered if e not in oldest][: limit - len(oldest)]
+    return sorted(head + oldest, key=lambda e: (e.get("event_at") or "", e.get("title") or ""), reverse=True)
+
+
+@dataclass
+class _Edge:
+    src_type: str
+    src_id: uuid.UUID
+    dst_type: str
+    dst_id: uuid.UUID
+    kind: str
+    epistemic: str = VERIFIED
+    first: datetime | None = None
+    last: datetime | None = None
+    weight: float = 0.0
+    is_demo: bool = False
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+
+    def see(self, at: datetime | None, last: datetime | None = None) -> None:
+        last = last or at
+        if at is not None and (self.first is None or at < self.first):
+            self.first = at
+        if last is not None and (self.last is None or last > self.last):
+            self.last = last
+
+    def values(self) -> dict[str, Any]:
+        ev = keep_evidence(self.evidence)
+        return {
+            "src_type": self.src_type, "src_id": self.src_id, "dst_type": self.dst_type, "dst_id": self.dst_id,
+            "kind": self.kind, "epistemic": self.epistemic, "first_seen_at": self.first, "last_seen_at": self.last,
+            "weight": float(self.weight), "evidence": ev, "is_demo": self.is_demo,
+        }
+
+
+class _Builder:
+    def __init__(self) -> None:
+        self.edges: dict[tuple[uuid.UUID, uuid.UUID, str], _Edge] = {}
+
+    def edge(self, src_type: str, src: uuid.UUID, dst_type: str, dst: uuid.UUID, kind: str, **kw: Any) -> _Edge:
+        if kind in PERSON_PAIR_KINDS:
+            src, dst = ordered_pair(src, dst)
+        key = (src, dst, kind)
+        e = self.edges.get(key)
+        if e is None:
+            e = self.edges[key] = _Edge(src_type, src, dst_type, dst, kind, **kw)
+        return e
+
+
+def _demo(people: dict[uuid.UUID, Person], *ids: uuid.UUID) -> bool:
+    return any(bool(getattr(people.get(i), "is_demo", False)) for i in ids)
+
+
+def _profile_url(p: Person) -> str | None:
+    if p.github_handle:
+        return f"https://github.com/{p.github_handle}"
+    return p.personal_site or p.linkedin_url
+
+
+def build(session: Session) -> dict[str, Any]:
+    """Rebuild all relationships from stored facts. Returns per-kind counts."""
+    b = _Builder()
+    people: dict[uuid.UUID, Person] = {p.id: p for p in session.scalars(select(Person))}
+
+    # ── papers ──────────────────────────────────────────────────────────────
+    papers: dict[uuid.UUID, ResearchPaper] = {}
+    authors: dict[uuid.UUID, list[tuple[int, uuid.UUID]]] = defaultdict(list)
+    for pa, paper in session.execute(
+        select(PaperAuthor, ResearchPaper).join(ResearchPaper, ResearchPaper.id == PaperAuthor.paper_id)
+    ).all():
+        papers[paper.id] = paper
+        authors[paper.id].append((pa.position or 0, pa.person_id))
+    for pid_paper, rows in authors.items():
+        paper = papers[pid_paper]
+        at = _aware(paper.published_at)
+        url = paper.url or f"https://arxiv.org/abs/{paper.arxiv_id}"
+        ev = {"title": paper.title, "detail": f"arXiv:{paper.arxiv_id}", "source_url": url,
+              "source_type": "arxiv", "event_at": _iso(at), "paper_id": str(paper.id)}
+        for pos, person_id in rows:
+            e = b.edge("person", person_id, "paper", paper.id, AUTHORED,
+                       is_demo=bool(paper.is_demo or getattr(people.get(person_id), "is_demo", False)))
+            e.see(at)
+            e.weight = 1.0
+            e.evidence = [{**ev, "detail": f"arXiv:{paper.arxiv_id} · author #{pos + 1} of {len(rows)}"}]
+        ids = sorted({p for _, p in rows}, key=str)
+        if len(ids) > MAX_PAPER_AUTHORS:
+            continue
+        for a, c in combinations(ids, 2):
+            e = b.edge("person", a, "person", c, COAUTHORED_WITH)
+            e.is_demo = e.is_demo or bool(paper.is_demo) or _demo(people, a, c)
+            e.see(at)
+            e.weight += 1
+            e.evidence.append({**ev, "detail": f"Co-authors of arXiv:{paper.arxiv_id}"})
+
+    # ── repositories ────────────────────────────────────────────────────────
+    repo_rows: dict[uuid.UUID, list[RepoContributor]] = defaultdict(list)
+    repos: dict[uuid.UUID, Repository] = {}
+    for rc, repo in session.execute(
+        select(RepoContributor, Repository).join(Repository, Repository.id == RepoContributor.repository_id)
+    ).all():
+        repos[repo.id] = repo
+        repo_rows[repo.id].append(rc)
+    co_contrib: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    for rid, rows in repo_rows.items():
+        repo = repos[rid]
+        url = f"https://github.com/{repo.full_name}"
+        for rc in rows:
+            e = b.edge("person", rc.person_id, "repository", rid, CONTRIBUTED_TO,
+                       is_demo=bool(repo.is_demo or getattr(people.get(rc.person_id), "is_demo", False)))
+            e.see(_aware(rc.first_commit_at), _aware(rc.last_commit_at))
+            e.weight = float(rc.contributions or 0)
+            e.evidence = [{"title": repo.full_name,
+                           "detail": f"{rc.contributions or 0} commits on the default branch",
+                           "source_url": f"{url}/graphs/contributors", "source_type": "github",
+                           "event_at": _iso(_aware(rc.first_commit_at)), "repo_id": str(rid)}]
+        strong = sorted((rc for rc in rows if (rc.contributions or 0) >= MIN_CO_COMMITS),
+                        key=lambda rc: (-(rc.contributions or 0), str(rc.person_id)))[:MAX_REPO_PAIR_CONTRIBUTORS]
+        for x, y in combinations(strong, 2):
+            if x.person_id == y.person_id:
+                continue
+            fx, fy = _aware(x.first_commit_at), _aware(y.first_commit_at)
+            lx, ly = _aware(x.last_commit_at), _aware(y.last_commit_at)
+            # Overlap starts when the later of the two started; unknown if either date is unknown.
+            start = max(fx, fy) if fx and fy else None
+            end = min(lx, ly) if lx and ly else None
+            e = b.edge("person", x.person_id, "person", y.person_id, CONTRIBUTED_WITH)
+            e.is_demo = e.is_demo or bool(repo.is_demo) or _demo(people, x.person_id, y.person_id)
+            e.see(start, end)
+            e.weight += 1
+            e.evidence.append({
+                "title": repo.full_name,
+                "detail": f"Both contributed: {x.contributions} and {y.contributions} commits",
+                "source_url": f"{url}/graphs/contributors", "source_type": "github",
+                "event_at": _iso(start), "repo_id": str(rid),
+                "company_id": str(repo.company_id) if repo.company_id else None,
+            })
+            co_contrib.add(ordered_pair(x.person_id, y.person_id))
+
+    # ── company membership ──────────────────────────────────────────────────
+    companies: dict[uuid.UUID, Company] = {c.id: c for c in session.scalars(select(Company))}
+    first_commit_at_company: dict[tuple[uuid.UUID, uuid.UUID], tuple[datetime | None, datetime | None]] = {}
+    for rid, rows in repo_rows.items():
+        cid = repos[rid].company_id
+        if cid is None:
+            continue
+        for rc in rows:
+            f, last = _aware(rc.first_commit_at), _aware(rc.last_commit_at)
+            pf, pl = first_commit_at_company.get((rc.person_id, cid), (None, None))
+            first_commit_at_company[(rc.person_id, cid)] = (
+                min(d for d in (f, pf) if d) if (f or pf) else None,
+                max(d for d in (last, pl) if d) if (last or pl) else None,
+            )
+    for cp in session.scalars(select(CompanyPerson)):
+        c = companies.get(cp.company_id)
+        if c is None:
+            continue
+        kind = FOUNDED if cp.is_founder else MEMBER_OF
+        epi = membership_epistemic(cp.source_url, cp.role)
+        e = b.edge("person", cp.person_id, "company", cp.company_id, kind, epistemic=epi,
+                   is_demo=bool(c.is_demo or getattr(people.get(cp.person_id), "is_demo", False)))
+        commit_first, commit_last = first_commit_at_company.get((cp.person_id, cp.company_id), (None, None))
+        e.see(_aware(cp.start_at) or commit_first, _aware(cp.end_at) or commit_last)
+        e.weight = float(cp.confidence or 1.0)
+        role = cp.role or ("founder" if cp.is_founder else "member")
+        basis = "commit graph" if role == "contributor" else ("listed source" if epi == VERIFIED else
+                                                             "unverified listing")
+        e.evidence = [{"title": f"{role.capitalize()} of {c.name}", "detail": f"Basis: {basis}",
+                       "source_url": cp.source_url, "source_type": "github" if (cp.source_url or "").startswith(
+                           "https://github.com") else ("demo" if c.is_demo else None),
+                       "event_at": _iso(e.first)}]
+
+    # ── shared affiliations (self-reported) ─────────────────────────────────
+    by_org: dict[str, list[tuple[uuid.UUID, str, str, bool]]] = defaultdict(list)  # key -> (pid, raw, disp, prior)
+    for p in people.values():
+        if p.dismissed:
+            continue
+        seen: set[str] = set()
+        for raw, prior in [(p.current_company, False), *((a, True) for a in (p.prior_affiliations or []))]:
+            ek = employer_key(raw)
+            if ek is None or ek[0] in seen:
+                continue
+            seen.add(ek[0])
+            by_org[ek[0]].append((p.id, raw or "", ek[1], prior))
+    for key, members in by_org.items():
+        if len(members) < 2:
+            continue
+        giant = len(members) > GIANT_ORG_PEOPLE
+        members.sort(key=lambda m: str(m[0]))
+        disp = members[0][2]
+        for (a, raw_a, _, prior_a), (c, raw_c, _, prior_c) in combinations(members, 2):
+            if giant and ordered_pair(a, c) not in co_contrib:
+                continue
+            pa, pc = people[a], people[c]
+            e = b.edge("person", a, "person", c, WORKED_WITH, epistemic=INFERRED,
+                       is_demo=bool(pa.is_demo or pc.is_demo))
+            e.weight = 1.0
+            both_prior = prior_a and prior_c
+            e.evidence = [
+                {"title": f"{pa.name} lists {disp} ({'prior' if prior_a else 'current'}, self-reported)",
+                 "detail": f"Raw affiliation: “{raw_a}”", "source_url": _profile_url(pa),
+                 "source_type": "github" if pa.github_handle else None, "event_at": None,
+                 "org": disp, "org_key": key, "prior": prior_a, "person_id": str(a)},
+                {"title": f"{pc.name} lists {disp} ({'prior' if prior_c else 'current'}, self-reported)",
+                 "detail": f"Raw affiliation: “{raw_c}”", "source_url": _profile_url(pc),
+                 "source_type": "github" if pc.github_handle else None, "event_at": None,
+                 "org": disp, "org_key": key, "prior": prior_c, "person_id": str(c)},
+            ]
+            if both_prior:
+                e.weight = 1.5
+
+    return _persist(session, b)
+
+
+def _persist(session: Session, b: _Builder) -> dict[str, Any]:
+    now = clock.wall_now()
+    rows = [e.values() for e in b.edges.values()]
+    keep: set[tuple[uuid.UUID, uuid.UUID, str]] = set(b.edges)
+    existing = {(s, d, k): rid for rid, s, d, k in session.execute(
+        select(Relationship.id, Relationship.src_id, Relationship.dst_id, Relationship.kind)
+        .where(Relationship.kind.in_(KINDS))
+    ).all()}
+    stale = [rid for key, rid in existing.items() if key not in keep]
+    for i in range(0, len(stale), 1000):
+        session.execute(delete(Relationship).where(Relationship.id.in_(stale[i:i + 1000])))
+    for i in range(0, len(rows), 500):
+        chunk = [{"id": uuid.uuid4(), **r} for r in rows[i:i + 500]]
+        stmt = insert(Relationship).values(chunk)
+        cols = ("src_type", "dst_type", "epistemic", "first_seen_at", "last_seen_at", "weight", "evidence", "is_demo")
+        upd = {c: stmt.excluded[c] for c in cols}
+        upd["updated_at"] = now
+        session.execute(stmt.on_conflict_do_update(constraint="uq_relationship", set_=upd))
+    session.flush()
+    counts: dict[str, int] = defaultdict(int)
+    for e in b.edges.values():
+        counts[e.kind] += 1
+    out = {k: counts.get(k, 0) for k in KINDS}
+    out["deleted"] = len(stale)
+    log.info("relationships.build %s", out)
+    return out
+
+
+__all__ = ["KINDS", "PERSON_PAIR_KINDS", "build", "employer_key", "membership_epistemic", "ordered_pair"]
