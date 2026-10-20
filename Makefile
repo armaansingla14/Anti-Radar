@@ -1,5 +1,5 @@
 # ANTI RADAR — developer commands
-.PHONY: up down dev api web db migrate seed demo capture ingest score brief test test-unit lint screenshots check-config ready docker-backend
+.PHONY: up down dev api web db migrate seed demo capture ingest score brief test test-unit lint screenshots check-config ready docker-backend deploy deploy-check
 
 up:            ## Full stack in Docker (db, api, worker, web) → http://localhost:3000
 	docker compose up --build -d db api worker web
@@ -43,6 +43,12 @@ check-config:  ## Validate the current environment's configuration (as the API w
 
 ready:         ## Liveness + readiness of a running API (API_URL, default http://localhost:8000)
 	curl -fsS $${API_URL:-http://localhost:8000}/api/health && echo && curl -fsS $${API_URL:-http://localhost:8000}/api/ready && echo
+
+deploy:        ## One-command $0 deploy: Neon + Render + Vercel + GitHub Actions (ARGS="--dry-run" | "--step render")
+	cd backend && uv run python ../scripts/deploy.py $(ARGS)
+
+deploy-check:  ## Are the deploy tokens in .env? Says where to create each missing one (no network)
+	cd backend && uv run python ../scripts/deploy.py --check
 
 docker-backend: ## Build the deployable backend image (repo-root context, same as Render)
 	docker build -f backend/Dockerfile -t anti-radar-backend .
