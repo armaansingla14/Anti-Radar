@@ -764,7 +764,7 @@ def doc_url_block(state: dict[str, Any]) -> str:
     render, fe = state.get("render") or {}, state.get("frontend_url")
     if not fe:
         return "_Not deployed yet. Run `make deploy`; this block is filled in automatically._"
-    rows = [f"| Frontend | {fe} |", f"| Guided demo | {fe}/demo |"]
+    rows = [f"| Frontend | {fe} |", f"| Guided demo | {fe}/demo |", f"| Demo video | {fe}/video |"]
     if "live" in render:
         rows.append(f"| Unlock writes (live) | {fe}/unlock |")
     for kind, label in (("live", "radar-live API"), ("demo", "radar-demo API")):

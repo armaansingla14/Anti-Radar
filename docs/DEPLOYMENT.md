@@ -7,10 +7,38 @@
 |---|---|
 | Frontend | https://anti-radar-one.vercel.app |
 | Guided demo | https://anti-radar-one.vercel.app/demo |
+| Demo video | https://anti-radar-one.vercel.app/video |
 | radar-demo API | https://radar-demo-os45.onrender.com (health: `/api/health`, ready: `/api/ready`) |
 
-Last verified by `scripts/deploy.py`: 2026-10-20T23:33:47Z.
+Last verified by `scripts/deploy.py`: 2026-10-21T04:31:17Z.
 <!-- deploy:urls:end -->
+
+## How the public site is served
+
+The public site does not depend on any backend. With `DATA_SOURCE=snapshot` (set by `scripts/deploy.py`), the Next.js
+server answers every page and every browser API call from **`frontend/snapshot/`**: the verified real-data snapshot
+(Oct 20, 2026) recorded as the backend's own API responses for all 220 companies, 2,804 people, 6 formation
+candidates and 11 reports. It is bundled into the Vercel deployment, so a reviewer never waits on a cold Render
+instance, and it is read-only: write controls are hidden or open the stored report instead.
+
+```
+Browser → Vercel (Next.js) → frontend/snapshot (responses.pack + index) → page
+```
+
+| `DATA_SOURCE` | Reads from | Use |
+|---|---|---|
+| `snapshot` | the bundled snapshot only | the public demo (default deploy) |
+| `auto` | the live backend; the snapshot when it does not answer (with a "Live intelligence unavailable" notice) | `deploy.py --live` |
+| `live` (default when unset) | the backend only | local development |
+
+**Refreshing the snapshot**
+1. Replay `backend/radar/demo/snapshot` into a local database and serve it on :8000.
+2. Run `frontend/scripts/export-snapshot.mjs` against a recording build. The script header has the exact commands.
+3. Commit `frontend/snapshot/`.
+
+The narrated video is served from `frontend/public/demo/` (uploaded by the CLI deploy and gitignored). It is also attached to the [v1.0.0 release](https://github.com/armaansingla14/Anti-Radar/releases/tag/v1.0.0).
+
+**Before sending the link:** `node scripts/verify_public_demo.mjs` checks every route, the video, every README link and the reviewer journey in a clean browser. Add `--insecure` behind a TLS-intercepting proxy.
 
 ## Deploy in one command
 
@@ -20,7 +48,7 @@ There are two shapes:
 
 | | Demo (default) | `--live` |
 |---|---|---|
-| What visitors see | The whole site and `/demo` serve the **verified real-data snapshot** (collected Oct 20, 2026), labelled as such | The site serves live data refreshed by GitHub Actions; `/demo` keeps the snapshot |
+| What visitors see | The whole site and `/demo` serve the **verified real-data snapshot** (collected Oct 20, 2026) bundled with the frontend, labelled as such. The Render backend is not on the request path. | The site serves live data refreshed by GitHub Actions, with the bundled snapshot as fallback |
 | Backends | `radar-demo` | `radar-live` + `radar-demo` |
 | Databases | `radar_demo` | `radar_live` + `radar_demo` |
 | Scheduled ingestion | off | `radar-ingest.yml` on cron |
@@ -87,8 +115,8 @@ Ids and public URLs go to `deploy/state.json` (gitignored). No secrets are store
 
 | Piece | Where | Free-tier notes |
 |---|---|---|
-| Frontend | Vercel Hobby, project `anti-radar` | Non-commercial use. Server-side proxy to the backend(s). |
-| Demo backend `radar-demo` | Render free web service | `APP_ENV=demo`, `DEMO_SNAPSHOT=true`. Serves the verified snapshot only. |
+| Frontend | Vercel Hobby, project `anti-radar` | Non-commercial use. Serves the bundled verified snapshot (`DATA_SOURCE=snapshot`); with `--live`, proxies to the backend. Deployed as one tgz upload (the free tier caps per-file uploads). |
+| Demo backend `radar-demo` | Render free web service | `APP_ENV=demo`, `DEMO_SNAPSHOT=true`. Serves the verified snapshot API. Optional: the public site no longer calls it. |
 | Live backend `radar-live` (`--live`) | Render free web service | `APP_ENV=production`. Writes need `ADMIN_TOKEN`. |
 | Database(s) | Neon free: project `anti-radar`, `radar_demo` (+ `radar_live`) | 0.5 GB storage. pgvector is supported. |
 | Scheduled ingestion (`--live`) | GitHub Actions cron (`radar-ingest.yml`), gated on `RADAR_LIVE=true` | Public repository, so standard runners are free. |
@@ -227,6 +255,8 @@ Workflows:
 - `keepwarm.yml` runs every 10 minutes, 12:00–01:00 UTC, on weekdays, and does nothing until `KEEPWARM_URL` is set.
 
 ## Cold starts
+
+These apply only to a live backend (`--live`). The public snapshot site never waits on Render.
 
 Render free instances sleep after 15 minutes idle, and waking one takes about 30–60 s.
 
