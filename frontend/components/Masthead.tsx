@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { today } from "@/lib/clock";
+import { dataStatus } from "@/lib/snapshot-server";
 import { dateLine } from "@/lib/format";
 import { NavLinks } from "./NavLinks";
 
@@ -12,6 +13,20 @@ async function DateLine() {
     <time dateTime={d.toISOString().slice(0, 10)} className="tnum font-mono text-[10.5px] tracking-[0.12em] text-ink-2">
       {dateLine(d)}
     </time>
+  );
+}
+
+/** Where the data on screen comes from: the verified snapshot (quietly), or a notice when live data is unavailable. */
+async function SourceLine() {
+  await connection();
+  const s = dataStatus();
+  if (!s.fromSnapshot) return null;
+  const collected = s.asOf ? dateLine(new Date(`${s.asOf}T00:00:00Z`)) : null;
+  return (
+    <span className="label text-ink-3" title={s.capturedAt ? `Collected ${s.capturedAt}` : undefined}>
+      {s.liveUnavailable ? "Live intelligence unavailable · showing verified snapshot" : "Verified snapshot"}
+      {s.liveUnavailable && collected ? ` · collected ${collected}` : ""}
+    </span>
   );
 }
 
@@ -27,7 +42,10 @@ export function Masthead() {
           <span className="font-serif text-[16px] italic text-ink-2">Conviction Before Consensus.</span>
         </div>
         <div className="flex items-baseline gap-4">
-          <span className="label hidden text-ink-3 md:inline">Anti Fund · Internal</span>
+          <span className="label hidden text-ink-3 md:inline">Built for Anti Fund</span>
+          <Suspense fallback={null}>
+            <SourceLine />
+          </Suspense>
           <Suspense fallback={<span className="font-mono text-[10.5px] text-ink-3">—</span>}>
             <DateLine />
           </Suspense>

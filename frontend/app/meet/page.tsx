@@ -113,7 +113,9 @@ export default async function MeetPage({ searchParams }: PageProps<"/meet">) {
       <p className="mt-3 max-w-[104ch] text-[12.5px] leading-relaxed text-ink-3">
         Ranked by founder score, formation evidence, thesis fit, recent dated change and attention gap — with a penalty for people who
         are already widely known. Dismissed people never return. Affiliations from GitHub profiles are self-reported; public org
-        membership is verified membership, not employment. Nobody is called a founder without a founder relation on record.
+        membership is verified membership, not employment. Nobody is called a founder without a founder relation on record. Most of
+        today&apos;s evidence is public GitHub activity, so people who work in the open are over-represented — a recommendation is a
+        reason for a first conversation, not a judgment.
         <span className="ml-2 font-mono text-[10.5px]">J / K move · O open · W watch</span>
       </p>
 

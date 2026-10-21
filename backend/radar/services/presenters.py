@@ -546,7 +546,8 @@ def why_anti(c: Company, tags: Sequence[TopicTag], snap: ScoreSnapshot | None) -
     comps = (snap.components if snap else {}) or {}
     fs = comps.get("founder_signal", {})
     if fs and fs.get("max") and fs.get("value", 0) / fs["max"] >= 0.6:
-        lines.append("Strong technical founding team.")
+        # Founder Signal measures the linked people's technical record; it does not establish that they founded it.
+        lines.append("Strong technical team linked to it.")
     if c.stage in ("formation", "pre_seed"):
         lines.append("Formation-stage signal." if c.stage == "formation" else "Pre-seed stage (inferred).")
     att = (snap.attention if snap else {}) or {}

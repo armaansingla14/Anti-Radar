@@ -34,7 +34,7 @@ export function Footer() {
       <div className="border-t border-ink pt-3" />
       <div className="flex flex-wrap items-baseline justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-ink-3">
         <span>
-          <span className="text-ink">Anti Radar</span> · Anti Fund internal · Signals are not facts until sourced
+          <span className="text-ink">Anti Radar</span> · Built for Anti Fund · Signals are not facts until sourced
         </span>
         <Suspense fallback={<span>Checking data freshness…</span>}>
           <Freshness />

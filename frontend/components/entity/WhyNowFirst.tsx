@@ -301,6 +301,12 @@ export function AttentionGap2Block({ gap }: { gap: AttentionGap | null }) {
         />
       </div>
       <p className="max-w-[68ch] text-[13.5px] leading-relaxed text-ink">{attentionExplanation(v)}</p>
+      <p className="max-w-[68ch] text-[11.5px] leading-snug text-ink-3">
+        How it&apos;s measured: technical momentum is this entity&apos;s percentile among tracked entities on 30-day star, fork,
+        commit and contributor velocity plus acceleration. Public attention is its percentile on the sources actually measured
+        (Hacker News points, GitHub stars; X and press when available). Sources marked unavailable are left out, never counted as
+        zero; with no measured source, no gap is claimed.
+      </p>
       <ul className="space-y-1 border-t border-rule pt-2">
         {(gap.sources ?? []).map((s) => (
           <li key={s.key} className="grid grid-cols-[14px_minmax(0,1fr)_auto] items-baseline gap-2 font-mono text-[10.5px]">

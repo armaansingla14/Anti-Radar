@@ -133,7 +133,7 @@ export function BriefView({
                 </>
               )}
             </p>
-            <p className="label text-ink-3">Anti Fund · Internal · Not for distribution</p>
+            <p className="label text-ink-3">Anti Radar · Morning brief</p>
           </div>
           <h1 className="mt-4 font-serif text-[46px] leading-[1.02] tracking-[-0.018em] text-ink">
             <time dateTime={brief.date}>{longDate(brief.date, { year: true })}</time>

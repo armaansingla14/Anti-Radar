@@ -326,3 +326,14 @@ export function formationListHref(q: FormationQuery): string {
   const qs = sp.toString();
   return qs ? `/formation?${qs}` : "/formation";
 }
+
+/**
+ * The honest caveat shown on early candidates: the evidence describes a trajectory, not a company.
+ * Only HIGH-confidence, multi-family candidates go without it.
+ */
+export function formationCaveat(card: Pick<FormationCard, "kind" | "tier" | "families">): string | null {
+  if (card.tier === "high" && card.families.length >= 2) return null;
+  return card.kind === "person"
+    ? "Strong technical trajectory · formation not yet verified"
+    : "Converging activity · formation not yet verified";
+}

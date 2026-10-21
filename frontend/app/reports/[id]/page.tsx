@@ -56,7 +56,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span className="label text-accent">{kind}</span>
             <span aria-hidden className="h-px w-5 bg-ink-3" />
-            <span className="label">Anti Fund · Internal · Not for distribution</span>
+            <span className="label">Anti Radar · Research brief</span>
             {report.is_demo && <DemoBadge note="Report about a fictional demo entity" />}
           </div>
           <ReportActions id={report.id} filename={filename} />

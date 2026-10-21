@@ -45,7 +45,7 @@ export default function Styleguide() {
   return (
     <div>
       <header className="mb-14 max-w-[720px]">
-        <p className="label mb-3">Internal · Component gallery</p>
+        <p className="label mb-3">Component gallery</p>
         <h1 className="font-serif text-[48px] leading-[1.02] tracking-[-0.015em]">Styleguide</h1>
         <p className="mt-3 text-[15px] leading-relaxed text-ink-2">
           Every reusable component with fictional sample props. Names such as “Example Robotics” are invented and all

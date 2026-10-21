@@ -7,7 +7,7 @@ import { pad2 } from "@/lib/format";
 import type { FormationCard } from "@/lib/types";
 import { FormationWhy } from "./FormationWhy";
 import { FormationLabel, ThemeLine } from "./Labels";
-import { headlineFacts, memberEntries, memberNames, memberSummary, watchTarget } from "./logic";
+import { formationCaveat, headlineFacts, memberEntries, memberNames, memberSummary, watchTarget } from "./logic";
 import { SignalStrip } from "./SignalStrip";
 import { WhyNow } from "./WhyNow";
 
@@ -112,6 +112,9 @@ export function FormationCardView({ card, rank, className }: { card: FormationCa
             {card.title}
           </Link>
         </h3>
+        {formationCaveat(card) && (
+          <p className="mt-1.5 font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-3">{formationCaveat(card)}</p>
+        )}
         <HeadlineFacts card={card} className="mt-3" />
         <MemberLine card={card} className="mt-3" />
 

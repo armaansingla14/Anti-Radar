@@ -64,7 +64,7 @@ export function TitleCard({
     >
       <div className="mx-auto flex w-full max-w-[1240px] flex-1 flex-col px-10">
         <header className="flex items-baseline justify-between border-b border-ink pb-3 pt-8 font-mono text-[11px] uppercase tracking-[0.1em]">
-          <span className="text-ink-2">Anti Fund · Internal</span>
+          <span className="text-ink-2">Anti Radar · Built for Anti Fund</span>
           <DataLine asOf={asOf} isSnapshot={isSnapshot} />
         </header>
 
