@@ -4,36 +4,69 @@
 
 Technical founders rarely become obvious overnight. The signals appear first.
 
-Anti Radar continuously analyzes technical activity across GitHub, research, hiring, the web and social sources to identify founders and companies whose underlying momentum is changing — before conventional startup databases catch up.
+Anti Radar analyzes GitHub, research, hiring, the web and social signals to surface technical founders and companies whose underlying momentum is changing, before conventional startup databases catch up. Every claim it makes links to a public source.
 
-**[Live demo](#live-demo)** · **[Demo video](#demo-video)** · [Real-world evaluation](docs/REAL_WORLD_EVALUATION.md) · [Deployment](docs/DEPLOYMENT.md)
+### [▶ Watch the 3-minute demo](https://anti-radar-one.vercel.app/video) · [Open the radar](https://anti-radar-one.vercel.app) · [Guided tour](https://anti-radar-one.vercel.app/demo)
 
-![Morning intelligence](demo/screenshots/01-radar.png)
+[![Anti Radar: the morning view on the verified snapshot of Oct 20, 2026](demo/screenshots/01-radar.png)](https://anti-radar-one.vercel.app)
 
-| | |
-|---|---|
-| ![Formation Radar](demo/screenshots/02-formation.png) **Formation Radar** — technical teams before the company announcement. | ![Who should we meet](demo/screenshots/05-people-to-meet.png) **Who should we meet this week?** — five people, ranked by evidence, not fame. |
-| ![Why now](demo/screenshots/03-why-now.png) **Why now** — the dated changes behind every recommendation. | ![Person profile](demo/screenshots/04-founder.png) **People before companies** — verified technical history, formation signals, relationships. |
-| ![Attention gap](demo/screenshots/06-attention-gap.png) **Attention gap** — technical momentum vs measurable public attention. | ![Anti Brief](demo/screenshots/07-anti-brief.png) **Anti Brief** — source-cited research, facts and analysis kept apart. |
+The public site serves a **verified snapshot**: real public data collected on **Oct 20, 2026**, bundled with the site so it loads instantly and every number can be checked against its source. Anti Radar is an independent project built around Anti Fund's thesis; it is not affiliated with Anti Fund.
 
 ---
 
-## Why Radar exists
+## Why I built this
 
-Venture databases describe what already happened: funding rounds, press, headcount. The earliest signs of an important company show up somewhere else first:
+Startup databases mostly describe companies that already exist: funding rounds, press, headcount. The earliest evidence that a technical company is forming shows up elsewhere: repositories, papers, research collaborations, technical releases, careers pages, hiring changes, and social activity.
 
-- an engineer with years of commits to a frontier lab's codebase starts a new repository that people immediately use,
-- two maintainers from rival open-source projects start committing to the same four-month-old GitHub organization,
-- a research group ships a paper, releases code from a new org, and posts its first technical job,
-- a robotics repo gains 1,700 stars in a month without a single Hacker News thread.
+Each of those is a weak signal on its own. Dated and combined, they can show technical momentum before consensus forms. Anti Radar collects them from official APIs, ties them to the people involved, scores them deterministically, and turns the result into a short list of people worth meeting this week, with the evidence for each one and an honest account of what it doesn't know.
 
-Each event alone is weak. Together, and dated, they become a reason to call someone this week. Radar turns that technical exhaust into a short, explainable research queue — and shows its work for every item in it.
+## What it does
 
-The workflow it is built around:
+| | |
+|---|---|
+| **Formation Radar**: technical people and teams who may be converging before a company is announced. Labels stay honest: *possible formation*, never "founded". | ![Formation Radar](demo/screenshots/02-formation.png) |
+| **Why now**: the dated changes that made an entity surface, each linked to its source and marked fact or inference. | ![Why now](demo/screenshots/03-why-now.png) |
+| **Signal collision**: independent evidence from different source families (GitHub, research, hiring, web, community, social) landing within a short window. A single source is shown as exactly that. | *"1 independent signal, one source family (GitHub): not yet a collision."* |
+| **People before companies**: verified technical history (commits to frontier-lab repositories), relationships and formation signals for each person. | ![Person profile](demo/screenshots/04-founder.png) |
+| **Attention gap**: technical momentum against measured public attention. Unmeasured sources (X, press) are shown as unavailable, never counted as zero. | ![Attention gap](demo/screenshots/06-attention-gap.png) |
+| **Who should we meet this week?**: sourcing turned into about five people to contact, each with why this person, why now, what changed, evidence and confidence. | ![Who should we meet](demo/screenshots/05-people-to-meet.png) |
+| **Anti Brief**: a source-cited research summary and a meeting brief per person. Unknowns stay unknown instead of being filled in. | ![Anti Brief](demo/screenshots/07-anti-brief.png) |
 
-```
-DISCOVER  →  UNDERSTAND WHY NOW  →  INVESTIGATE  →  DECIDE WHO TO MEET  →  WATCH  →  CREATE BRIEF
-```
+## Real-world evaluation
+
+Anti Radar was run against real public data on Oct 20, 2026, and its output was reviewed by hand, with every evidence link checked. ([Full evaluation](docs/REAL_WORLD_EVALUATION.md))
+
+| Analyzed | |
+|---|---:|
+| Companies and organizations | 200 |
+| People (450 with verified commits to frontier-lab repositories) | 2,951 |
+| Repositories | 303 |
+| Research papers | 412 |
+| Signals | 1,113 |
+
+Manual review found real false positives, for example:
+- side projects of researchers who are still employed;
+- people surfaced mainly for heavy contributions to famous open-source repositories;
+- co-founders whose company was already public;
+- a young GitHub org whose tracked "members" were not its real core team;
+- candidates whose formation evidence was a single bio line or a small research repo.
+
+These were used to change the ranking: verified talent first, a penalty for already-public formations, noise filters and recorded rejection reasons. Remaining weak cases are listed rather than hidden. No prediction accuracy is claimed: formation is inference from public signals, not proof.
+
+## Limitations
+
+- **X coverage depends on API access.** Without a key, social attention is reported as unavailable, never as zero.
+- **Formation is inference, not proof of company creation.** Most current candidates are honest *early signals*.
+- **Hiring coverage varies.** Only companies with a public careers page or ATS board are covered; no formation candidate had job postings in this snapshot.
+- **Public data has blind spots.** Private repositories, stealth hiring and funding are invisible. "Already formed" is inferred from org age and self-descriptions.
+- **History is short.** Velocities strengthen as snapshots accumulate; until then they say *insufficient history*.
+- **arXiv identity is name-based** and linked to GitHub only on corroborating evidence, so research history is under-counted.
+
+## The demo
+
+- **[Video](https://anti-radar-one.vercel.app/video)** (3:13, narrated, captioned). Also attached to the [v1.0.0 release](https://github.com/armaansingla14/Anti-Radar/releases/tag/v1.0.0). Script: [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md). Shot list: [`demo/DEMO_SHOT_LIST.md`](demo/DEMO_SHOT_LIST.md).
+- **[Guided tour](https://anti-radar-one.vercel.app/demo)**: the same ten scenes in the live app. Press → to advance.
+- **[The radar](https://anti-radar-one.vercel.app)**: every page, all 220 companies and 2,804 people in the snapshot, served without a backend. The snapshot is read-only, so actions that write (watch, feedback, new investigations) run on a live backend.
 
 ## How it works
 
@@ -82,7 +115,7 @@ Families: GitHub · Research · Hiring · Web · Community · Social. Measuremen
 Technical momentum is compared with **measured** public attention (Hacker News points and mentions — probed directly, not inferred from absence — total stars, X followers when available):
 
 ```
-TECHNICAL MOMENTUM 88 · PUBLIC ATTENTION 29 · ATTENTION GAP +59
+TECHNICAL MOMENTUM 97 · PUBLIC ATTENTION 26 · ATTENTION GAP +71     (ShengShu, verified snapshot)
 ```
 
 Missing sources are listed ("social attention unavailable"), never imputed. If nothing was measured, no gap is awarded.
@@ -166,19 +199,7 @@ flowchart LR
 - **No fabricated history**: velocities say *insufficient history* when Radar hasn't observed enough; past scores are only compared like-for-like.
 - **Automation is not people**: CI bots and AI coding agents (Claude, Copilot, Devin, Cursor…) are excluded from teams and rankings.
 - **Prompt-injection defense**: scraped pages, READMEs and posts are wrapped as untrusted sources; citations are validated against what the agent actually saw.
-- **Public deployments can't be polluted or run up a bill**: the snapshot backend refuses ingestion and runs with no LLM; on a live backend anything that writes or spends (ingest, investigate, briefs, watchlist, feedback) requires an admin token.
-
-## Live demo
-
-The public site runs on a **verified snapshot**: real public data collected by Radar on Oct 20, 2026, with every source URL and timestamp kept, so the demo is stable and every claim can be checked. `/demo` walks through the product in ten scenes. (An optional live backend, refreshed by scheduled jobs, deploys with `deploy.py --live`.)
-
-**https://anti-radar-one.vercel.app** · guided tour: **https://anti-radar-one.vercel.app/demo**
-
-Hosted on free tiers: the first visit after a quiet period can take 30–60 s while the backend wakes up.
-
-## Demo video
-
-A 2½-minute walkthrough recorded from `/demo` at 1920×1080 is attached to the latest [GitHub release](../../releases). Narration and shot list: [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md), [`demo/DEMO_SHOT_LIST.md`](demo/DEMO_SHOT_LIST.md). Re-record with `cd e2e && ./record-demo.sh`.
+- **The public site can't be polluted or run up a bill**: it serves a read-only verified snapshot with no backend and no LLM. On a live backend, anything that writes or spends (ingest, investigate, briefs, watchlist, feedback) requires an admin token.
 
 ## Run locally
 
@@ -192,7 +213,7 @@ make web                        # Next.js on :3000
 make test                       # backend tests (real Postgres)
 ```
 
-Or the whole stack: `make up` → http://localhost:3000.
+Or the whole stack: `make up` → http://localhost:3000. To serve the bundled snapshot with no backend at all: `cd frontend && DATA_SOURCE=snapshot npx next build && DATA_SOURCE=snapshot npx next start`.
 
 Useful commands:
 
@@ -208,15 +229,8 @@ radar demo capture              # collect a new verified snapshot
 
 ## Deployment
 
-$0/month on free tiers: **Vercel** (frontend) · **Render** (API serving the verified snapshot) · **Neon** (Postgres). One command, three tokens: `cd backend && uv run python ../scripts/deploy.py`. Adding `--live` deploys a second API on live data with **GitHub Actions** running scheduled ingestion and scoring. Full instructions: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-
-## Limitations
-
-Stated plainly, because an intelligence tool is only useful if you know where it's blind:
-
-- **History is short.** Radar has only observed a few days; velocities beyond what GitHub's own history provides say *insufficient history*. Rankings improve every day the scheduled jobs run.
-- **No X data without a paid API key.** Social attention is reported as unavailable, not zero.
-- **No funding or press database.** "Already formed" is inferred from org age and self-descriptions; a funded company can still appear (see the evaluation's false positives).
-- **GitHub statistics are sometimes still computing** (HTTP 202) for new repos; those gaps are retried, never filled with guesses.
-- **arXiv author identity is name-based** and linked to GitHub only on corroborating evidence, so research history is under-counted.
-- **Formation is about signals, not outcomes.** Most current candidates are honest *EARLY SIGNAL*s. See [docs/REAL_WORLD_EVALUATION.md](docs/REAL_WORLD_EVALUATION.md) for what the radar surfaced on real data, what was genuinely interesting, and what was wrong.
+- **Cost:** $0/month on free tiers.
+- **How it's served:** the public site runs on **Vercel** and serves the bundled verified snapshot (`DATA_SOURCE=snapshot`), so no page waits on a backend.
+- **Live backend:** the FastAPI service is optional. It runs on **Render** with **Neon** Postgres and **GitHub Actions** for scheduled ingestion, deployed with `scripts/deploy.py --live`. In that mode the site reads live data and falls back to the snapshot if the backend doesn't answer.
+- **Before sending the link:** `node scripts/verify_public_demo.mjs` checks the public deployment end to end.
+- **Full instructions:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
