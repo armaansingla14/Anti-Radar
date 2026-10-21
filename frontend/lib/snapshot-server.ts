@@ -154,7 +154,12 @@ export function snapshotSearch(url: URL, dir = SNAPSHOT_DIR): unknown {
   });
   return {
     query: q,
-    filters: {},
+    // Same shape as the backend's parsed filters (the search page renders them); nothing beyond the name is applied.
+    filters: {
+      entity_types: [], themes: [], topics: [], keywords: words, prior_affiliations: [], hiring_role_classes: [],
+      min_score: null, min_attention_gap: null, max_attention: null, accelerating: false,
+      first_seen_within_days: null, event_within_days: null, signal_types: [], stage: [], sort: "score",
+    },
     interpretation: q ? [`Name match in the verified snapshot for “${q}”`] : [],
     parser: "deterministic",
     results: hits.slice(0, limit).map((e) => ({

@@ -35,7 +35,7 @@ const SITE_DESCRIPTION =
   "An intelligence engine for discovering technical founders and emerging companies through GitHub, research, hiring, web, and social signals.";
 const siteUrl =
   process.env.SITE_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://anti-radar-one.vercel.app");
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
