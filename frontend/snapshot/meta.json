@@ -1,0 +1,14 @@
+{
+  "as_of": "2026-10-20",
+  "captured_at": "2026-10-20T17:07:01.288808+00:00",
+  "exported_at": "2026-10-21T03:46:59.972Z",
+  "source_commit": "b88bd8f",
+  "note": "Backend API responses for every page of the public site, recorded from the verified real-data snapshot (backend/radar/demo/snapshot). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
+  "counts": {
+    "companies": 220,
+    "people": 2804,
+    "formation_candidates": 6,
+    "reports": 11,
+    "responses": 9038
+  }
+}
