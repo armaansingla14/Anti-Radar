@@ -231,6 +231,7 @@ def cmd_mix(args) -> None:
                   "loudnorm=I=-16:TP=-1.5:LRA=9"
     sh([FFMPEG, "-y", "-v", "error", "-i", str(VIDEO), "-i", str(wav), "-i", str(srt),
         "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "copy", "-af", voice_chain, "-ar", str(RATE),
+        "-ac", "2",  # stereo: some players and headsets play mono AAC in one ear or not at all
         "-c:a", "aac", "-b:a", "160k", "-c:s", "mov_text", "-metadata:s:s:0", "language=eng",
         "-movflags", "+faststart", str(out)])
     burned = out.with_name("anti-radar-demo-voiceover-captions.mp4")
