@@ -56,14 +56,8 @@ export function shortDate(iso: string | null | undefined): string | null {
  */
 export function homeStatusLine(s: Pick<HomeSummary, "updated_at" | "data_as_of" | "is_snapshot" | "snapshot_age_days">, now: Date): string {
   if (s.is_snapshot) {
-    const collected = shortDate(s.data_as_of) ?? "date unknown";
-    const age =
-      s.snapshot_age_days === null || s.snapshot_age_days === undefined
-        ? "age unknown"
-        : s.snapshot_age_days === 0
-          ? "collected today"
-          : `${s.snapshot_age_days} ${s.snapshot_age_days === 1 ? "day" : "days"} old`;
-    return `VERIFIED SNAPSHOT · collected ${collected} · ${age}`;
+    // The collection date only: a relative age ("collected today") would go stale in an exported snapshot.
+    return `VERIFIED SNAPSHOT · collected ${shortDate(s.data_as_of) ?? "date unknown"}`;
   }
   return updatedAgo(s.updated_at, now);
 }

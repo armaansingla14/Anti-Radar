@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { displayNow } from "@/lib/dataSource";
 import { RadarCommands } from "@/components/feed/RadarCards";
 import { FilterStrip } from "@/components/feed/FilterStrip";
 import { CompanyRows, FormationRows, HomeCounts, HomeSection, PeopleRows, StrangeRows, WhatChanged } from "@/components/feed/Home";
@@ -28,7 +29,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const w = parseWindow(sp.new);
   const { home, composed } = await loadHome(w);
   const s = home.summary;
-  const now = new Date();
+  const now = displayNow();
   const status = homeStatusLine(s, now);
   const topRanked = home.companies_basis === "top_ranked";
   const scope = w ? ` · ${WINDOW_NAME[w]}` : "";

@@ -1,9 +1,11 @@
 "use client";
 
 import clsx from "clsx";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { FeedbackMenu } from "@/components/FeedbackMenu";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 import { useCommand } from "@/components/KeyboardProvider";
 import { useToast } from "@/components/Toast";
 import { WatchButton } from "@/components/WatchButton";
@@ -25,6 +27,8 @@ export interface EntityActionsProps {
   meetingBriefId?: string | null;
   /** Session is read-only — write actions point to /unlock. */
   readOnly?: boolean;
+  /** Latest stored Anti Brief (opened directly in the read-only verified snapshot). */
+  briefId?: string | null;
 }
 
 const act =
@@ -43,7 +47,8 @@ function setInvestigateParam(on: boolean) {
  * Entity action bar: Watch, Investigate (inline analyst panel),
  * Generate Anti Memo, feedback and dismiss. Registers palette commands.
  */
-export function EntityActions({ entityType, entityId, entityName, watched, autoInvestigate, llmEnabled, meetingBriefId = null, readOnly = false }: EntityActionsProps) {
+export function EntityActions({ entityType, entityId, entityName, watched, autoInvestigate, llmEnabled, meetingBriefId = null, readOnly = false, briefId = null }: EntityActionsProps) {
+  const staticSnapshot = useStaticSnapshot();
   const router = useRouter();
   const toast = useToast();
   const [investigating, setInvestigating] = useState(!!autoInvestigate);
@@ -107,6 +112,24 @@ export function EntityActions({ entityType, entityId, entityName, watched, autoI
 
   useCommand({ id: `entity-investigate-${entityId}`, label: `Investigate ${entityName}`, hint: "I", keywords: "analyst brief", run: investigate });
   useCommand({ id: `entity-memo-${entityId}`, label: `Generate Anti Memo — ${entityName}`, keywords: "memo report", run: () => void memo() });
+
+  if (staticSnapshot) {
+    // Verified snapshot: no backend to write to — open what was generated, never offer a dead action.
+    return (
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-y border-ink py-3">
+        {briefId && (
+          <Link href={`/reports/${briefId}`} data-demo="investigate" className={clsx(primary, "border-ink text-ink hover:bg-ink hover:text-paper")}>
+            <span aria-hidden>◆</span>
+            Open Anti Brief
+          </Link>
+        )}
+        {entityType === "person" && <MeetingBriefButton personId={entityId} briefId={meetingBriefId} readOnly />}
+        <span className="ml-auto font-mono text-[10px] uppercase tracking-[0.06em] text-ink-3">
+          Verified snapshot · read-only
+        </span>
+      </div>
+    );
+  }
 
   return (
     <>

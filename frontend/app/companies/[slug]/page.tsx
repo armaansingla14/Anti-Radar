@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { displayNow } from "@/lib/dataSource";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
@@ -7,7 +8,7 @@ import { CollisionStrip } from "@/components/CollisionStrip";
 import { FounderCard } from "@/components/FounderCard";
 import { SignalTimeline } from "@/components/SignalTimeline";
 import { ThesisTag } from "@/components/ThesisTag";
-import { loadCompany, loadFormationFeed, loadGraph, loadStatus } from "@/components/entity/data";
+import { latestBriefId, loadCompany, loadFormationFeed, loadGraph, loadStatus } from "@/components/entity/data";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { EntityGraph } from "@/components/entity/EntityGraph";
 import { EntityHeader } from "@/components/entity/EntityHeader";
@@ -55,7 +56,7 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
   const llmEnabled = typeof status?.llm?.enabled === "boolean" ? status.llm.enabled : null;
   const xMode = xModeFromStatus(status?.providers.find((p) => p.provider === "x"));
   const jobsProvider = status?.providers.find((p) => p.provider === "jobs");
-  const now = new Date();
+  const now = displayNow();
   const asOf = today();
   const collision = score?.collision ?? null;
   const line = collisionLine(collision);
@@ -278,6 +279,7 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
           watched={detail.watched}
           autoInvestigate={sp.investigate === "1"}
           llmEnabled={llmEnabled}
+          briefId={latestBriefId(detail.reports)}
         />
       </div>
 

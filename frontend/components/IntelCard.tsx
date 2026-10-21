@@ -1,5 +1,6 @@
 "use client";
 
+import { displayNow } from "@/lib/dataSource";
 import clsx from "clsx";
 import Link from "next/link";
 import { useState } from "react";
@@ -202,7 +203,7 @@ export function IntelCard({
         {card.sparkline.length > 1 && <Sparkline values={card.sparkline} width={200} height={30} label={card.sparkline_label} />}
         {card.attention_gap && <AttentionGapMini gap={card.attention_gap} />}
         {card.first_seen_at && <p className="label text-ink-3">First seen {fmtDate(card.first_seen_at)}</p>}
-        {hasAge && <DataAge age={card.data_age} now={new Date()} entityType={card.entity_type === "person" ? "person" : "company"} />}
+        {hasAge && <DataAge age={card.data_age} now={displayNow()} entityType={card.entity_type === "person" ? "person" : "company"} />}
       </aside>
 
       {/* ── actions ── */}

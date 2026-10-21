@@ -5,9 +5,11 @@ import { useState, useTransition } from "react";
 import { ingestGithub } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import { describeApiError } from "../apiError";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 
 /** Ingest a not-yet-captured retrospective repository via POST /api/ingest/github. */
 export function IngestRepoButton({ repo }: { repo: string }) {
+  const staticSnapshot = useStaticSnapshot();
   const router = useRouter();
   const toast = useToast();
   const [pending, setPending] = useState(false);
@@ -29,6 +31,7 @@ export function IngestRepoButton({ repo }: { repo: string }) {
     }
   };
 
+  if (staticSnapshot) return null; // nothing to write to in the verified snapshot
   return (
     <div>
       <button

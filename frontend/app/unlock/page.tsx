@@ -18,7 +18,12 @@ export default async function UnlockPage() {
         need the operator token. It is kept in an http-only cookie on this browser and is never shown to scripts.
       </p>
       <div className="mt-10 border-t border-rule pt-8">
-        {!session.reachable ? (
+        {session.static_snapshot ? (
+          <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
+            This deployment serves the verified snapshot and is read-only. Investigations, memos and feedback run on
+            a live Anti Radar backend.
+          </p>
+        ) : !session.reachable ? (
           <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
             Waking the radar… the backend is starting. You can still submit the token.
           </p>
@@ -27,7 +32,7 @@ export default async function UnlockPage() {
             This deployment has no operator token configured — writes are already open.
           </p>
         ) : null}
-        <UnlockForm initiallyUnlocked={session.admin} />
+        {!session.static_snapshot && <UnlockForm initiallyUnlocked={session.admin} />}
       </div>
       <div className="mt-10 font-mono text-[11px] uppercase tracking-[0.08em]">
         <Link href="/" className="link text-ink">

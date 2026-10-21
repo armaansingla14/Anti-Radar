@@ -3,6 +3,7 @@
  * httpOnly, SameSite=Strict cookie. The proxy forwards it as X-Radar-Admin; client JS never sees it.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { serverFetch } from "@/lib/dataSource";
 import { ADMIN_COOKIE, ADMIN_HEADER, resolveBackend } from "@/lib/session";
 import { ADMIN_COOKIE_MAX_AGE, cookieFlags, noStoreJson, sameOrigin } from "../_shared";
 
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!backend.ok) return noStoreJson({ detail: backend.detail }, 503);
   let session: { admin?: boolean; read_only?: boolean };
   try {
-    const res = await fetch(`${backend.base}/api/session`, {
+    const res = await serverFetch(`${backend.base}/api/session`, {
       cache: "no-store",
       headers: { Accept: "application/json", [ADMIN_HEADER]: token },
       signal: AbortSignal.timeout(100_000),

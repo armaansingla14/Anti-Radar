@@ -10,8 +10,10 @@
  * - Writes: the httpOnly `radar_admin` cookie (set by /api/admin/unlock) is forwarded as `X-Radar-Admin`;
  *   cross-site writes are refused (Origin check, on top of the SameSite=Strict cookie).
  * - A sleeping backend (Render free tier cold start) yields 503 `backend_waking` so the UI can say so.
+ * - DATA_SOURCE=snapshot: the bundled verified snapshot answers instead (lib/snapshot-server.ts); writes are 403.
  */
 import type { NextRequest } from "next/server";
+import { serverFetch } from "@/lib/dataSource";
 import { proxyMethodAllowed, proxyPathAllowed } from "@/lib/proxyPolicy";
 import { ADMIN_COOKIE, ADMIN_HEADER, DATASET_COOKIE, parseDataset, resolveBackend } from "@/lib/session";
 
@@ -78,7 +80,7 @@ async function proxy(request: NextRequest, ctx: { params: Promise<{ path: string
   const timer = setTimeout(() => controller.abort(), HEADERS_TIMEOUT_MS);
   let upstream: Response;
   try {
-    upstream = await fetch(target, {
+    upstream = await serverFetch(target, {
       method: request.method,
       headers,
       body,

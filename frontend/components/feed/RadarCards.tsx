@@ -9,6 +9,7 @@ import { useToast } from "@/components/Toast";
 import { postFeedback } from "@/lib/api";
 import type { IntelCard as IntelCardData } from "@/lib/types";
 import { THEMES } from "./prose";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 
 export interface RadarCardsProps {
   cards: IntelCardData[];
@@ -33,6 +34,7 @@ export function RadarCards({ cards: initial, emptyTitle, emptyBody }: RadarCards
     setCards(initial);
   }
 
+  const staticSnapshot = useStaticSnapshot();
   const dismiss = async (card: IntelCardData) => {
     const index = cards.findIndex((c) => c.id === card.id);
     setCards((cs) => cs.filter((c) => c.id !== card.id));
@@ -52,7 +54,7 @@ export function RadarCards({ cards: initial, emptyTitle, emptyBody }: RadarCards
   return (
     <div className="space-y-10">
       {cards.map((card, i) => (
-        <IntelCard key={card.id} card={{ ...card, rank: i + 1 }} onDismiss={dismiss} />
+        <IntelCard key={card.id} card={{ ...card, rank: i + 1 }} onDismiss={staticSnapshot ? undefined : dismiss} />
       ))}
     </div>
   );

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { addWatch, removeWatch } from "@/lib/api";
 import type { WatchRequest } from "@/lib/types";
 import { useToast } from "./Toast";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 
 export interface WatchButtonProps {
   entityType: WatchRequest["entity_type"];
@@ -25,6 +26,7 @@ export interface WatchButtonProps {
  * toast if the request fails. Carries data-action="watch" for the W shortcut.
  */
 export function WatchButton({ entityType, entityId, watched, itemId, onToggle, onChange, size = "sm", className }: WatchButtonProps) {
+  const staticSnapshot = useStaticSnapshot();
   const [on, setOn] = useState(watched);
   const [item, setItem] = useState<string | null>(itemId ?? null);
   const [pending, setPending] = useState(false);
@@ -55,6 +57,7 @@ export function WatchButton({ entityType, entityId, watched, itemId, onToggle, o
     }
   };
 
+  if (staticSnapshot) return null; // nothing to write to in the verified snapshot
   return (
     <button
       type="button"

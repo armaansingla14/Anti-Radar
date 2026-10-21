@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -196,6 +197,7 @@ function Row({
 export function WatchlistBoard({ items: initial, changesSinceLastVisit, topics }: WatchlistBoardProps) {
   const router = useRouter();
   const toast = useToast();
+  const staticSnapshot = useStaticSnapshot();
   const [items, setItems] = useState(initial);
   const [removing, setRemoving] = useState<Set<string>>(new Set());
   const [seenPending, setSeenPending] = useState(false);
@@ -232,6 +234,21 @@ export function WatchlistBoard({ items: initial, changesSinceLastVisit, topics }
     }
   };
 
+  if (items.length === 0 && staticSnapshot) {
+    return (
+      <EmptyState
+        title="Watchlists are personal — empty in the verified snapshot."
+        action={
+          <Link href="/" className="link font-mono text-[11px] uppercase tracking-[0.08em] text-ink">
+            Open the radar →
+          </Link>
+        }
+      >
+        On a live backend, watching a company, person or thesis topic collects its changes here between visits: new roles,
+        repositories, papers, affiliation moves and score jumps.
+      </EmptyState>
+    );
+  }
   if (items.length === 0) {
     return (
       <EmptyState

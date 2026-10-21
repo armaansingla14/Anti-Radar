@@ -350,6 +350,7 @@ def test_vercel_links_project_sets_env_deploys_and_updates_frontend_url(tmp_path
     assert sent["BACKEND_URL"]["value"] == "https://radar-live.onrender.com"
     assert sent["DEMO_BACKEND_URL"]["value"] == "https://radar-demo.onrender.com"
     assert sent["APP_ENV"]["value"] == "production" and sent["APP_ENV"]["target"] == ["production", "preview"]
+    assert sent["DATA_SOURCE"]["value"] == "auto"  # --live: live backend first, bundled snapshot as fallback
     (call,) = runner.calls
     assert call["args"][:6] == ["npx", "--yes", "vercel@latest", "deploy", "--prod", "--yes"]
     assert call["args"][call["args"].index("--cwd") + 1].endswith("frontend")
@@ -373,6 +374,7 @@ def test_vercel_demo_only_points_the_whole_site_at_the_snapshot_backend(tmp_path
         deploy.vercel_step(ctx)
     sent = {e["key"]: e["value"] for e in body(env.calls[0])}
     assert sent["BACKEND_URL"] == sent["DEMO_BACKEND_URL"] == "https://radar-demo.onrender.com"
+    assert sent["DATA_SOURCE"] == "snapshot"  # the public site never waits on a sleeping backend
 
 
 def test_vercel_requires_render_urls(tmp_path):

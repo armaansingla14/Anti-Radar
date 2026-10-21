@@ -632,8 +632,8 @@ def vercel_step(ctx: Ctx) -> str:
         ctx.log("  set framework=nextjs, rootDirectory=(empty): the CLI deploys frontend/ directly")
 
     api("POST", f"/v10/projects/{project['id']}/env", params={"upsert": "true"},
-        json=vercel_env(main_url, render["demo"]["url"]))
-    ctx.log("  env BACKEND_URL, DEMO_BACKEND_URL, APP_ENV (production + preview)")
+        json=vercel_env(main_url, render["demo"]["url"], ctx.live))
+    ctx.log(f"  env BACKEND_URL, DEMO_BACKEND_URL, APP_ENV, DATA_SOURCE={'auto' if ctx.live else 'snapshot'} (production + preview)")
 
     org_id = team_id or user["id"]
     ctx.state["vercel"] = {"project_id": project["id"], "org_id": org_id}
@@ -661,11 +661,14 @@ def vercel_step(ctx: Ctx) -> str:
     return frontend
 
 
-def vercel_env(main_url: str, demo_url: str) -> list[dict[str, Any]]:
-    """BACKEND_URL serves the site; DEMO_BACKEND_URL serves /demo. Without --live both are the snapshot backend."""
+def vercel_env(main_url: str, demo_url: str, live: bool = False) -> list[dict[str, Any]]:
+    """Without --live the site serves the verified snapshot bundled with the frontend (DATA_SOURCE=snapshot): no
+    request ever waits on a sleeping backend. With --live, BACKEND_URL serves the site and DEMO_BACKEND_URL /demo,
+    and the bundled snapshot is the fallback when the live backend does not answer (DATA_SOURCE=auto)."""
     target = ["production", "preview"]
-    return [{"key": k, "value": v, "type": "encrypted", "target": target}
-            for k, v in (("BACKEND_URL", main_url), ("DEMO_BACKEND_URL", demo_url), ("APP_ENV", "production"))]
+    pairs = (("BACKEND_URL", main_url), ("DEMO_BACKEND_URL", demo_url), ("APP_ENV", "production"),
+             ("DATA_SOURCE", "auto" if live else "snapshot"))
+    return [{"key": k, "value": v, "type": "encrypted", "target": target} for k, v in pairs]
 
 
 def pick_production_url(domains: list[dict[str, Any]], fallback: str | None) -> str | None:

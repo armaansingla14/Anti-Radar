@@ -16,6 +16,7 @@ import { planCardAction, type CardAction } from "@/lib/cardActions";
 import { ALL_NAV } from "@/lib/routes";
 import { CommandPalette } from "./CommandPalette";
 import { Sheet } from "./Sheet";
+import { useStaticSnapshot } from "./StaticSnapshot";
 import { useToast } from "./Toast";
 import { WhyDrawerLoader } from "./WhyDrawer";
 
@@ -133,6 +134,7 @@ const JUMPS = ALL_NAV.filter((n) => n.jump);
  */
 export function KeyboardProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const staticSnapshot = useStaticSnapshot();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
@@ -211,6 +213,10 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
           setWhy({ entityType: plan.entityType, idOrSlug: plan.idOrSlug, name: card.getAttribute("aria-label") ?? undefined, demo: card.dataset.demo === "true" });
           return;
         case "watch":
+          if (staticSnapshot) {
+            toast("The verified snapshot is read-only");
+            return;
+          }
           (plan.next ? addWatch({ entity_type: plan.entityType, entity_id: plan.entityId }) : removeWatch(plan.entityId))
             .then(() => {
               card.dataset.watched = String(plan.next);
@@ -224,7 +230,7 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
           return;
       }
     },
-    [activeCard, router, toast],
+    [activeCard, router, toast, staticSnapshot],
   );
 
   useEffect(() => {

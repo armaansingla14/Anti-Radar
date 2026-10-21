@@ -12,6 +12,8 @@
  * import `next/headers`; `getSession()` loads it lazily and only runs on the server.
  */
 
+import { dataSource, serverFetch, SNAPSHOT_BASE } from "./dataSource.ts";
+
 export const DATASET_COOKIE = "radar_dataset";
 export const ADMIN_COOKIE = "radar_admin";
 export const ADMIN_HEADER = "X-Radar-Admin";
@@ -25,6 +27,8 @@ export interface Session {
   demo_snapshot: boolean;
   demo_synthetic: boolean;
   snapshot_as_of: string | null;
+  /** True when this deployment serves the bundled verified snapshot (no backend; generation disabled). */
+  static_snapshot?: boolean;
   /** Which backend served this session. */
   dataset: Dataset;
   /** False when the backend could not be reached (asleep or misconfigured); other fields are defaults. */
@@ -56,6 +60,8 @@ function clean(url: string | undefined): string | undefined {
  * URL falls back to BACKEND_URL / localhost for local development.
  */
 export function resolveBackend(dataset: Dataset, env: Env = process.env): BackendResolution {
+  // The bundled snapshot answers every read (lib/snapshot-server.ts); no backend URL is needed.
+  if (dataSource(env) === "snapshot") return { ok: true, base: SNAPSHOT_BASE };
   const live = clean(env.BACKEND_URL);
   const demo = clean(env.DEMO_BACKEND_URL);
   const prod = isProductionRuntime(env);
@@ -116,7 +122,7 @@ export async function getSession(timeoutMs = 8000): Promise<Session> {
   const backend = resolveBackend(dataset);
   if (!backend.ok) return { ...DEFAULT_SESSION, dataset };
   try {
-    const res = await fetch(`${backend.base}/api/session`, {
+    const res = await serverFetch(`${backend.base}/api/session`, {
       cache: "no-store",
       headers: { Accept: "application/json", ...(admin ? { [ADMIN_HEADER]: admin } : {}) },
       signal: AbortSignal.timeout(timeoutMs),

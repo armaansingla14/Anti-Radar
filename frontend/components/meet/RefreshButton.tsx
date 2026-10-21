@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useToast } from "@/components/Toast";
 import { ApiError, refreshMeet } from "@/lib/api";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 
 /** Admin: recompute this week's recommendations (POST /api/meet/refresh). */
 export function RefreshButton() {
+  const staticSnapshot = useStaticSnapshot();
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -23,6 +25,7 @@ export function RefreshButton() {
       setBusy(false);
     }
   };
+  if (staticSnapshot) return null; // nothing to write to in the verified snapshot
   return (
     <button
       type="button"

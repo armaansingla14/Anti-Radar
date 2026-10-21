@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { displayNow } from "@/lib/dataSource";
 import clsx from "clsx";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
@@ -157,7 +158,7 @@ function DatabasePanel({
 export default async function StatusPage() {
   await connection();
   const [status, session] = await Promise.all([getStatus(), getSession()]);
-  const now = new Date();
+  const now = displayNow();
   const xRow = status.providers.find((p) => p.provider === "x");
 
   const rows: ProviderRow[] = status.providers.map((p) => ({

@@ -247,11 +247,11 @@ describe("home logic", () => {
     );
     assert.equal(
       homeStatusLine({ updated_at: null, data_as_of: "2026-10-06", is_snapshot: true, snapshot_age_days: 14 }, now),
-      "VERIFIED SNAPSHOT · collected Oct 6, 2026 · 14 days old",
+      "VERIFIED SNAPSHOT · collected Oct 6, 2026",
     );
     assert.equal(
       homeStatusLine({ updated_at: null, data_as_of: null, is_snapshot: true, snapshot_age_days: null }, now),
-      "VERIFIED SNAPSHOT · collected date unknown · age unknown",
+      "VERIFIED SNAPSHOT · collected date unknown",
     );
   });
 

@@ -8,6 +8,7 @@ import { ingestGithub, ingestUrl } from "@/lib/api";
 import { hrefFor, humanize } from "@/lib/format";
 import type { IngestOut } from "@/lib/types";
 import { describeApiError } from "../apiError";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 
 type Result = { ok: true; out: IngestOut; ms: number } | { ok: false; error: string };
 
@@ -269,6 +270,15 @@ function WebsiteForm() {
 
 /** Manual ingest forms wired to POST /api/ingest/{github,url}. X posts are pasted in the X INTELLIGENCE panel. */
 export function AddToRadar() {
+  const staticSnapshot = useStaticSnapshot();
+  if (staticSnapshot) {
+    return (
+      <p className="max-w-[70ch] text-[13px] leading-relaxed text-ink-2">
+        This deployment serves the verified snapshot, so nothing can be added here. On a live Anti Radar backend this
+        section ingests a GitHub repository, organization or company website on demand.
+      </p>
+    );
+  }
   return (
     <div className="grid gap-x-10 gap-y-10 md:grid-cols-2">
       <GithubForm />

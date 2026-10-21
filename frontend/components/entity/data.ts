@@ -40,3 +40,9 @@ export const loadFormationFeed = cache(async (): Promise<FormationFeed | null> =
     return null;
   }
 });
+
+/** Newest stored Anti Brief (`kind: "brief"`) among an entity's reports, or null. */
+export function latestBriefId(reports: { id: string; kind: string; created_at: string }[] | null | undefined): string | null {
+  const briefs = (reports ?? []).filter((r) => r.kind === "brief").sort((a, b) => b.created_at.localeCompare(a.created_at));
+  return briefs[0]?.id ?? null;
+}

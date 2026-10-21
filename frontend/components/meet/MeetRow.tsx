@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 import clsx from "clsx";
 import Link from "next/link";
 import { useState } from "react";
@@ -69,6 +70,7 @@ export function MeetRow({ card, readOnly, watched }: { card: MeetCard; readOnly:
   const lines = card.thesis_alignment.filter((t) => !isChip(t));
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const staticSnapshot = useStaticSnapshot();
   const [dismissed, setDismissed] = useState(false);
 
   const dismiss = async () => {
@@ -217,7 +219,7 @@ export function MeetRow({ card, readOnly, watched }: { card: MeetCard; readOnly:
         </Link>
         <MeetingBriefButton personId={p.id} briefId={card.brief_report_id} readOnly={readOnly} tone={card.rank === 1 ? "solid" : "outline"} />
         <WatchButton entityType="person" entityId={p.id} watched={watched} />
-        {confirm ? (
+        {staticSnapshot ? null : confirm ? (
           <span className={clsx(act, "gap-3")}>
             <span className="text-ink-2">Hide {p.name} from future weeks?</span>
             <button type="button" onClick={() => void dismiss()} disabled={busy} className="text-accent hover:underline">

@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -32,6 +33,7 @@ export function MeetingBriefButton({ personId, briefId, readOnly, allowRegenerat
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = useState<"generate" | "regenerate" | null>(null);
+  const staticSnapshot = useStaticSnapshot();
   const action = briefAction({ brief_report_id: briefId }, readOnly);
   const cls = clsx(
     base,
@@ -73,6 +75,7 @@ export function MeetingBriefButton({ personId, briefId, readOnly, allowRegenerat
     );
   }
   if (action.kind === "unlock") {
+    if (staticSnapshot) return null; // the verified snapshot only opens briefs that were generated
     return (
       <Link href={action.href} className={clsx(base, "border-rule-strong text-ink-2 hover:border-ink hover:text-ink", className)} title="This session is read-only">
         <span aria-hidden>⚿</span> Unlock to generate

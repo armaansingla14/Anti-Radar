@@ -1,5 +1,6 @@
 "use client";
 
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -39,6 +40,7 @@ export function XIntelligence({
   const [result, setResult] = useState<{ ok: true; out: IngestOut } | { ok: false; error: string } | null>(null);
   const [, startRefresh] = useTransition();
   const copy = xModeCopy(mode, reason);
+  const staticSnapshot = useStaticSnapshot();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +76,12 @@ export function XIntelligence({
         </p>
         <p className="mt-2 max-w-[60ch] text-[12.5px] leading-snug text-ink-2">{copy.body}</p>
       </div>
+      {staticSnapshot ? (
+        <p className="min-w-0 max-w-[60ch] text-[12.5px] leading-snug text-ink-3">
+          No X posts are part of the verified snapshot. On a live backend, a post URL pasted here is checked against the
+          public embed and labelled user-provided.
+        </p>
+      ) : (
       <form onSubmit={submit} noValidate className="min-w-0" aria-label="Paste X post URL">
         <p className="label mb-2 text-ink">Paste X post URL</p>
         <label htmlFor={`${ids}-url`} className="sr-only">
@@ -144,6 +152,7 @@ export function XIntelligence({
             ))}
         </div>
       </form>
+      )}
     </div>
   );
 }

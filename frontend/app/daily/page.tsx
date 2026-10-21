@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { displayNow } from "@/lib/dataSource";
 import clsx from "clsx";
 import Link from "next/link";
 import { connection } from "next/server";
@@ -86,7 +87,7 @@ export default async function DailyPage({ searchParams }: PageProps<"/daily">) {
   const sp = await searchParams;
   const raw = Array.isArray(sp.window) ? sp.window[0] : sp.window;
   const win = WINDOWS.find((w) => w.key && w.key === raw)?.key ?? "";
-  const now = new Date();
+  const now = displayNow();
   const since = win ? new Date(now.getTime() - Number(win) * 86_400_000).toISOString() : undefined;
 
   const daily = await loadDaily(since);

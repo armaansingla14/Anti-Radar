@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { displayNow } from "@/lib/dataSource";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
@@ -6,7 +7,7 @@ import { DemoBadge } from "@/components/Badges";
 import { CompanyTable } from "@/components/CompanyRow";
 import { FounderCard } from "@/components/FounderCard";
 import { SignalTimeline } from "@/components/SignalTimeline";
-import { loadFormationFeed, loadFounder, loadGraph, loadStatus } from "@/components/entity/data";
+import { latestBriefId, loadFormationFeed, loadFounder, loadGraph, loadStatus } from "@/components/entity/data";
 import {
   collisionLine,
   formationEvidence,
@@ -43,14 +44,14 @@ export async function generateMetadata({ params }: PageProps<"/founders/[slug]">
   return { title: p ? p.card.name : "Person" };
 }
 
-/** Latest cached meeting brief for this person (optional context — never fails the page, never generates). */
-async function latestMeetingBrief(personId: string): Promise<string | null> {
+/** Latest cached meeting brief and Anti Brief for this person (optional context — never fails the page, never generates). */
+async function latestReports(personId: string): Promise<{ meeting: string | null; brief: string | null }> {
   try {
     const reports = await getReports({ entity_id: personId, limit: 50 });
     const briefs = reports.filter((r) => r.kind === "meeting_brief").sort((a, b) => b.created_at.localeCompare(a.created_at));
-    return briefs[0]?.id ?? null;
+    return { meeting: briefs[0]?.id ?? null, brief: latestBriefId(reports) };
   } catch {
-    return null;
+    return { meeting: null, brief: null };
   }
 }
 
@@ -62,17 +63,17 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
 
   const p = detail.card;
   const score = detail.founder_score;
-  const [graph, status, session, meetingBriefId, formationFeed] = await Promise.all([
+  const [graph, status, session, reportIds, formationFeed] = await Promise.all([
     loadGraph(p.id),
     loadStatus(),
     getSession(),
-    latestMeetingBrief(p.id),
+    latestReports(p.id),
     loadFormationFeed(),
   ]);
   const llmEnabled = typeof status?.llm?.enabled === "boolean" ? status.llm.enabled : null;
   const xRow = status?.providers.find((x) => x.provider === "x");
   const xMode = xModeFromStatus(xRow);
-  const now = new Date();
+  const now = displayNow();
   const whyEvidence = whyNowEvidence(score, 4);
   const allEvidence = whyNowEvidence(score, 50);
   const formations = formationsFor(formationFeed, p.id);
@@ -291,8 +292,9 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
           watched={detail.watched}
           autoInvestigate={sp.investigate === "1"}
           llmEnabled={llmEnabled}
-          meetingBriefId={meetingBriefId}
+          meetingBriefId={reportIds.meeting}
           readOnly={session.read_only}
+          briefId={reportIds.brief}
         />
       </div>
 

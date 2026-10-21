@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { FEEDBACK_GROUPS, FEEDBACK_ITEMS, feedbackText } from "@/lib/labels";
 import type { FeedbackLabel } from "@/lib/types";
+import { useStaticSnapshot } from "@/components/StaticSnapshot";
 
 /** Menu order: INTERESTING (+ reasons), NOT INTERESTING (+ reasons). */
 export const FEEDBACK_OPTIONS = FEEDBACK_ITEMS;
@@ -18,6 +19,7 @@ export interface FeedbackMenuProps {
 
 /** "Feedback" disclosure menu: INTERESTING / NOT INTERESTING, each with optional reasons. */
 export function FeedbackMenu({ onSelect, selected = null, align = "left", className }: FeedbackMenuProps) {
+  const staticSnapshot = useStaticSnapshot();
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState<FeedbackLabel | null>(selected);
   const [busy, setBusy] = useState(false);
@@ -71,6 +73,7 @@ export function FeedbackMenu({ onSelect, selected = null, align = "left", classN
 
   const currentText = feedbackText(current);
 
+  if (staticSnapshot) return null; // nothing to write to in the verified snapshot
   return (
     <div ref={rootRef} className={clsx("relative inline-block", className)}>
       <button

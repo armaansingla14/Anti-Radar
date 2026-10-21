@@ -9,6 +9,7 @@
  * Pure helpers below the fetchers are unit tested in `tests/pages.test.mts`.
  */
 import { ApiError, apiUrl } from "./api.ts";
+import { serverFetch } from "./dataSource.ts";
 import { countSources } from "./labels.ts";
 import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
 import type { ConfidenceLevel } from "./labels.ts";
@@ -86,7 +87,7 @@ async function getJson<T>(path: string, params?: Record<string, string>): Promis
   }
   let res: Response;
   try {
-    res = await fetch(apiUrl(path, params, backend), { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
+    res = await (isServer ? serverFetch : fetch)(apiUrl(path, params, backend), { method: "GET", cache: "no-store", headers: { Accept: "application/json" } });
   } catch (err) {
     await rethrowNextInternal(err);
     if (isServer) throw new ApiError(503, path, "backend_waking");

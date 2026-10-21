@@ -44,6 +44,7 @@ import type {
   WatchRequest,
 } from "./types";
 import { legacyFeedbackLabel } from "./labels.ts";
+import { serverFetch } from "./dataSource.ts";
 import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
 
 export class ApiError extends Error {
@@ -124,7 +125,7 @@ async function request<T>(
   }
   let res: Response;
   try {
-    res = await fetch(apiUrl(path, opts.params, backend), {
+    res = await (isServer ? serverFetch : fetch)(apiUrl(path, opts.params, backend), {
       method,
       cache: "no-store",
       headers: {
