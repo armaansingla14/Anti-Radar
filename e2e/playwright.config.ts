@@ -5,7 +5,7 @@
  *   RECORD=1 npx playwright test -c playwright.config.ts   # paced run, 1920×1080 video (see record-demo.sh)
  *
  * BASE_URL defaults to http://localhost:3000. Chromium host libraries missing on this machine are loaded
- * from ~/.local/chromelibs (same as shot.mjs / screenshots.mjs).
+ * from ~/.local/chromelibs (same as shot.mjs / demo-screenshots.mjs).
  */
 import { defineConfig } from "@playwright/test";
 import os from "node:os";

@@ -1,226 +1,226 @@
 1
-00:00:02,278 --> 00:00:04,188
+00:00:01,034 --> 00:00:02,944
 This is Anti Radar.
 
 2
-00:00:04,238 --> 00:00:05,988
+00:00:02,994 --> 00:00:04,744
 It isn't another startup database.
 
 3
-00:00:06,038 --> 00:00:09,388
+00:00:04,794 --> 00:00:08,144
 It looks for technical change
 before a company becomes obvious.
 
 4
-00:00:09,438 --> 00:00:12,176
+00:00:08,194 --> 00:00:10,932
 Everything you'll see is real public data.
 
 5
-00:00:13,992 --> 00:00:16,722
+00:00:12,495 --> 00:00:15,225
 This is the morning view for October 20th:
 
 6
-00:00:16,772 --> 00:00:19,702
+00:00:15,275 --> 00:00:18,205
 what changed, ranked by evidence.
 
 7
-00:00:19,752 --> 00:00:22,622
+00:00:18,255 --> 00:00:21,125
 Three possible formations
 are active right now,
 
 8
-00:00:22,672 --> 00:00:27,122
+00:00:21,175 --> 00:00:25,625
 five people are worth meeting, and
 sixty-four companies are accelerating.
 
 9
-00:00:27,172 --> 00:00:31,825
+00:00:25,675 --> 00:00:30,327
 Every row says why it surfaced
 now and how many sources back it.
 
 10
-00:00:35,139 --> 00:00:39,829
+00:00:31,750 --> 00:00:36,440
 Formation Radar looks for people
 and teams before any announcement.
 
 11
-00:00:39,879 --> 00:00:43,589
+00:00:36,490 --> 00:00:40,200
 There are six candidates today,
 and all of them are early.
 
 12
-00:00:43,639 --> 00:00:46,989
+00:00:40,250 --> 00:00:43,600
 The top one is Sameh Khamis, at 44.
 
 13
-00:00:47,039 --> 00:00:50,909
+00:00:43,650 --> 00:00:47,520
 His GitHub bio now reads "Founder
 and CTO at Stealth Startup",
 
 14
-00:00:50,959 --> 00:00:56,209
+00:00:47,570 --> 00:00:52,820
 and it lists NVIDIA, Google and
 Microsoft Research before that.
 
 15
-00:00:56,259 --> 00:00:58,391
+00:00:52,870 --> 00:00:55,002
 That's self-reported, and
 it's labelled that way.
 
 16
-00:01:02,193 --> 00:01:04,063
+00:00:56,818 --> 00:00:58,688
 Here the radar holds back.
 
 17
-00:01:04,113 --> 00:01:09,003
+00:00:58,738 --> 00:01:03,628
 It's one signal from one source,
 GitHub, and no team is linked yet.
 
 18
-00:01:09,053 --> 00:01:10,123
+00:01:03,678 --> 00:01:04,748
 Convergence is zero.
 
 19
-00:01:10,173 --> 00:01:12,723
+00:01:04,798 --> 00:01:07,348
 So it stays an early signal;
 
 20
-00:01:12,773 --> 00:01:14,496
+00:01:07,398 --> 00:01:09,121
 it isn't called a company.
 
 21
-00:01:17,182 --> 00:01:20,392
+00:01:10,905 --> 00:01:14,115
 The timeline gives the
 dated reason it surfaced:
 
 22
-00:01:20,442 --> 00:01:24,372
+00:01:14,165 --> 00:01:18,095
 on October 20th his profile
 started saying founder and stealth.
 
 23
-00:01:24,422 --> 00:01:29,847
+00:01:18,145 --> 00:01:23,571
 Every item links to its source and says
 whether it's a fact or an inference.
 
 24
-00:01:36,798 --> 00:01:39,608
+00:01:25,325 --> 00:01:28,135
 The second thread is Kevin Zakka:
 
 25
-00:01:39,658 --> 00:01:45,408
+00:01:28,185 --> 00:01:33,935
 272 verified commits to Google
 DeepMind's MuJoCo repositories.
 
 26
-00:01:45,458 --> 00:01:47,448
+00:01:33,985 --> 00:01:35,975
 In September he started mjbatch,
 
 27
-00:01:47,498 --> 00:01:50,448
+00:01:36,025 --> 00:01:38,975
 for running thousands of
 physics simulations in parallel,
 
 28
-00:01:50,498 --> 00:01:53,948
+00:01:39,025 --> 00:01:42,475
 and it reached 600 stars in 40 days.
 
 29
-00:01:53,998 --> 00:01:57,652
+00:01:42,525 --> 00:01:46,179
 That history comes from commit
 records, not from his bio.
 
 30
-00:02:01,434 --> 00:02:05,844
+00:01:48,030 --> 00:01:52,440
 This is the weekly list, ranked
 by evidence rather than fame.
 
 31
-00:02:05,894 --> 00:02:08,144
+00:01:52,490 --> 00:01:54,740
 Kevin is number one, at medium priority;
 
 32
-00:02:08,194 --> 00:02:10,464
+00:01:54,790 --> 00:01:57,060
 nobody has higher priority this week.
 
 33
-00:02:10,514 --> 00:02:13,084
+00:01:57,110 --> 00:01:59,680
 His meeting brief gives thirty-second context,
 
 34
-00:02:13,134 --> 00:02:17,844
+00:01:59,730 --> 00:02:04,440
 what he's built, five
 questions and what to verify.
 
 35
-00:02:17,894 --> 00:02:22,384
+00:02:04,490 --> 00:02:08,980
 Every line is cited and
 marked fact or inference.
 
 36
-00:02:22,434 --> 00:02:25,728
+00:02:09,030 --> 00:02:12,325
 It's a template, because no
 language model is switched on.
 
 37
-00:02:34,552 --> 00:02:36,982
+00:02:14,008 --> 00:02:16,438
 ShengShu has the biggest attention gap.
 
 38
-00:02:37,032 --> 00:02:41,102
+00:02:16,488 --> 00:02:20,558
 Its new robotics model, Motus2,
 gained 616 GitHub stars in 30 days,
 
 39
-00:02:41,152 --> 00:02:46,482
+00:02:20,608 --> 00:02:25,938
 and the last week ran almost eight
 times faster than the four before it.
 
 40
-00:02:46,532 --> 00:02:48,622
+00:02:25,988 --> 00:02:28,078
 Technical momentum is 97;
 
 41
-00:02:48,672 --> 00:02:50,462
+00:02:28,128 --> 00:02:29,918
 public attention is 26.
 
 42
-00:02:50,512 --> 00:02:52,582
+00:02:29,968 --> 00:02:32,038
 There are no Hacker News threads,
 
 43
-00:02:52,632 --> 00:02:57,274
+00:02:32,088 --> 00:02:36,730
 and X and press weren't
 measured, so they get no credit.
 
 44
-00:03:02,511 --> 00:03:06,141
+00:02:38,190 --> 00:02:41,820
 Investigate turns that
 evidence into an Anti Brief:
 
 45
-00:03:06,191 --> 00:03:09,701
+00:02:41,870 --> 00:02:45,380
 what they do, why now and what changed.
 
 46
-00:03:09,751 --> 00:03:15,321
+00:02:45,430 --> 00:02:51,000
 Where the founders are unknown,
 it says so instead of guessing.
 
 47
-00:03:15,371 --> 00:03:16,941
+00:02:51,050 --> 00:02:52,620
 Every claim has a source number,
 
 48
-00:03:16,991 --> 00:03:21,646
+00:02:52,670 --> 00:02:57,325
 and it warns that single-source
 activity is weaker evidence.
 
 49
-00:03:24,323 --> 00:03:30,513
+00:02:59,332 --> 00:03:05,522
 Find the technical change early, show
 the evidence, and say what we don't know.
 
 50
-00:03:30,563 --> 00:03:34,056
+00:03:05,572 --> 00:03:09,065
 Conviction before consensus.

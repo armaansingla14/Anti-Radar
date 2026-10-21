@@ -1,3 +1,5 @@
+> **Historical document.** The V2 planning audit, written before V2 was built (Oct 2026). For the final state see the [README](../README.md), [FINAL_APPLICATION_AUDIT.md](FINAL_APPLICATION_AUDIT.md) and [READY_TO_SEND.md](READY_TO_SEND.md).
+
 # ANTI RADAR — V2 Audit
 
 Audited 2026-10-20 against `main` @ 4d80a08. The audit was read-only and was done in four passes (lenses): backend, frontend, data, and deploy. Findings that came up in more than one pass are listed once.

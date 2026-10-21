@@ -1,18 +1,17 @@
 {
-  "name": "e2e",
+  "name": "anti-radar-e2e",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "private": true,
   "type": "module",
+  "description": "Anti Radar demo tour (Playwright), recording, screenshots and the public-demo smoke test",
+  "scripts": {
+    "tour": "playwright test -c playwright.config.ts",
+    "record": "./record-demo.sh",
+    "screenshots": "node demo-screenshots.mjs",
+    "verify": "node ../scripts/verify_public_demo.mjs"
+  },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "playwright": "^1.63.0"
-  },
-  "private": true
+  }
 }

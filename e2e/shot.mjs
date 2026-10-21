@@ -1,6 +1,6 @@
 // Usage: node shot.mjs <url-or-path> <out.png> [--full] [--width=1440] [--height=900] [--wait=ms]
 // Headless screenshot for visual QA. Chromium libs not present on the host are loaded
-// from ~/.local/chromelibs (see README "Screenshots").
+// from ~/.local/chromelibs when that directory exists (a machine-specific shim; harmless elsewhere).
 import { chromium } from "playwright";
 import os from "node:os";
 import path from "node:path";

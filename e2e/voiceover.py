@@ -8,7 +8,7 @@ paragraphs. Then:
   VO="uv run --quiet --no-project --with numpy --with imageio-ffmpeg python voiceover.py"
   $VO plan --audio ~/memo.m4a                         # finds the 10 paragraphs, prints per-scene dwell times
   DEMO_DWELL="<printed by plan>" ./record-demo.sh     # re-records the tour so each scene fits its paragraph
-  $VO mix --audio ~/memo.m4a [--words words.json]     # narration + .srt + burned-in captions
+  $VO mix --audio ~/memo.m4a [--words words.json] [--tighten]  # narration + .srt + burned-in captions
 
 `mix` writes, next to demo/anti-radar-demo.mp4:
   anti-radar-demo-voiceover.mp4            video + narration (subtitles as a selectable track)
@@ -51,6 +51,8 @@ TITLE_LEAD = 0.8      # ... and after the title card's entrance
 TAIL = 1.0            # quiet time left at the end of each scene
 OUTRO = 2.5           # extra hold on the closing card
 PAD_IN, PAD_OUT = 0.12, 0.30  # kept around each detected paragraph (soft onsets / trailing consonants)
+CUT_PAD = 0.15        # --tighten: frames kept before a scene settles
+KEEP_TAIL = 0.9       # --tighten: frames kept after a scene's narration ends
 
 
 def sh(args: list[str], **kw) -> subprocess.CompletedProcess:
@@ -172,13 +174,50 @@ def srt_time(t: float) -> str:
     return f"{ms // 3_600_000:02d}:{ms // 60_000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
 
 
+def tighten(windows: list[tuple[float, float]], lengths: list[float], total: float) -> tuple[Path, list[tuple[float, float]]]:
+    """Cut the silent page transitions: keep each scene from just before it settles to just after its narration,
+    joined by hard cuts. Returns the tightened video and the scene windows on its timeline."""
+    segs: list[tuple[float, float]] = []
+    for i, ((on, off), length) in enumerate(zip(windows, lengths), 1):
+        lead = TITLE_LEAD if i == 1 else LEAD
+        start = 0.0 if i == 1 else max(0.0, on - CUT_PAD)
+        end = total if i == len(windows) else min(off, on + lead + length + KEEP_TAIL)
+        if segs and start <= segs[-1][1]:
+            segs[-1] = (segs[-1][0], max(segs[-1][1], end))
+        else:
+            segs.append((start, end))
+
+    def mapped(t: float) -> float:
+        acc = 0.0
+        for s0, e0 in segs:
+            if t < s0:
+                return acc
+            if t <= e0:
+                return acc + (t - s0)
+            acc += e0 - s0
+        return acc
+
+    out = HERE / "test-results" / "tightened.mp4"
+    parts = ";".join(f"[0:v]trim=start={s0:.3f}:end={e0:.3f},setpts=PTS-STARTPTS[v{n}]" for n, (s0, e0) in enumerate(segs))
+    joined = "".join(f"[v{n}]" for n in range(len(segs)))
+    sh([FFMPEG, "-y", "-v", "error", "-i", str(VIDEO), "-filter_complex", f"{parts};{joined}concat=n={len(segs)}:v=1:a=0[v]",
+        "-map", "[v]", "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30", str(out)])
+    cut = total - sum(e0 - s0 for s0, e0 in segs)
+    print(f"  tighten: {len(segs)} segments, {cut:.1f} s of silent transitions cut", file=sys.stderr)
+    return out, [(mapped(on), mapped(off)) for on, off in windows]
+
+
 def cmd_mix(args) -> None:
     meta = json.loads(META.read_text())
     if "marks" not in meta:
         sys.exit("voiceover: demo-tour-meta.json has no scene marks; re-run ./record-demo.sh")
     sp = scene_spans(args)
     windows = scene_windows(meta)
-    total = video_duration(VIDEO)
+    base = VIDEO
+    total = video_duration(base)
+    if args.tighten:
+        base, windows = tighten(windows, [b - a for a, b in sp], total)
+        total = video_duration(base)
     voice = decode(args.audio)
     words = [w for seg in json.loads(args.words.read_text()) for w in seg["words"]] if args.words else []
 
@@ -229,7 +268,7 @@ def cmd_mix(args) -> None:
 
     voice_chain = "highpass=f=70,afftdn=nf=-28,acompressor=threshold=-20dB:ratio=2.5:attack=10:release=200," \
                   "loudnorm=I=-16:TP=-1.5:LRA=9"
-    sh([FFMPEG, "-y", "-v", "error", "-i", str(VIDEO), "-i", str(wav), "-i", str(srt),
+    sh([FFMPEG, "-y", "-v", "error", "-i", str(base), "-i", str(wav), "-i", str(srt),
         "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "copy", "-af", voice_chain, "-ar", str(RATE),
         "-ac", "2",  # stereo: some players and headsets play mono AAC in one ear or not at all
         "-c:a", "aac", "-b:a", "160k", "-c:s", "mov_text", "-metadata:s:s:0", "language=eng",
@@ -253,6 +292,7 @@ def main() -> None:
     ap.add_argument("--words", type=Path, help="word timestamps JSON (optional)")
     ap.add_argument("--min-pause", type=float, default=1.5, help="seconds of silence between paragraphs")
     ap.add_argument("--noise-db", type=float, default=-35, help="silence threshold")
+    ap.add_argument("--tighten", action="store_true", help="mix: cut the silent page transitions between scenes")
     args = ap.parse_args()
     (cmd_plan if args.command == "plan" else cmd_mix)(args)
 
