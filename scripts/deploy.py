@@ -639,7 +639,8 @@ def vercel_step(ctx: Ctx) -> str:
     ctx.state["vercel"] = {"project_id": project["id"], "org_id": org_id}
     ctx.save_state()
     ctx.log("  building on Vercel (1-3 min) ...")
-    proc = ctx.run(["npx", "--yes", "vercel@latest", "deploy", "--prod", "--yes", "--token", token,
+    # One tgz upload instead of one request per file (Vercel's free tier caps file uploads per day).
+    proc = ctx.run(["npx", "--yes", "vercel@latest", "deploy", "--prod", "--yes", "--archive=tgz", "--token", token,
                     "--cwd", str(ctx.root / "frontend")],
                    env={**os.environ, "VERCEL_ORG_ID": org_id, "VERCEL_PROJECT_ID": project["id"]},
                    fake_stdout=f"https://{VERCEL_PROJECT}-dryrun.vercel.app\n")

@@ -16,8 +16,6 @@ backend/.cassettes-tmp/
 backend/radar/demo/snapshot.tmp/
 demo/*.mp4
 demo/*.webm
-e2e/test-results/
-e2e/playwright-report/
 e2e/videos/
 
 # scripts/deploy.py state (ids + public URLs) and Vercel CLI links
@@ -26,3 +24,5 @@ deploy/
 
 # snapshot export scratch (packed into frontend/snapshot/responses.pack)
 frontend/snapshot/recording/
+# the demo video is served from Vercel (uploaded by the CLI deploy) and attached to the GitHub release; not committed
+frontend/public/demo/*.mp4
