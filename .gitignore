@@ -23,3 +23,6 @@ e2e/videos/
 # scripts/deploy.py state (ids + public URLs) and Vercel CLI links
 deploy/
 .vercel/
+
+# snapshot export scratch (packed into frontend/snapshot/responses.pack)
+frontend/snapshot/recording/

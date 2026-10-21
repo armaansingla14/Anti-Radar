@@ -4,14 +4,15 @@
  *
  * Every page of the site is rendered once against a backend loaded with the verified real-data snapshot,
  * while the frontend's recording hook (lib/snapshot-server.ts, SNAPSHOT_RECORD=1) writes each backend GET
- * response into frontend/snapshot/data/. Nothing is synthesised: the archive is exactly what the API returned.
+ * response into frontend/snapshot/recording/; they are then packed into snapshot/responses.pack (+ index).
+ * Nothing is synthesised: the archive is exactly what the API returned.
  *
  *   # 1. a backend serving the verified snapshot (backend/radar/demo/snapshot, replayed into radar_demo)
  *   cd backend && DATABASE_URL=…/radar_demo DEMO_SNAPSHOT=true LLM_PROVIDER=none uv run uvicorn radar.api.main:app --port 8000
  *   # 2. a production build of the frontend in recording mode
  *   cd frontend && npx next build && SNAPSHOT_RECORD=1 BACKEND_URL=http://localhost:8000 \
  *       DEMO_BACKEND_URL=http://localhost:8000 npx next start -p 3100
- *   # 3. crawl (writes snapshot/data, snapshot/search-index.json, snapshot/meta.json)
+ *   # 3. crawl (writes snapshot/responses.pack + responses.index.json, search-index.json, meta.json)
  *   node scripts/export-snapshot.mjs --site http://localhost:3100 --api http://localhost:8000
  *   # 4. optional: walk /demo once so every client-side call is recorded too
  *   cd ../e2e && BASE_URL=http://localhost:3100 npx playwright test
@@ -20,6 +21,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.resolve(HERE, "..");
@@ -80,8 +82,9 @@ async function pool(urls) {
 
 async function main() {
   console.log(`export-snapshot: site ${SITE}, api ${API}`);
-  fs.rmSync(path.join(OUT, "data"), { recursive: true, force: true });
-  fs.mkdirSync(path.join(OUT, "data"), { recursive: true });
+  const RECORDING = path.join(OUT, "recording");
+  fs.rmSync(RECORDING, { recursive: true, force: true });
+  fs.mkdirSync(RECORDING, { recursive: true });
 
   const [companies, people, formation, reports, archive, meet] = await Promise.all([
     all("/companies"),
@@ -144,7 +147,27 @@ async function main() {
   } catch {
     /* not a git checkout */
   }
-  const files = execSync(`find ${JSON.stringify(path.join(OUT, "data"))} -type f | wc -l`).toString().trim();
+  // Pack the recorded responses (one gzip file each) into responses.pack + responses.index.json, sorted by key
+  // so the same data always produces the same two files.
+  const recorded = execSync(`find ${JSON.stringify(RECORDING)} -type f -name "*.json.gz"`).toString().split("\n").filter(Boolean);
+  const entries = recorded.map((file) => {
+    const gz = fs.readFileSync(file);
+    return { key: JSON.parse(gunzipSync(gz).toString("utf8")).key, gz };
+  });
+  entries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const indexOut = {};
+  let offset = 0;
+  const chunks = [];
+  for (const e of entries) {
+    indexOut[e.key] = [offset, e.gz.length];
+    chunks.push(e.gz);
+    offset += e.gz.length;
+  }
+  fs.writeFileSync(path.join(OUT, "responses.pack"), Buffer.concat(chunks));
+  fs.writeFileSync(path.join(OUT, "responses.index.json"), JSON.stringify(indexOut));
+  fs.rmSync(RECORDING, { recursive: true, force: true });
+  fs.rmSync(path.join(OUT, "data"), { recursive: true, force: true });
+  const files = entries.length;
   const meta = {
     as_of: manifest.as_of,
     captured_at: manifest.captured_at,
@@ -152,7 +175,7 @@ async function main() {
     source_commit: commit,
     note: "Backend API responses for every page of the public site, recorded from the verified real-data snapshot " +
       "(backend/radar/demo/snapshot). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
-    counts: { companies: companies.length, people: people.length, formation_candidates: candidates.length, reports: reports.length, responses: Number(files) },
+    counts: { companies: companies.length, people: people.length, formation_candidates: candidates.length, reports: reports.length, responses: files },
   };
   fs.writeFileSync(path.join(OUT, "meta.json"), JSON.stringify(meta, null, 2) + "\n");
 

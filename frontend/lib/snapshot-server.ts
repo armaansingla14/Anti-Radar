@@ -4,8 +4,9 @@ import "server-only";
  * The verified snapshot, served without a backend.
  *
  * `frontend/snapshot/` holds the backend's GET responses for every page of the public site, recorded from
- * the verified real-data snapshot (scripts/export-snapshot.mjs). Each response is one gzip file named by the
- * SHA-1 of its normalised request key (`/path?sorted=query`), so a lookup is a single file read.
+ * the verified real-data snapshot (scripts/export-snapshot.mjs): `responses.pack` is the gzip-compressed
+ * responses back to back, and `responses.index.json` maps each normalised request key (`/path?sorted=query`)
+ * to its [offset, length], so a lookup is one positioned read. Two files, not thousands: easy to deploy and diff.
  *
  * `install()` (called once by instrumentation.ts) puts a fetch hook on globalThis that lib/dataSource.ts
  * `serverFetch` uses for every server-side backend call and the browser proxy:
@@ -41,31 +42,58 @@ export interface SnapshotMeta {
 }
 
 
-export function entryFile(key: string, dir = SNAPSHOT_DIR): string {
+/** Where the recorder writes one file per response while exporting (packed afterwards; gitignored). */
+export function recordingFile(key: string, dir = SNAPSHOT_DIR): string {
   const h = createHash("sha1").update(key).digest("hex");
-  return path.join(dir, "data", h.slice(0, 2), `${h}.json.gz`);
+  return path.join(dir, "recording", h.slice(0, 2), `${h}.json.gz`);
+}
+
+interface Pack {
+  fd: number;
+  index: Map<string, [number, number]>;
+}
+const packs = new Map<string, Pack | null>();
+
+function openPack(dir: string): Pack | null {
+  if (packs.has(dir)) return packs.get(dir)!;
+  let pack: Pack | null = null;
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(dir, "responses.index.json"), "utf8")) as Record<string, [number, number]>;
+    pack = { fd: fs.openSync(path.join(dir, "responses.pack"), "r"), index: new Map(Object.entries(index)) };
+  } catch {
+    pack = null;
+  }
+  packs.set(dir, pack);
+  return pack;
 }
 
 const cache = new Map<string, SnapshotEntry | null>();
 const CACHE_MAX = 400;
 
 export function readEntry(key: string, dir = SNAPSHOT_DIR): SnapshotEntry | null {
-  if (cache.has(key)) return cache.get(key)!;
+  const cacheKey = `${dir}\u0000${key}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey)!;
   let entry: SnapshotEntry | null = null;
-  try {
-    entry = JSON.parse(gunzipSync(fs.readFileSync(entryFile(key, dir))).toString("utf8")) as SnapshotEntry;
-  } catch {
-    entry = null;
+  const pack = openPack(dir);
+  const at = pack?.index.get(key);
+  if (pack && at) {
+    try {
+      const buf = Buffer.alloc(at[1]);
+      fs.readSync(pack.fd, buf, 0, at[1], at[0]);
+      entry = JSON.parse(gunzipSync(buf).toString("utf8")) as SnapshotEntry;
+    } catch {
+      entry = null;
+    }
   }
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
-  cache.set(key, entry);
+  cache.set(cacheKey, entry);
   return entry;
 }
 
 export function writeEntry(entry: SnapshotEntry, dir = SNAPSHOT_DIR): void {
-  const file = entryFile(entry.key, dir);
+  const file = recordingFile(entry.key, dir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  // mtime 0 keeps the gzip bytes identical across exports of the same data.
+  // Node writes gzip headers with mtime 0, so the same response always compresses to the same bytes.
   fs.writeFileSync(file, gzipSync(Buffer.from(JSON.stringify(entry)), { level: 9 }));
 }
 
