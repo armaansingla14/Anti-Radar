@@ -15,7 +15,7 @@ export interface PageHeaderProps {
 /** Editorial page opener: eyebrow, serif headline, standfirst and an optional right rail. */
 export function PageHeader({ kicker, title, dek, aside, className }: PageHeaderProps) {
   return (
-    <header className={clsx("mb-12 grid grid-cols-12 gap-x-10 gap-y-6", className)}>
+    <header className={clsx("mb-12 grid grid-cols-12 gap-y-6 lg:gap-x-10", className)}>
       <div className={clsx("col-span-12 min-w-0", aside && "lg:col-span-8")}>
         <p className="label mb-3">{kicker}</p>
         <h1 className="max-w-[22ch] font-serif text-[46px] leading-[1.02] tracking-[-0.015em] text-ink">{title}</h1>

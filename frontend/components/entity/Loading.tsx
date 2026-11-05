@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/Skeleton";
 export function EntityLoading() {
   return (
     <div aria-busy="true" aria-label="Loading">
-      <div className="grid grid-cols-12 gap-10 pb-7">
+      <div className="grid grid-cols-12 gap-y-10 pb-7 lg:gap-x-10">
         <div className="col-span-12 space-y-4 lg:col-span-8">
           <Skeleton className="h-3 w-56" />
           <Skeleton className="h-14 w-3/4" />

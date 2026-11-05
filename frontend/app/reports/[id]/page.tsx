@@ -10,6 +10,10 @@ import { Sources } from "@/components/entity/Sources";
 import { citedSourceIds, isMeetingBrief } from "@/components/meet/logic";
 import { meetingSections, MeetingBriefView } from "@/components/meet/MeetingBriefView";
 import { fmtDate, fmtDateTime, humanize } from "@/lib/format";
+import { DiligenceReportView, WorkspaceLink } from "@/components/diligence/ReportView";
+import { loadDiligenceIndex } from "@/components/entity/data";
+import { diligenceHref, workspaceMap } from "@/components/diligence/logic";
+import type { DiligenceReportBody } from "@/lib/types-diligence";
 
 export async function generateMetadata({ params }: PageProps<"/reports/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -17,7 +21,13 @@ export async function generateMetadata({ params }: PageProps<"/reports/[id]">): 
   return { title: r ? r.title : "Report" };
 }
 
-const KIND: Record<string, string> = { brief: "Anti Brief", memo: "Anti Memo", morning_brief: "Morning Brief", meeting_brief: "Meeting Brief" };
+const KIND: Record<string, string> = {
+  brief: "Anti Brief",
+  memo: "Anti Memo",
+  morning_brief: "Morning Brief",
+  meeting_brief: "Meeting Brief",
+  diligence: "Technical Diligence",
+};
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
@@ -37,10 +47,20 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         ? `/founders/${report.entity_slug}`
         : null;
   const meeting = isMeetingBrief(report.kind, body);
+  const diligence = report.kind === "diligence" && typeof body.company === "object" && body.company !== null && Array.isArray(body.claims);
+  const dBody = diligence ? (body as unknown as DiligenceReportBody) : null;
+  // Anti Brief about a company: "Open diligence →" when that company has a workspace (one index fetch).
+  const workspaceSlug =
+    !diligence && report.kind === "brief" && report.entity_type === "company" && report.entity_slug
+      ? workspaceMap(await loadDiligenceIndex()).has(report.entity_slug)
+        ? report.entity_slug
+        : null
+      : null;
   const subject =
+    dBody?.company.name ??
     str(body.company) ?? str(body.subject) ?? str(body.person) ?? str(body.name) ?? report.title.replace(/^(Anti (Brief|Memo)|Meeting Brief)\s+—\s+/, "");
   const oneLiner = str(body.one_liner);
-  const structured = meeting || isStructuredBody(body);
+  const structured = meeting || diligence || isStructuredBody(body);
   const contents = meeting ? meetingSections(body) : structured ? sectionsFor(report.kind, body) : [];
   const briefDate = meeting ? str(body.date) : null;
   const cited = meeting ? citedSourceIds(body).length : null;
@@ -56,7 +76,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span className="label text-accent">{kind}</span>
             <span aria-hidden className="h-px w-5 bg-ink-3" />
-            <span className="label">Anti Radar · Research brief</span>
+            <span className="label">{diligence ? "Anti Radar · Evidence assessment" : "Anti Radar · Research brief"}</span>
             {report.is_demo && <DemoBadge note="Report about a fictional demo entity" />}
           </div>
           <ReportActions id={report.id} filename={filename} />
@@ -74,6 +94,19 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         {meeting && (
           <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
             Meeting brief{briefDate ? ` · ${fmtDate(briefDate)}` : ""} · for a first conversation — not diligence
+          </p>
+        )}
+        {dBody && (
+          <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
+            Technical diligence · {fmtDate(dBody.date)} · method {dBody.method_version} · not an investment recommendation
+          </p>
+        )}
+        {workspaceSlug && (
+          <p className="mt-4">
+            <Link href={diligenceHref(workspaceSlug)} className="link font-mono text-[11px] uppercase tracking-[0.08em] text-ink">
+              Open diligence →
+            </Link>
+            <span className="ml-3 text-[12.5px] text-ink-3">claims, evidence and open questions for this company</span>
           </p>
         )}
         {oneLiner && <p className="mt-4 max-w-[60ch] font-serif text-[21px] italic leading-snug text-ink-2">{oneLiner}</p>}
@@ -113,6 +146,12 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           </div>
         </dl>
 
+        {dBody ? (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
+            <p className="max-w-[78ch] text-[12.5px] leading-relaxed text-ink-2">{dBody.disclaimer}</p>
+            <WorkspaceLink slug={dBody.company.slug} />
+          </div>
+        ) : (
         <p className="mt-5 max-w-[78ch] text-[12.5px] leading-relaxed text-ink-2">
           {report.generator === "template"
             ? "Produced by ANTI RADAR as a deterministic template from database facts — no language model was used (LLM disabled). "
@@ -121,11 +160,12 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           source, <span className="font-mono text-[10.5px]">◆ INFERENCE</span> derived from facts,{" "}
           <span className="font-mono text-[10.5px]">○ MODEL OPINION</span> generated judgement. Empty sections are left empty, not guessed.
         </p>
+        )}
       </header>
 
       <div className="mt-10 grid gap-x-12 gap-y-12 lg:grid-cols-[minmax(0,1fr)_260px] print:block">
         <div className="min-w-0">
-          {meeting ? <MeetingBriefView body={body} /> : <ReportBody kind={report.kind} body={body} markdown={report.markdown} />}
+          {dBody ? <DiligenceReportView body={dBody} /> : meeting ? <MeetingBriefView body={body} /> : <ReportBody kind={report.kind} body={body} markdown={report.markdown} />}
         </div>
         {structured && (
           <aside className="hidden lg:block print:hidden">

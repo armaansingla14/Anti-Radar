@@ -86,21 +86,48 @@ async function main() {
   fs.rmSync(RECORDING, { recursive: true, force: true });
   fs.mkdirSync(RECORDING, { recursive: true });
 
-  const [companies, people, formation, reports, archive, meet] = await Promise.all([
+  const [companies, people, formation, reports, archive, meet, diligence, failures] = await Promise.all([
     all("/companies"),
     all("/founders"),
     api("/formation"),
     api("/reports?limit=200"),
     api("/brief/archive").catch(() => []),
     api("/meet?week=current"),
+    api("/diligence").catch(() => ({ workspaces: [], candidates: [] })),
+    api("/agents/failures").catch(() => []),
   ]);
+  // Technical diligence: every workspace, every claim page, and the company-page tabs — only for companies with a run
+  // (the default company page, with its diligence status strip, is rendered for every company below).
+  const workspaces = (diligence.workspaces ?? []).filter((w) => w.run);
+  const claimCounts = await Promise.all(
+    workspaces.map((w) => api(`/diligence/${encodeURIComponent(w.company.slug)}`).then((d) => (d.claims ?? []).map((c) => c.ordinal)).catch(() => [])),
+  );
+  const COMPANY_TABS = ["why-now", "diligence", "relationships", "reports"];
+  const diligencePages = workspaces.flatMap((w, i) => [
+    `/diligence/${w.company.slug}`,
+    ...claimCounts[i].map((n) => `/diligence/${w.company.slug}/claims/${n}`),
+    ...COMPANY_TABS.map((t) => `/companies/${w.company.slug}?tab=${t}`),
+  ]);
+  // Agent evaluation control plane: overview, ledger (+ its filter links), every failure, regression cases.
+  const failureList = Array.isArray(failures) ? failures : [];
+  const uniq = (xs) => [...new Set(xs)].filter(Boolean);
+  const agentPages = [
+    "/agents", "/agents/failures", "/agents/cases",
+    ...["OPEN", "CONFIRMED", "FIXED", "DISMISSED"].map((s) => `/agents/failures?status=${s}`),
+    ...uniq(failureList.map((f) => f.category)).map((c) => `/agents/failures?category=${encodeURIComponent(c)}`),
+    ...uniq(failureList.map((f) => f.agent)).map((a) => `/agents/failures?agent=${encodeURIComponent(a)}`),
+    ...failureList.map((f) => `/agents/failures/${String(f.number).padStart(4, "0")}`),
+  ];
   const candidates = ["high", "emerging", "early"].flatMap((t) => formation[t] ?? []);
   console.log(`  ${companies.length} companies, ${people.length} people, ${candidates.length} formation candidates, ${reports.length} reports`);
+  console.log(`  ${workspaces.length} diligence workspaces (${diligencePages.length} pages), ${failureList.length} agent failures`);
 
   const pages = [
     "/", "/?new=today", "/?new=week", "/formation", "/meet", "/meet?week=current", "/founders", "/companies", "/thesis",
     "/daily", "/brief", "/brief/today", "/status", "/watchlist", "/retrospective", "/search", "/unlock", "/demo",
-    "/changes",
+    "/changes", "/diligence",
+    ...diligencePages,
+    ...agentPages,
     ...["high", "emerging", "early"].map((t) => `/formation?tier=${t}`),
     ...THEMES.map((t) => `/formation?theme=${t}`),
     ...COMPANY_SORTS.map((s) => `/companies?sort=${s}`),
@@ -176,7 +203,10 @@ async function main() {
     source_commit: commit,
     note: "Backend API responses for every page of the public site, recorded from the verified real-data snapshot " +
       "(backend/radar/demo/snapshot). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
-    counts: { companies: companies.length, people: people.length, formation_candidates: candidates.length, reports: reports.length, responses: files },
+    counts: {
+      companies: companies.length, people: people.length, formation_candidates: candidates.length, reports: reports.length,
+      diligence_workspaces: workspaces.length, agent_failures: failureList.length, responses: files,
+    },
   };
   fs.writeFileSync(path.join(OUT, "meta.json"), JSON.stringify(meta, null, 2) + "\n");
 

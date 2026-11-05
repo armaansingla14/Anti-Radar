@@ -7,6 +7,8 @@ import { composeHomeFallback, homeStatusLine, parseWindow } from "@/components/f
 import { longDate } from "@/components/feed/prose";
 import { HomeSince } from "@/components/changes/HomeSince";
 import { ApiError, getChanges, getFormation, getHome, getMeet, getRadar } from "@/lib/api";
+import { loadDiligenceIndex } from "@/components/entity/data";
+import { workspaceMap } from "@/components/diligence/logic";
 import type { HomeFeed, HomeWindow } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Radar" };
@@ -30,8 +32,10 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const w = parseWindow(sp.new);
   // Since-last-snapshot strip: optional context, never fails the page (absent on single-snapshot data).
   const changesP = getChanges().catch(() => null);
+  const diligenceP = loadDiligenceIndex(); // "Open diligence" links: one fetch for every row
   const { home, composed } = await loadHome(w);
-  const changes = await changesP;
+  const [changes, diligenceIndex] = await Promise.all([changesP, diligenceP]);
+  const diligence = new Set(workspaceMap(diligenceIndex).keys());
   const s = home.summary;
   const now = displayNow();
   const status = homeStatusLine(s, now);
@@ -95,7 +99,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
           href={topRanked ? "/companies" : "/companies?sort=delta"}
           hrefLabel="All companies"
         >
-          <CompanyRows cards={home.companies} note={home.companies_note} />
+          <CompanyRows cards={home.companies} note={home.companies_note} diligence={diligence} />
         </HomeSection>
         <HomeSection id="formations" title="Possible formations" count={s.possible_formations} href="/formation" hrefLabel="Formation radar">
           <FormationRows cards={home.formations} stacked />

@@ -47,11 +47,19 @@ export function GeneratorLabel({
 }) {
   const g = (generator ?? "template").toLowerCase();
   const text =
-    g === "llm" ? `LLM · ${model ?? "model unknown"}` : g === "cached" ? `LLM (cached)${model ? ` · ${model}` : ""}` : "Template";
+    g === "llm"
+      ? `LLM · ${model ?? "model unknown"}`
+      : g === "cached"
+        ? `LLM (cached)${model ? ` · ${model}` : ""}`
+        : g === "rules"
+          ? "Rules"
+          : "Template";
   const title =
     g === "template"
       ? "Deterministic template built from database facts — no language model was used (LLM disabled on this instance)"
-      : g === "cached"
+      : g === "rules"
+        ? "Deterministic, documented rules over collected evidence — no language model wrote this"
+        : g === "cached"
         ? "Language-model output served from cache"
         : "Written by a language model; verify claims against the cited sources";
   return (
@@ -63,7 +71,7 @@ export function GeneratorLabel({
       title={title}
     >
       <span aria-hidden className="text-ink-3">
-        {g === "template" ? "▤" : "◇"}
+        {g === "template" || g === "rules" ? "▤" : "◇"}
       </span>
       {text}
     </span>

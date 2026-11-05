@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
-import { getCompany, getFormation, getFounder, getGraph, getReport, getStatus, orNull } from "@/lib/api";
+import { getCompany, getDiligence, getDiligenceIndex, getDiligenceStatus, getFormation, getFounder, getGraph, getReport, getStatus, orNull } from "@/lib/api";
+import type { DiligenceIndex, DiligenceStatus } from "@/lib/types-diligence";
 import type { FormationFeed, GraphOut, SystemStatus } from "@/lib/types";
 
 /** Request-scoped, deduplicated loaders (metadata + page share one fetch). */
@@ -46,3 +47,27 @@ export function latestBriefId(reports: { id: string; kind: string; created_at: s
   const briefs = (reports ?? []).filter((r) => r.kind === "brief").sort((a, b) => b.created_at.localeCompare(a.created_at));
   return briefs[0]?.id ?? null;
 }
+
+/** Diligence workspace for a company (null when the company is unknown). */
+export const loadDiligence = cache((slug: string) => orNull(getDiligence(slug)));
+
+/**
+ * Diligence index (workspaces + candidates) — optional context for "Open diligence" links: fetched once per
+ * request, never fails the page (null on an older backend or snapshot without it).
+ */
+export const loadDiligenceIndex = cache(async (): Promise<DiligenceIndex | null> => {
+  try {
+    return await getDiligenceIndex();
+  } catch {
+    return null;
+  }
+});
+
+/** Diligence status for one company — optional context (null when unavailable). */
+export const loadDiligenceStatus = cache(async (slug: string): Promise<DiligenceStatus | null> => {
+  try {
+    return await getDiligenceStatus(slug);
+  } catch {
+    return null;
+  }
+});

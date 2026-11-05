@@ -37,7 +37,7 @@ export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, sco
   const d30 = score?.delta_30d ?? null;
   if (!showScore) {
     return (
-      <header className="grid grid-cols-12 gap-x-10 gap-y-6 pb-7">
+      <header className="grid grid-cols-12 gap-y-6 pb-7 lg:gap-x-10">
         <div className={clsx("col-span-12 min-w-0", aside ? "lg:col-span-8" : "lg:col-span-10")}>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">{eyebrow}</div>
           <h1 className="mt-4 font-serif text-[56px] leading-[0.98] tracking-[-0.02em] text-ink max-md:text-[42px]">{name}</h1>
@@ -51,7 +51,7 @@ export function EntityHeader({ eyebrow, name, lede, meta, score, scoreValue, sco
     );
   }
   return (
-    <header className="grid grid-cols-12 gap-x-10 gap-y-8 pb-7">
+    <header className="grid grid-cols-12 gap-y-8 pb-7 lg:gap-x-10">
       <div className="col-span-12 min-w-0 lg:col-span-8">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">{eyebrow}</div>
         <h1 className="mt-4 font-serif text-[60px] leading-[0.98] tracking-[-0.02em] text-ink max-md:text-[44px]">{name}</h1>

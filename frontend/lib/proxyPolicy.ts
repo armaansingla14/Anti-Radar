@@ -24,12 +24,15 @@ export const PROXY_READ_SECTIONS: ReadonlySet<string> = new Set([
 
 /** Sections the browser writes to (all admin-gated on the backend). */
 export const PROXY_WRITE_SECTIONS: ReadonlySet<string> = new Set([
+  "agents", // agents/failures/{n}/review (failure review)
+  "diligence", // diligence/{company}/run
   "feedback",
   "investigate",
   "memo",
   "ingest",
   "meet",
   "meeting-brief",
+  "reviews", // human review decisions on diligence claims / underwriting / reports
   "watchlist",
 ]);
 

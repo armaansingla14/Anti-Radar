@@ -8,7 +8,11 @@ import { CollisionStrip } from "@/components/CollisionStrip";
 import { FounderCard } from "@/components/FounderCard";
 import { SignalTimeline } from "@/components/SignalTimeline";
 import { ThesisTag } from "@/components/ThesisTag";
-import { latestBriefId, loadCompany, loadFormationFeed, loadGraph, loadStatus } from "@/components/entity/data";
+import { latestBriefId, loadCompany, loadDiligence, loadDiligenceStatus, loadFormationFeed, loadGraph, loadStatus } from "@/components/entity/data";
+import { CompanyTabs, DiligenceStrip, DiligenceTab } from "@/components/diligence/CompanyDiligence";
+import { canWrite, parseTab, TAB_SECTIONS } from "@/components/diligence/logic";
+import { dataSource } from "@/lib/dataSource";
+import { getSession } from "@/lib/session";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { EntityGraph } from "@/components/entity/EntityGraph";
 import { EntityHeader } from "@/components/entity/EntityHeader";
@@ -53,7 +57,16 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
 
   const c = detail.summary;
   const score = detail.anti_score;
-  const [graph, status, formationFeed] = await Promise.all([loadGraph(c.id), loadStatus(), loadFormationFeed()]);
+  const tab = parseTab(sp.tab);
+  const [graph, status, formationFeed, dStatus, session, dWorkspace] = await Promise.all([
+    loadGraph(c.id),
+    loadStatus(),
+    loadFormationFeed(),
+    loadDiligenceStatus(c.slug),
+    getSession(),
+    tab === "diligence" ? loadDiligence(c.slug).catch(() => null) : Promise.resolve(null),
+  ]);
+  const writable = canWrite(session, dataSource() === "snapshot");
   const llmEnabled = typeof status?.llm?.enabled === "boolean" ? status.llm.enabled : null;
   const xMode = xModeFromStatus(status?.providers.find((p) => p.provider === "x"));
   const jobsProvider = status?.providers.find((p) => p.provider === "jobs");
@@ -86,11 +99,15 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
 
   // Numbered sections, in reading order. The table of contents is built from the same list.
   const hasGraph = Boolean(graph && graph.nodes.length > 1);
-  const numbers = sectionNumbers([
+  // OVERVIEW numbers every section; the other tabs number the subset they show.
+  const order = [
     "why-now", "what-changed", "signals", "anti-score", "attention-gap", "timeline", "facts",
     Boolean(score?.collision) && "collision", "momentum", "team", hasGraph && "team-graph", "repositories", "research", "hiring",
     "why-anti", "risks", "reports", "duplicates", "sources",
-  ]);
+  ];
+  const numbers = sectionNumbers(
+    tab === "overview" ? order : tab === "diligence" ? [] : order.filter((id) => typeof id === "string" && TAB_SECTIONS[tab].includes(id)),
+  );
   const titles = new Map<string, string>();
   const sec = (id: string, title: string, children: ReactNode, right?: ReactNode, className?: string) => {
     titles.set(id, title);
@@ -285,15 +302,42 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
         />
       </div>
 
-      <Contents items={[...numbers.keys()].filter((id) => titles.has(id)).map((id) => ({ id, title: titles.get(id)! }))} />
+      <DiligenceStrip status={c.is_demo ? null : dStatus} slug={c.slug} writable={writable} />
+      <CompanyTabs slug={c.slug} active={tab} reports={detail.reports.length} />
 
+      {numbers.size > 0 && <Contents items={[...numbers.keys()].filter((id) => titles.has(id)).map((id) => ({ id, title: titles.get(id)! }))} />}
+
+      {tab === "why-now" && (
+        <div className="mt-12 space-y-16">
+          {whyNow}
+          {whatChanged}
+          {signals}
+          {timeline}
+        </div>
+      )}
+      {tab === "diligence" && (
+        <div className="mt-10">
+          <DiligenceTab ws={dWorkspace} slug={c.slug} />
+        </div>
+      )}
+      {tab === "relationships" && (
+        <div className="mt-12 space-y-16">
+          {founders}
+          {teamGraph}
+          {repos}
+          {research}
+        </div>
+      )}
+      {tab === "reports" && <div className="mt-12 space-y-16">{reports}</div>}
+
+      {tab === "overview" && (
       <div className="mt-12 space-y-16">
         {whyNow}
         {whatChanged}
         {signals}
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-y border-rule py-2.5" aria-label="Data age">
           <span className="label shrink-0 text-ink">Data age</span>
-          <DataAge age={detail.data_age} now={now} />
+          <DataAge age={detail.data_age} now={now} className="min-w-0" />
         </div>
         <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
           {scoreSec}
@@ -324,6 +368,7 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
         </div>
         {sources}
       </div>
+      )}
     </article>
   );
 }

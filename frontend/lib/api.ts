@@ -44,6 +44,16 @@ import type {
   WatchRequest,
 } from "./types";
 import type { ChangesReport, SnapshotPoints } from "./types-changes.ts";
+import type {
+  DiligenceClaim,
+  DiligenceIndex,
+  DiligenceStatus,
+  DiligenceWorkspace,
+  Review,
+  ReviewRequest,
+  ReviewTargetType,
+} from "./types-diligence.ts";
+import type { AgentsOverview, CaseOut, EvaluationOut, FailureOut, FailureReviewRequest } from "./types-agents.ts";
 import { legacyFeedbackLabel } from "./labels.ts";
 import { serverFetch } from "./dataSource.ts";
 import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
@@ -197,6 +207,29 @@ export const reportMarkdownUrl = (id: string) => `/api/proxy/reports/${enc(id)}/
 export const postMemo = (req: MemoRequest) => post<ReportOut>("/memo", req);
 /** Light report listing (no body/markdown/sources). */
 export const getReports = (params?: { entity_id?: string; kind?: string; limit?: number }) => get<ReportOut[]>("/reports", params);
+
+// ── Technical diligence ──────────────────────────────────────────────────────
+
+/** Workspaces (companies with a diligence run) and candidates ready for one. */
+export const getDiligenceIndex = () => get<DiligenceIndex>("/diligence");
+export const getDiligence = (company: string) => get<DiligenceWorkspace>(`/diligence/${enc(company)}`);
+export const getDiligenceStatus = (company: string) => get<DiligenceStatus>(`/diligence/${enc(company)}/status`);
+export const getDiligenceClaim = (company: string, ordinal: number | string) =>
+  get<DiligenceClaim>(`/diligence/${enc(company)}/claims/${enc(String(ordinal))}`);
+/** Live collection + analysis (admin-gated; refused on the verified snapshot). */
+export const postDiligenceRun = (company: string) => post<DiligenceStatus>(`/diligence/${enc(company)}/run`, {});
+/** Record a human review decision (admin-gated; refused on the verified snapshot). */
+export const postReview = (req: ReviewRequest) => post<Review>("/reviews", req);
+export const getReviews = (params?: { target_type?: ReviewTargetType; target_id?: string; limit?: number }) => get<Review[]>("/reviews", params);
+
+// ── Agent evaluation control plane ───────────────────────────────────────────
+
+export const getAgents = () => get<AgentsOverview>("/agents");
+export const getAgentEvaluations = (params?: { agent?: string; limit?: number }) => get<EvaluationOut[]>("/agents/evaluations", params);
+export const getAgentFailures = (params?: { status?: string; category?: string; agent?: string }) => get<FailureOut[]>("/agents/failures", params);
+export const getAgentFailure = (n: number | string) => get<FailureOut>(`/agents/failures/${enc(String(n))}`);
+export const postFailureReview = (n: number, req: FailureReviewRequest) => post<FailureOut>(`/agents/failures/${n}/review`, req);
+export const getAgentCases = () => get<CaseOut[]>("/agents/cases");
 
 // ── Who should we meet this week ─────────────────────────────────────────────
 

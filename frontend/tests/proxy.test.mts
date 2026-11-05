@@ -9,8 +9,8 @@ import { PROXY_ALLOWED_SECTIONS, proxyMethodAllowed, proxyPathAllowed } from "..
 describe("proxy allow-list", () => {
   it("covers exactly the sections the browser needs", () => {
     assert.deepEqual([...PROXY_ALLOWED_SECTIONS].sort(), [
-      "brief", "companies", "feedback", "formation", "founders", "health", "home", "ingest", "investigate",
-      "meet", "meeting-brief", "memo", "reports", "search", "watchlist",
+      "agents", "brief", "companies", "diligence", "feedback", "formation", "founders", "health", "home", "ingest",
+      "investigate", "meet", "meeting-brief", "memo", "reports", "reviews", "search", "watchlist",
     ]);
   });
 
@@ -38,5 +38,14 @@ describe("proxy allow-list", () => {
     assert.equal(proxyMethodAllowed(["ingest", "github"], "GET"), false);
     assert.equal(proxyMethodAllowed(["companies"], "PUT"), false);
     assert.equal(proxyMethodAllowed(["reports", "abc", "markdown"], "GET"), true);
+  });
+
+  it("diligence, reviews and agents are write-only on the proxy (pages read them server-side)", () => {
+    assert.equal(proxyMethodAllowed(["reviews"], "POST"), true);
+    assert.equal(proxyMethodAllowed(["diligence", "unsloth-ai", "run"], "POST"), true);
+    assert.equal(proxyMethodAllowed(["agents", "failures", "12", "review"], "POST"), true);
+    assert.equal(proxyMethodAllowed(["reviews"], "GET"), false);
+    assert.equal(proxyMethodAllowed(["diligence", "unsloth-ai"], "GET"), false);
+    assert.equal(proxyMethodAllowed(["agents"], "GET"), false);
   });
 });

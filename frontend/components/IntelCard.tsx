@@ -41,6 +41,8 @@ export interface IntelCardProps {
   onDismiss?: (card: IntelCardData) => void;
   /** Max evidence bullets under "Why it surfaced". */
   evidenceLimit?: number;
+  /** Diligence workspace link when one exists for this company (resolved once per page by the caller). */
+  diligenceHref?: string | null;
   className?: string;
 }
 
@@ -84,6 +86,7 @@ export function IntelCard({
   onFeedback,
   onDismiss,
   evidenceLimit = 4,
+  diligenceHref,
   className,
 }: IntelCardProps) {
   const [whyOpen, setWhyOpen] = useState(false);
@@ -211,6 +214,11 @@ export function IntelCard({
         <Link href={target} className={clsx(action, "text-ink")} data-action="open">
           Open report →
         </Link>
+        {diligenceHref && (
+          <Link href={diligenceHref} className={clsx(action, "text-ink")} data-action="diligence">
+            Open diligence →
+          </Link>
+        )}
         {card.entity_type !== "paper" && (
           <WatchButton
             entityType={card.entity_type}

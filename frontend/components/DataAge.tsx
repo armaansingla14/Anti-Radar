@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { Fragment } from "react";
 import { ageShort, dataAgeParts } from "@/lib/labels";
 import type { DataAge as DataAgeData } from "@/lib/types";
 
@@ -27,10 +28,13 @@ export function DataAge({ age, now, entityType = "company", className }: DataAge
   return (
     <p className={clsx(base, className)} aria-label="Data age by source" suppressHydrationWarning>
       {parts.map((p, i) => (
-        <span key={p.label} className="whitespace-nowrap">
+        <Fragment key={p.label}>
+          {/* The separator sits outside the no-wrap entry so a narrow screen can break between entries. */}
           {i > 0 && <span aria-hidden> · </span>}
-          <span className={p.available ? "text-ink-2" : undefined}>{p.label}</span> {p.value}
-        </span>
+          <span className="whitespace-nowrap">
+            <span className={p.available ? "text-ink-2" : undefined}>{p.label}</span> {p.value}
+          </span>
+        </Fragment>
       ))}
     </p>
   );

@@ -249,7 +249,16 @@ export function PeopleRows({ people }: { people: MeetCard[] }) {
 
 // ── Companies accelerating ───────────────────────────────────────────────────
 
-export function CompanyRows({ cards, note }: { cards: IntelCard[]; note?: string | null }) {
+export function CompanyRows({
+  cards,
+  note,
+  diligence,
+}: {
+  cards: IntelCard[];
+  note?: string | null;
+  /** Slugs with a diligence workspace (one index fetch per page): those rows get an "Open diligence" link. */
+  diligence?: ReadonlySet<string>;
+}) {
   if (cards.length === 0) return <Empty>{note || "No company has a scored, explainable signal in this window."}</Empty>;
   return (
     <>
@@ -279,6 +288,15 @@ export function CompanyRows({ cards, note }: { cards: IntelCard[]; note?: string
                   </Link>
                   <span className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-3">{c.kind_label}</span>
                   {c.is_demo && <DemoBadge note={c.data_note} />}
+                  {c.entity_type === "company" && diligence?.has(c.slug) && (
+                    <Link
+                      href={`/diligence/${encodeURIComponent(c.slug)}`}
+                      className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-accent hover:underline"
+                      title="A technical diligence workspace exists for this company"
+                    >
+                      Open diligence →
+                    </Link>
+                  )}
                 </p>
                 {why && <p className="mt-0.5 line-clamp-1 text-[12.5px] leading-snug text-ink-2">{why}</p>}
               </div>

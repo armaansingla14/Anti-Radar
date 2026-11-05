@@ -118,11 +118,23 @@ export const MEMO_SECTIONS: ReportSectionDef[] = [
   { key: "questions_to_answer", title: "Questions to answer", numbered: true },
 ];
 
+/** Technical diligence report (kind `diligence`): rendered by components/diligence/ReportView. */
+export const DILIGENCE_SECTIONS: ReportSectionDef[] = [
+  { key: "executive_summary", title: "Executive summary" },
+  { key: "claims", title: "Claim ledger", numbered: true },
+  { key: "underwriting", title: "Technical underwriting" },
+  { key: "contradictory_evidence", title: "Evidence conflicts" },
+  { key: "key_risks", title: "Key risks" },
+  { key: "unknowns", title: "Unknowns" },
+  { key: "questions_for_founders", title: "Questions for the founders", numbered: true },
+];
+
 /** Keys that are header metadata rather than sections. */
 const META_KEYS = new Set(["date", "subject", "company", "person", "one_liner", "entity", "title", "generator", "model"]);
 
 /** Ordered sections present in a body (known ones first, then any extras). */
 export function sectionsFor(kind: string, body: JsonObject): ReportSectionDef[] {
+  if (kind === "diligence") return DILIGENCE_SECTIONS.filter((s) => s.key in body);
   const base = kind === "memo" ? MEMO_SECTIONS : BRIEF_SECTIONS;
   const known = new Set(base.map((s) => s.key));
   const extra = Object.keys(body)
