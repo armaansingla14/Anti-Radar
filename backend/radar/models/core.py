@@ -690,3 +690,215 @@ class MeetingRecommendation(Base):
     formation_candidate_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Snapshot history (V3: since last snapshot) ───────────────────────────────
+
+
+class FormationHistory(Base):
+    """What a formation candidate looked like on a scored day.
+
+    ``FormationCandidate`` keeps only the current state (rows that stop qualifying are deleted), so each
+    formation run also appends one row per qualifying candidate here. Comparing two days yields
+    NEW / STRENGTHENED / UNCHANGED / WEAKENED / DROPPED (``services.changes``)."""
+
+    __tablename__ = "formation_history"
+    __table_args__ = (
+        UniqueConstraint("anchor_id", "day", name="uq_formation_history_anchor_day"),
+        Index("ix_formation_history_day", "day"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    day: Mapped[date] = mapped_column(Date)
+    slug: Mapped[str] = mapped_column(String(220))
+    kind: Mapped[str] = mapped_column(String(10))
+    anchor_type: Mapped[str] = mapped_column(String(20))
+    anchor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    title: Mapped[str] = mapped_column(String(400))
+    theme: Mapped[str | None] = mapped_column(String(60))
+    score: Mapped[float] = mapped_column(Float)
+    tier: Mapped[str] = mapped_column(String(10))
+    label: Mapped[str] = mapped_column(String(40))
+    signal_families: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    independent_signals: Mapped[int] = mapped_column(Integer, default=0)
+    member_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list, server_default="{}")
+    components: Mapped[dict] = mapped_column(JSONType, default=dict)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Technical diligence (V3) ─────────────────────────────────────────────────
+
+
+class DiligenceRun(Base):
+    """One diligence pass over a company: what was collected (artifacts), what it claims (claims), and the
+    structured DiligenceReport (a ``ResearchReport`` of kind ``diligence``). Collection (network) and
+    analysis (deterministic, offline) are separate so a captured run replays without the network."""
+
+    __tablename__ = "diligence_runs"
+    __table_args__ = (Index("ix_diligence_runs_company_started", "company_id", "started_at"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | complete | error
+    mode: Mapped[str] = mapped_column(String(10), default="live")  # live | replay
+    method_version: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # when artifacts were fetched
+    sources_analyzed: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_coverage: Mapped[float | None] = mapped_column(Float)  # share of claims with independent evidence
+    summary: Mapped[dict] = mapped_column(JSONType, default=dict)  # counts by status / type / testability
+    report_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    error: Mapped[str | None] = mapped_column(Text)
+    trace: Mapped[list[dict]] = mapped_column(JSONType, default=list)  # every fetch / step, for audit
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class DiligenceArtifact(Base):
+    """A public artifact observed during diligence (page, README, manifest, release list, registry metadata,
+    third-party post…). Untrusted data: text is stored for evidence quotes and never executed."""
+
+    __tablename__ = "diligence_artifacts"
+    __table_args__ = (UniqueConstraint("run_id", "key", name="uq_diligence_artifact_key"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("diligence_runs.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(300))  # stable within a run, e.g. "readme:org/repo"
+    kind: Mapped[str] = mapped_column(String(30))
+    publisher: Mapped[str] = mapped_column(String(20))  # company | code | registry | third_party
+    url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(String(500))
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    text: Mapped[str] = mapped_column(Text, default="")
+    data: Mapped[dict] = mapped_column(JSONType, default=dict)
+    flags: Mapped[list[str]] = mapped_column(JSONType, default=list)  # prompt-injection / safety flags
+
+
+class DiligenceClaim(Base):
+    """A material claim a company makes about itself, with the evidence for and against it.
+
+    ``verification_status`` is decided by the deterministic rules in ``radar.diligence.rules`` from the
+    listed evidence; ``status_reason`` records which rule fired."""
+
+    __tablename__ = "diligence_claims"
+    __table_args__ = (Index("ix_diligence_claims_company", "company_id"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("diligence_runs.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    ordinal: Mapped[int] = mapped_column(Integer)
+    claim_text: Mapped[str] = mapped_column(Text)
+    claim_type: Mapped[str] = mapped_column(String(30))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # DiligenceArtifact
+    source_url: Mapped[str | None] = mapped_column(Text)
+    source_quote: Mapped[str] = mapped_column(Text, default="")
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    epistemic: Mapped[str] = mapped_column(String(20), default="COMPANY_CLAIM")
+    testability: Mapped[str] = mapped_column(String(20))  # HIGH | MEDIUM | LOW | NOT_TESTABLE
+    verification_status: Mapped[str] = mapped_column(String(30))
+    status_reason: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[str] = mapped_column(String(10))  # HIGH | MEDIUM | LOW
+    company_evidence: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    independent_evidence: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    contradictory_evidence: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    test_plan: Mapped[dict | None] = mapped_column(JSONType)
+    extracted_by: Mapped[str] = mapped_column(String(20), default="rules")  # rules | llm
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReviewDecision(Base):
+    """Human judgment recorded next to an agent assessment (claims, underwriting categories, failures)."""
+
+    __tablename__ = "review_decisions"
+    __table_args__ = (Index("ix_review_decisions_target", "target_type", "target_id"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    target_type: Mapped[str] = mapped_column(String(30))  # claim | underwriting | report | failure
+    target_id: Mapped[str] = mapped_column(String(120))
+    decision: Mapped[str] = mapped_column(String(30))  # ACCEPT | QUESTION | REJECT | NEEDS_VERIFICATION
+    note: Mapped[str] = mapped_column(Text, default="")
+    reviewer: Mapped[str] = mapped_column(String(120), default="analyst")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Agent evaluation (V3) ────────────────────────────────────────────────────
+
+
+class AgentRunEvaluation(Base):
+    """Automatic evaluation of one agent output (a ResearchReport): validity, citations, unsupported claims,
+    coverage, latency, cost. Metrics that cannot be computed stay NULL, never estimated."""
+
+    __tablename__ = "agent_run_evaluations"
+    __table_args__ = (
+        UniqueConstraint("report_id", "evaluator_version", name="uq_agent_eval_report_version"),
+        Index("ix_agent_eval_agent", "agent"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    report_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_reports.id", ondelete="CASCADE"))
+    agent: Mapped[str] = mapped_column(String(40))
+    model: Mapped[str | None] = mapped_column(String(80))
+    generator: Mapped[str | None] = mapped_column(String(20))
+    evaluator_version: Mapped[str] = mapped_column(String(20))
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    task_success: Mapped[bool] = mapped_column(Boolean, default=True)
+    structured_output_valid: Mapped[bool] = mapped_column(Boolean, default=True)
+    claims_total: Mapped[int] = mapped_column(Integer, default=0)
+    fact_claims: Mapped[int] = mapped_column(Integer, default=0)
+    citations_total: Mapped[int] = mapped_column(Integer, default=0)
+    invalid_citations: Mapped[int] = mapped_column(Integer, default=0)
+    unsupported_claims: Mapped[int] = mapped_column(Integer, default=0)
+    unsupported_claim_rate: Mapped[float | None] = mapped_column(Float)
+    citation_precision: Mapped[float | None] = mapped_column(Float)
+    source_coverage: Mapped[float | None] = mapped_column(Float)
+    sources_registered: Mapped[int] = mapped_column(Integer, default=0)
+    sources_used: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[float | None] = mapped_column(Float)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[bool] = mapped_column(Boolean, default=False)
+    flags: Mapped[list[dict]] = mapped_column(JSONType, default=list)  # [{rule, category, severity, claim, ...}]
+    review_status: Mapped[str] = mapped_column(String(20), default="AUTOMATIC")  # AUTOMATIC | HUMAN_REVIEWED
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class AgentFailure(Base):
+    """A reviewed agent / ranking failure with its taxonomy category, resolution and regression case."""
+
+    __tablename__ = "agent_failures"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    number: Mapped[int] = mapped_column(Integer, unique=True)
+    agent: Mapped[str] = mapped_column(String(40), index=True)
+    report_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    entity_ref: Mapped[str | None] = mapped_column(String(220))
+    claim_text: Mapped[str] = mapped_column(Text)
+    evidence_summary: Mapped[str] = mapped_column(Text, default="")
+    category: Mapped[str] = mapped_column(String(40))
+    severity: Mapped[str] = mapped_column(String(10))  # HIGH | MEDIUM | LOW
+    resolution: Mapped[str] = mapped_column(Text, default="")
+    regression_case: Mapped[str | None] = mapped_column(String(80))
+    regression_test: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), default="OPEN")  # OPEN | CONFIRMED | FIXED | DISMISSED
+    origin: Mapped[str] = mapped_column(String(20), default="evaluator")  # evaluator | documented | reviewer
+    source_ref: Mapped[str | None] = mapped_column(Text)  # where it was found (doc section, report url)
+    detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class EvalCaseResult(Base):
+    """One regression / comparison case run against one generator (template, or a configured model)."""
+
+    __tablename__ = "eval_case_results"
+    __table_args__ = (Index("ix_eval_case_results_case", "case_id", "run_at"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    batch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    case_id: Mapped[str] = mapped_column(String(80))
+    agent: Mapped[str] = mapped_column(String(40))
+    task: Mapped[str] = mapped_column(String(40))
+    provider: Mapped[str] = mapped_column(String(20))
+    model: Mapped[str] = mapped_column(String(80))
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    passed: Mapped[bool] = mapped_column(Boolean)
+    metrics: Mapped[dict] = mapped_column(JSONType, default=dict)
+    latency_ms: Mapped[float | None] = mapped_column(Float)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    error: Mapped[str | None] = mapped_column(Text)

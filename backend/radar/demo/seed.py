@@ -34,12 +34,26 @@ log = logging.getLogger("radar.demo")
 
 DEMO_DIR = Path(__file__).parent
 SNAPSHOT_DIR = DEMO_DIR / "snapshot"
+# Later verified captures (`radar demo capture --update`), replayed in date order on top of the base snapshot.
+SNAPSHOT_UPDATES_DIR = DEMO_DIR / "snapshot_updates"
 LLM_CACHE_FILE = DEMO_DIR / "llm_cache.jsonl"
 
 
 def snapshot_manifest(directory: Path = SNAPSHOT_DIR) -> dict[str, Any] | None:
     m = directory / "MANIFEST.json"
     return json.loads(m.read_text()) if m.exists() else None
+
+
+def snapshot_chain(base: Path = SNAPSHOT_DIR, updates: Path = SNAPSHOT_UPDATES_DIR) -> list[Path]:
+    """The base snapshot followed by every dated update, oldest first (only directories with a manifest)."""
+    chain = [base] if (base / "MANIFEST.json").exists() else []
+    if updates.exists():
+        chain += sorted(d for d in updates.iterdir() if d.is_dir() and (d / "MANIFEST.json").exists())
+    return chain
+
+
+def snapshot_chain_manifests() -> list[dict[str, Any]]:
+    return [m for d in snapshot_chain() if (m := snapshot_manifest(d))]
 
 
 def reset_database() -> None:

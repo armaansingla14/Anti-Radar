@@ -43,6 +43,12 @@ ingest_app = typer.Typer(no_args_is_help=True, help="Pull signals from a source.
 demo_app = typer.Typer(no_args_is_help=True, help="Demo data tooling.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(demo_app, name="demo")
+
+from radar.cli_diligence import diligence_app  # noqa: E402 — sub-apps live in their own modules
+from radar.cli_eval import eval_app  # noqa: E402
+
+app.add_typer(diligence_app, name="diligence")
+app.add_typer(eval_app, name="eval")
 console = Console()
 
 ACCENT = "#9b2a30"
@@ -415,15 +421,25 @@ def demo_capture(
     per_query: int = 3,
     papers_per_category: int = 30,
     websites: int = 20,
+    update: bool = typer.Option(False, "--update", help="capture a dated update on top of the snapshots already "
+                                "replayed into this database (written to demo/snapshot_updates/<today>)"),
 ) -> None:
-    """Capture a fresh real-data snapshot from live public APIs (GitHub, arXiv, HN, websites)."""
+    """Capture a fresh real-data snapshot from live public APIs (GitHub, arXiv, HN, websites).
+
+    Default: replace the base snapshot (demo/snapshot). With --update: run against a database that already
+    holds the replayed snapshot chain, so known entities are re-observed (fresh metrics) and new ones are
+    discovered; the batches are written as a dated update that `seed-demo` replays after the base.
+    """
     from radar import clock, ops
-    from radar.demo.seed import SNAPSHOT_DIR
+    from radar.demo.seed import SNAPSHOT_DIR, SNAPSHOT_UPDATES_DIR, snapshot_chain_manifests
     from radar.retro import RETRO_REPOS
 
-    tmp = SNAPSHOT_DIR.with_name("snapshot.tmp")
+    # Capturing is live observation: never reason "as of" a previously replayed snapshot day.
+    clock.set_as_of(None)
+    target = SNAPSHOT_UPDATES_DIR / clock.today().isoformat() if update else SNAPSHOT_DIR
+    tmp = target.with_name(target.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
-    _banner("Capturing VERIFIED real-data snapshot (V2 pipeline)")
+    _banner("Capturing VERIFIED real-data snapshot" + (f" update {target.name}" if update else " (base)"))
     from radar.thesis.loader import get_thesis
 
     thesis = get_thesis()
@@ -458,15 +474,18 @@ def demo_capture(
                 "files": len(files),
                 "note": ("Real public data collected by ANTI RADAR from official public APIs and websites. Every "
                          "record keeps its source URL and observation time; metrics are exactly as observed. No "
-                         "synthetic events. Derived scores are recomputed on load."),
+                         "synthetic events. Derived scores are recomputed on load."
+                         + (" Captured as an update on top of the earlier snapshots in the chain." if update else "")),
+                **({"update_of": [m.get("as_of") for m in snapshot_chain_manifests()]} if update else {}),
             },
             indent=2,
         )
     )
-    shutil.rmtree(SNAPSHOT_DIR, ignore_errors=True)
-    tmp.rename(SNAPSHOT_DIR)
-    size = sum(p.stat().st_size for p in SNAPSHOT_DIR.glob("*")) / 1e6
-    console.print(f"  Snapshot written to {SNAPSHOT_DIR} ({size:.1f} MB)")
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp.rename(target)
+    size = sum(p.stat().st_size for p in target.glob("*")) / 1e6
+    console.print(f"  Snapshot written to {target} ({size:.1f} MB)")
 
 
 @demo_app.command("warm")
