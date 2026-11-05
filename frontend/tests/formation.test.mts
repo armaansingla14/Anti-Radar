@@ -54,10 +54,10 @@ const member = (id: string, name: string, extra: Partial<FormationMember> = {}):
 });
 
 describe("navigation", () => {
-  it("puts FORMATION second and MEET third in the primary nav", () => {
+  it("orders the primary nav: discover, meet, diligence, agents, then indexes", () => {
     assert.deepEqual(
       NAV_PRIMARY.map((n) => n.label.toUpperCase()),
-      ["RADAR", "FORMATION", "MEET", "FOUNDERS", "COMPANIES", "THESIS", "WATCHLIST", "SEARCH"],
+      ["RADAR", "FORMATION", "MEET", "DILIGENCE", "AGENTS", "FOUNDERS", "COMPANIES", "THESIS", "WATCHLIST", "SEARCH"],
     );
   });
 

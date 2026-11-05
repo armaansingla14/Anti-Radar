@@ -11,6 +11,8 @@ export const NAV_PRIMARY: NavItem[] = [
   { href: "/", label: "Radar", jump: "r", description: "Today's ranked intelligence feed" },
   { href: "/formation", label: "Formation", jump: "o", description: "Technical teams before the company announcement" },
   { href: "/meet", label: "Meet", jump: "m", description: "Who to meet this week" },
+  { href: "/diligence", label: "Diligence", jump: "i", description: "What a company claims, the evidence, and what remains unknown" },
+  { href: "/agents", label: "Agents", jump: "a", description: "How reliable the research agents are: metrics, failures, regression cases" },
   { href: "/founders", label: "Founders", jump: "f", description: "Technical founders surfacing now" },
   { href: "/companies", label: "Companies", jump: "c", description: "Emerging companies and projects" },
   { href: "/thesis", label: "Thesis", jump: "t", description: "Momentum versus attention by thesis area" },
