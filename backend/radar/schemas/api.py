@@ -833,6 +833,8 @@ class FormationChangeBadge(BaseModel):
     base_day: date
     base_score: float | None = None  # None when NEW
     base_tier: FormationTier | None = None
+    current_score: float | None = None  # unrounded Formation Score on the current day
+    threshold: float = 5.0  # points; |change| at or above this is STRENGTHENED / WEAKENED
 
 
 class FormationCard(BaseModel):

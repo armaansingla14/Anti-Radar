@@ -104,6 +104,19 @@ def _field(row: Any, name: str) -> Any:
     return row.get(name) if isinstance(row, dict) else getattr(row, name, None)
 
 
+def _attach_anchor_slugs(session: Session, items: list[FormationChange]) -> None:
+    """Entity slugs for formation anchors, so links never depend on the candidate-slug format."""
+    from radar.models import Company, Person
+
+    for model, kind in ((Company, "company"), (Person, "person")):
+        ids = [uuid.UUID(x.anchor_id) for x in items if x.anchor_type == kind]
+        if ids:
+            slugs = dict(session.execute(select(model.id, model.slug).where(model.id.in_(ids))).all())
+            for x in items:
+                if x.anchor_type == kind:
+                    x.anchor_slug = slugs.get(uuid.UUID(x.anchor_id))
+
+
 def formation_status(base_row: Any, current_row: Any, threshold: float = MATERIAL) -> str | None:
     """NEW / DROPPED / STRENGTHENED / WEAKENED / UNCHANGED for one anchor's formation-history rows
     (objects or dicts with ``tier`` and ``score``); None when the anchor is on neither day.
@@ -365,7 +378,8 @@ def formation_changes(session: Session, anchor_ids: Iterable[uuid.UUID] | None =
             st = formation_status(base.get(aid), row)
             b = base.get(aid)
             out[aid] = FormationChangeBadge(status=st, base_day=pair[0], base_score=round(b.score, 1) if b else None,
-                                            base_tier=b.tier if b and b.tier in TIER_RANK else None)
+                                            base_tier=b.tier if b and b.tier in TIER_RANK else None,
+                                            current_score=round(row.score, 1), threshold=MATERIAL)
         return out
 
     allb = memo.memoized_view(session, ("formation_changes",), compute)
@@ -413,6 +427,7 @@ def _formation_section(session: Session, base_day: date, current_day: date, incl
             anchor_id=str(aid), anchor_type=row.anchor_type, slug=row.slug, title=row.title, kind=row.kind, status=st,
             base_score=round(b.score, 1) if b else None, current_score=round(c.score, 1) if c else None,
             base_tier=b.tier if b else None, current_tier=c.tier if c else None))
+    _attach_anchor_slugs(session, [x for v in by.values() for x in v])
     dropped = by["DROPPED"]
     if dropped:
         reasons = _drop_reasons(session, hc, [uuid.UUID(x.anchor_id) for x in dropped]) if explain else {}
@@ -423,7 +438,7 @@ def _formation_section(session: Session, base_day: date, current_day: date, incl
         return (x.current_score or 0) - (x.base_score or 0)
 
     return FormationChanges(
-        available=True, base_day=hb, current_day=hc,
+        available=True, base_day=hb, current_day=hc, threshold=MATERIAL,
         counts={k: len(by[k]) for k in ("NEW", "DROPPED", "STRENGTHENED", "WEAKENED", "UNCHANGED")},
         new=sorted(by["NEW"], key=lambda x: (-(x.current_score or 0), x.slug))[:ITEM_LIMIT],
         dropped=sorted(dropped, key=lambda x: (-(x.base_score or 0), x.slug))[:ITEM_LIMIT],

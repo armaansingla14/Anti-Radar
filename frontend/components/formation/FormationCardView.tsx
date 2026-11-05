@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import Link from "next/link";
-import { DemoBadge } from "@/components/Badges";
+import { ChangeBadge, DemoBadge } from "@/components/Badges";
+import { formationBadgeTitle } from "@/components/changes/logic";
 import { ScoreNumeral } from "@/components/ScoreNumeral";
 import { WatchButton } from "@/components/WatchButton";
 import { pad2 } from "@/lib/format";
@@ -105,6 +106,7 @@ export function FormationCardView({ card, rank, className }: { card: FormationCa
           {rank !== undefined && <span aria-hidden className="h-px w-5 bg-ink-3" />}
           <FormationLabel label={card.label} tier={card.tier} />
           <ThemeLine theme={card.theme_label} subtopic={card.subtopic_label} />
+          {card.change && <ChangeBadge status={card.change.status} title={formationBadgeTitle(card.change, card.score, card.tier)} />}
           {card.is_demo && <DemoBadge />}
         </div>
         <h3 id={`fc-${card.id}`} className="mt-2.5 font-serif text-[28px] leading-[1.1] tracking-[-0.01em] text-ink">

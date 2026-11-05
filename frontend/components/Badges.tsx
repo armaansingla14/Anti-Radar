@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { badgeMeta, type BadgeTone } from "@/components/changes/logic";
 import { epistemicDisplay } from "@/lib/labels";
 import type { Epistemic, Verification } from "@/lib/types";
 
@@ -75,6 +76,39 @@ export function NewBadge({ className }: NewBadgeProps) {
   return (
     <span className={clsx(chip, "border border-accent text-accent", className)} title="Entered the radar in the last 7 days">
       New
+    </span>
+  );
+}
+
+const CHANGE_TONE: Record<BadgeTone, string> = {
+  new: "border border-accent text-accent",
+  // Gains and losses carry the same visual weight: both are filled.
+  up: "border border-accent bg-accent text-paper",
+  down: "border border-ink bg-ink text-paper",
+  dropped: "border border-ink bg-ink text-paper",
+  flat: "border border-rule-strong text-ink-2",
+};
+
+export interface ChangeBadgeProps {
+  /** NEW / STRENGTHENED / WEAKENED / UNCHANGED / DROPPED (since the previous snapshot). */
+  status: string;
+  /** Tooltip, e.g. "since Oct 20: 40.4 → 45". */
+  title?: string;
+  className?: string;
+}
+
+/** Change since the previous snapshot. WEAKENED and DROPPED are as visible as STRENGTHENED. */
+export function ChangeBadge({ status, title, className }: ChangeBadgeProps) {
+  const meta = badgeMeta(status);
+  return (
+    <span
+      className={clsx(chip, CHANGE_TONE[meta.tone], className)}
+      title={title}
+      aria-label={title ? `${meta.text}, ${title}` : meta.text}
+      data-change={status.toUpperCase()}
+    >
+      <span aria-hidden>{meta.glyph}</span>
+      <span aria-hidden>{meta.text}</span>
     </span>
   );
 }

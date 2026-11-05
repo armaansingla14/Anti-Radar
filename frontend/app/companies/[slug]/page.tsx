@@ -17,6 +17,7 @@ import { HiringPanel, MatchCandidates, PaperList, ReportsList, RepoTable, RiskLi
 import { Momentum } from "@/components/entity/Momentum";
 import { evidenceIndex, NarrativeBlock } from "@/components/entity/NarrativeBlock";
 import { Delta } from "@/components/Delta";
+import { SinceScore } from "@/components/changes/SinceScore";
 import { Contents, Quiet, Section, stageText } from "@/components/entity/primitives";
 import { Sources } from "@/components/entity/Sources";
 import { DataAge } from "@/components/DataAge";
@@ -265,9 +266,10 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
                 </a>
                 <span className="flex items-baseline gap-3">
                   <span className="tnum font-serif text-[30px] leading-none text-ink">{score?.total ?? c.score ?? "—"}</span>
-                  <Delta value={score?.delta_7d ?? c.delta_7d} period="7d" size="xs" />
+                  {(score?.delta_7d ?? c.delta_7d) != null || !detail.since_snapshot ? <Delta value={score?.delta_7d ?? c.delta_7d} period="7d" size="xs" /> : null}
                 </span>
               </p>
+              <SinceScore since={detail.since_snapshot} />
               <p className="text-[12px] leading-snug text-ink-3">Secondary to the evidence — read why now first; the score is decomposed further down.</p>
             </div>
           }

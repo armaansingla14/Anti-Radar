@@ -100,6 +100,7 @@ class FormationChange(BaseModel):
     current_score: float | None = None
     base_tier: str | None = None
     current_tier: str | None = None
+    anchor_slug: str | None = None  # the company/person slug (links work even for DROPPED candidates)
     reason: str | None = None  # DROPPED: why it no longer qualifies
 
 
@@ -109,6 +110,7 @@ class FormationChanges(BaseModel):
     base_day: date | None = None  # formation-history days actually compared
     current_day: date | None = None
     counts: dict[str, int] = Field(default_factory=dict)  # NEW / DROPPED / STRENGTHENED / WEAKENED / UNCHANGED
+    threshold: float = 5.0  # Formation Score points for STRENGTHENED / WEAKENED within a tier
     new: list[FormationChange] = Field(default_factory=list)
     dropped: list[FormationChange] = Field(default_factory=list)
     strengthened: list[FormationChange] = Field(default_factory=list)

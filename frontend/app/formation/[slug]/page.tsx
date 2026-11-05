@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { cache } from "react";
-import { DemoBadge } from "@/components/Badges";
+import { ChangeBadge, DemoBadge } from "@/components/Badges";
+import { formationBadgeTitle } from "@/components/changes/logic";
 import { ScoreNumeral } from "@/components/ScoreNumeral";
 import { SignalTimeline } from "@/components/SignalTimeline";
 import { WatchButton } from "@/components/WatchButton";
@@ -135,6 +136,7 @@ export default async function FormationReportPage({ params }: PageProps<"/format
               <span aria-hidden className="h-px w-5 bg-ink-3" />
               <FormationLabel label={card.label} tier={card.tier} />
               <ThemeLine theme={card.theme_label} subtopic={card.subtopic_label} />
+              {card.change && <ChangeBadge status={card.change.status} title={formationBadgeTitle(card.change, card.score, card.tier)} />}
               {card.is_demo && <DemoBadge />}
             </div>
             <h1 className="mt-4 font-serif text-[56px] leading-[0.98] tracking-[-0.02em] text-ink max-md:text-[42px]">{card.title}</h1>

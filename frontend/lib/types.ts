@@ -1055,3 +1055,50 @@ export interface IngestOut {
   info: JsonObject;
   recomputed: boolean;
 }
+
+// ── Since last snapshot (backend services.changes) ──────────────────────────
+// Appended section: the optional fields below merge into the interfaces declared above
+// (TypeScript interface declaration merging), so older backends without them still type-check.
+
+/**
+ * Score change since the previous verified snapshot. `delta` is only set when `comparable`: both days
+ * have a live score of the same version and the entity was re-observed in between; otherwise `reason`
+ * says why. Percentiles are cohort-relative, so part of a delta can come from the cohort changing.
+ */
+export interface SinceSnapshot {
+  base_day: ISODate;
+  current_day: ISODate;
+  base_score: number | null;
+  current_score: number | null;
+  delta: number | null;
+  comparable: boolean;
+  reason: string | null;
+}
+
+/** How a formation candidate changed since the previous snapshot (formation history). DROPPED is report-only. */
+export interface FormationChangeBadge {
+  status: "NEW" | "STRENGTHENED" | "WEAKENED" | "UNCHANGED";
+  base_day: ISODate;
+  /** null when NEW. */
+  base_score: number | null;
+  base_tier: FormationTier | null;
+  /** Unrounded Formation Score on the current day. */
+  current_score?: number | null;
+  /** Formation Score points for STRENGTHENED / WEAKENED within a tier. */
+  threshold?: number;
+}
+
+export interface CompanyDetail {
+  /** Change since the previous snapshot; absent on a single-snapshot database. */
+  since_snapshot?: SinceSnapshot | null;
+}
+
+export interface PersonDetail {
+  /** Change since the previous snapshot; absent on a single-snapshot database. */
+  since_snapshot?: SinceSnapshot | null;
+}
+
+export interface FormationCard {
+  /** Since the previous snapshot; null when not available. */
+  change?: FormationChangeBadge | null;
+}

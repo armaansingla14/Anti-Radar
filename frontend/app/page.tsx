@@ -5,7 +5,8 @@ import { FilterStrip } from "@/components/feed/FilterStrip";
 import { CompanyRows, FormationRows, HomeCounts, HomeSection, PeopleRows, StrangeRows, WhatChanged } from "@/components/feed/Home";
 import { composeHomeFallback, homeStatusLine, parseWindow } from "@/components/feed/homeLogic";
 import { longDate } from "@/components/feed/prose";
-import { ApiError, getFormation, getHome, getMeet, getRadar } from "@/lib/api";
+import { HomeSince } from "@/components/changes/HomeSince";
+import { ApiError, getChanges, getFormation, getHome, getMeet, getRadar } from "@/lib/api";
 import type { HomeFeed, HomeWindow } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Radar" };
@@ -27,7 +28,10 @@ const WINDOW_NAME: Record<HomeWindow, string> = { today: "first seen today", wee
 export default async function HomePage({ searchParams }: PageProps<"/">) {
   const sp = await searchParams;
   const w = parseWindow(sp.new);
+  // Since-last-snapshot strip: optional context, never fails the page (absent on single-snapshot data).
+  const changesP = getChanges().catch(() => null);
   const { home, composed } = await loadHome(w);
+  const changes = await changesP;
   const s = home.summary;
   const now = displayNow();
   const status = homeStatusLine(s, now);
@@ -61,6 +65,8 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
       </header>
 
       <HomeCounts summary={s} />
+
+      <HomeSince report={changes} />
 
       <div className="mt-7">
         <FilterStrip window={w} right="J / K to move · O open" />

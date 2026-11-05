@@ -6,7 +6,8 @@ import { themeLabel } from "@/components/feed/prose";
 import { FormationCardView } from "@/components/formation/FormationCardView";
 import { FormationFilters } from "@/components/formation/FormationFilters";
 import { emptyTierLine, formationDeck, parseFormationQuery, tierLayout, TIERS } from "@/components/formation/logic";
-import { ApiError, getFormation } from "@/lib/api";
+import { droppedLine } from "@/components/changes/logic";
+import { ApiError, getChanges, getFormation } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import { getSession } from "@/lib/session";
 import type { FormationCard, FormationFeed } from "@/lib/types";
@@ -31,6 +32,7 @@ function AsOf({ feed }: { feed: FormationFeed }) {
 export default async function FormationPage({ searchParams }: PageProps<"/formation">) {
   const q = parseFormationQuery(await searchParams);
   const sessionP = getSession(); // in parallel with the feed
+  const changesP = getChanges().catch(() => null); // optional: "N candidates dropped since …"
 
   let feed: FormationFeed | null = null;
   let rejected: string | null = null;
@@ -44,6 +46,7 @@ export default async function FormationPage({ searchParams }: PageProps<"/format
   // The demo-data filter only means something when the backend holds the fictional dataset.
   const showDemoToggle = (await sessionP).demo_synthetic || q.demo === true;
   const filterName = [q.theme && `in ${themeLabel(q.theme)}`, q.demo === true && "including demo data"].filter(Boolean).join(", ");
+  const dropped = droppedLine(await changesP);
   const c = feed?.counts ?? null;
   const layout = c ? tierLayout(c, q.tier) : { sections: [], empty: [] };
   const tiers = TIERS.filter((t) => layout.sections.includes(t.key));
@@ -96,6 +99,16 @@ export default async function FormationPage({ searchParams }: PageProps<"/format
         unless a founder relation is on record. GitHub company and bio fields are self-reported.
         <span className="ml-2 font-mono text-[10.5px]">J / K move · O open · Y why · W watch</span>
       </p>
+
+      {dropped && (
+        <p data-formation-dropped className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-ink-2">
+          <span aria-hidden className="mr-1.5 text-ink">×</span>
+          {dropped} —{" "}
+          <Link href="/changes#formation" className="link text-ink">
+            why
+          </Link>
+        </p>
+      )}
 
       {rejected && (
         <div className="mt-10">

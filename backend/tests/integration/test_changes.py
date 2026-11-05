@@ -279,7 +279,7 @@ def test_api_changes_points_detail_and_formation_badge(world, client):
     feed = client.get("/api/formation").json()
     card = next(c for c in feed["emerging"] if c["slug"] == "team-alpha")
     assert card["change"] == {"status": "STRENGTHENED", "base_day": "2026-09-20", "base_score": 45.0,
-                              "base_tier": "early"}
+                              "base_tier": "early", "current_score": 52.0, "threshold": 5.0}
     fd = client.get("/api/formation/team-alpha").json()
     assert fd["card"]["change"]["status"] == "STRENGTHENED"
     pd = client.get("/api/founders/newp").json()

@@ -43,6 +43,7 @@ import type {
   WatchlistResponse,
   WatchRequest,
 } from "./types";
+import type { ChangesReport, SnapshotPoints } from "./types-changes.ts";
 import { legacyFeedbackLabel } from "./labels.ts";
 import { serverFetch } from "./dataSource.ts";
 import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
@@ -162,6 +163,14 @@ export const getThesis = () => get<ThesisMap>("/thesis");
 export const getStatus = () => get<SystemStatus>("/status");
 export const getRetrospective = () => get<Retrospective>("/retrospective");
 export const getGraph = (params?: QueryParams) => get<GraphOut>("/graph", params);
+
+// ── Since last snapshot ──────────────────────────────────────────────────────
+
+/** What changed between two verified snapshot days (default: the previous snapshot → the latest). */
+export const getChanges = (params?: { base?: string; current?: string; include_demo?: boolean }) =>
+  get<ChangesReport>("/changes", params);
+/** Snapshot days replayed into this database (for a base/current picker). */
+export const getChangePoints = () => get<SnapshotPoints>("/changes/points");
 
 // ── Formation Radar ──────────────────────────────────────────────────────────
 

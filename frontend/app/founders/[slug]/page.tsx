@@ -24,6 +24,7 @@ import { XIntelligence } from "@/components/entity/XIntelligence";
 import { RelationshipList } from "@/components/formation/RelationshipList";
 import { DataAge } from "@/components/DataAge";
 import { Delta } from "@/components/Delta";
+import { SinceScore } from "@/components/changes/SinceScore";
 import { SourcesButton } from "@/components/SourceDrawer";
 import { EntityActions } from "@/components/entity/EntityActions";
 import { EntityGraph } from "@/components/entity/EntityGraph";
@@ -278,9 +279,10 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
                 </a>
                 <span className="flex items-baseline gap-3">
                   <span className="tnum font-serif text-[30px] leading-none text-ink">{score?.total ?? p.founder_score ?? "—"}</span>
-                  <Delta value={score?.delta_7d ?? p.delta_7d} period="7d" size="xs" />
+                  {(score?.delta_7d ?? p.delta_7d) != null || !detail.since_snapshot ? <Delta value={score?.delta_7d ?? p.delta_7d} period="7d" size="xs" /> : null}
                 </span>
               </p>
+              <SinceScore since={detail.since_snapshot} />
               <p className="text-[12px] leading-snug text-ink-3">Secondary to the evidence — the score is decomposed further down.</p>
             </div>
           }

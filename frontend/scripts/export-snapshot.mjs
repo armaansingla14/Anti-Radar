@@ -100,6 +100,7 @@ async function main() {
   const pages = [
     "/", "/?new=today", "/?new=week", "/formation", "/meet", "/meet?week=current", "/founders", "/companies", "/thesis",
     "/daily", "/brief", "/brief/today", "/status", "/watchlist", "/retrospective", "/search", "/unlock", "/demo",
+    "/changes",
     ...["high", "emerging", "early"].map((t) => `/formation?tier=${t}`),
     ...THEMES.map((t) => `/formation?theme=${t}`),
     ...COMPANY_SORTS.map((s) => `/companies?sort=${s}`),
