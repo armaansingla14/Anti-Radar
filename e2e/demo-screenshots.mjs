@@ -1,4 +1,4 @@
-// Demo stills from a running stack: demo/screenshots/01-radar.png … 07-anti-brief.png
+// Demo stills from a running stack: demo/screenshots/01-radar.png … 11-agents.png
 // (1920×1080 viewport, deviceScaleFactor 2, clipped to the meaningful region of each page).
 //
 // Usage: BASE_URL=http://localhost:3000 node demo-screenshots.mjs [outDir]
@@ -109,7 +109,7 @@ if (companyUrl) {
 // 07 — the Anti Brief (existing report, else the one the tour generated on its first run).
 let briefUrl = urlOf("brief");
 if (!briefUrl || !briefUrl.startsWith("/reports/")) {
-  const reports = await (await fetch(`${base}/api/proxy/reports?kind=brief&limit=5`, { headers: { cookie: "radar_dataset=demo" } })).json().catch(() => []);
+  const reports = await (await fetch(`${base}/api/proxy/reports?kind=brief&limit=50`, { headers: { cookie: "radar_dataset=demo" } })).json().catch(() => []);
   briefUrl = Array.isArray(reports) && reports[0] ? `/reports/${reports[0].id}` : null;
 }
 if (briefUrl?.startsWith("/reports/")) {
@@ -119,6 +119,27 @@ if (briefUrl?.startsWith("/reports/")) {
 } else {
   console.log("skipped 07-anti-brief.png — no Anti Brief exists yet (run the tour once to generate one)");
 }
+
+// 08 — since last snapshot: what changed between the two verified snapshots.
+await go("/changes");
+await shot("08-since-snapshot", { top: 0, bottom: 1400 });
+
+// 09 — technical diligence: the most recent workspace (header, executive summary, start of the claim ledger).
+const dil = await (await fetch(`${base}/api/proxy/diligence`, { headers: { Accept: "application/json" } })).json().catch(() => null);
+const ws = dil?.workspaces?.[0]?.company?.slug;
+if (ws) {
+  await go(`/diligence/${ws}`);
+  await shot("09-diligence", { top: 130, bottom: 1500 });
+  // 10 — one claim: company vs independent evidence, the rule that set its status, and the generated test plan.
+  await go(`/diligence/${ws}/claims/1`);
+  await shot("10-claim", { top: 130, bottom: 1700 });
+} else {
+  console.log("skipped 09-diligence.png / 10-claim.png — no diligence workspace");
+}
+
+// 11 — agent evaluation: per-agent metrics, unmeasured values shown with their reasons.
+await go("/agents");
+await shot("11-agents", { top: 130, bottom: 1500 });
 
 console.log(JSON.stringify({ out, errors: errors.slice(0, 10) }));
 await browser.close();

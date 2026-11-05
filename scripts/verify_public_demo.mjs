@@ -94,6 +94,8 @@ async function checkHttp() {
   api.status === 200 && api.body.includes('"is_snapshot":true') ? ok("snapshot data served (/api/proxy/home)", `${api.ms} ms`) : fail("snapshot data served (/api/proxy/home)", `HTTP ${api.status}`);
   const video = await http(`${BASE}/demo/anti-radar-demo.mp4`, { method: "HEAD", accept: "video/mp4" });
   video.status === 200 && video.type.includes("video/mp4") ? ok("video file on the site", `${(video.length / 1e6).toFixed(1)} MB`) : fail("video file on the site", `HTTP ${video.status} ${video.type}`);
+  const dvideo = await http(`${BASE}/demo/anti-radar-diligence-demo.mp4`, { method: "HEAD", accept: "video/mp4" });
+  dvideo.status === 200 && dvideo.type.includes("video/mp4") ? ok("diligence video on the site", `${(dvideo.length / 1e6).toFixed(1)} MB`) : fail("diligence video on the site", `HTTP ${dvideo.status} ${dvideo.type}`);
   const og = await http(`${BASE}/opengraph-image.png`, { method: "HEAD", accept: "image/png" });
   og.status === 200 ? ok("social preview image") : fail("social preview image", `HTTP ${og.status}`);
   if (!flag("no-release")) {
@@ -166,7 +168,7 @@ async function checkBrowser() {
 
   await step("1-2. video plays from /video", async () => {
     await page.goto(`${BASE}/video`, { waitUntil: "domcontentloaded" });
-    const v = page.locator("video");
+    const v = page.locator('video[data-demo="video"]');
     await v.waitFor();
     const meta = await v.evaluate((el) => new Promise((resolve) => {
       if (el.readyState >= 1) return resolve({ duration: el.duration, src: el.currentSrc });
@@ -202,10 +204,14 @@ async function checkBrowser() {
   await step("10-11. Who should we meet → person", async () => {
     await page.goto(`${BASE}/meet`, { waitUntil: "domcontentloaded" });
     await visible("Who should we meet");
-    await visible("Kevin Zakka");
+    // The week's #1 comes from the deployed data (it changes with each snapshot).
+    const meet = await (await fetch(`${BASE}/api/proxy/meet?week=current`, { headers: { Accept: "application/json" } })).json();
+    const top = meet.people?.[0]?.person?.name;
+    if (!top) throw new Error("no people in this week's meet list");
+    await visible(top);
     await page.getByRole("link", { name: /Open profile/i }).first().click();
     await page.waitForURL(/\/founders\//);
-    await visible("Kevin Zakka");
+    await visible(top);
     await collectSources();
   });
   await step("meeting brief opens", async () => {
@@ -217,7 +223,7 @@ async function checkBrowser() {
   });
   await step("12. Attention gap", async () => {
     await page.goto(`${BASE}/companies/shengshu`, { waitUntil: "domcontentloaded" });
-    await visible("+71");
+    await visible("Attention gap");
     await visible("How it's measured");
     await visible("unavailable");
     await collectSources();
@@ -234,6 +240,18 @@ async function checkBrowser() {
     await page.waitForURL(`${BASE}/`);
     await visible("Possible formations");
   });
+  await step("V3. diligence: company tab → workspace → claim → agents", async () => {
+    await page.goto(`${BASE}/companies/unsloth-ai?tab=diligence`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("link", { name: /Open diligence/i }).first().click();
+    await page.waitForURL(/\/diligence\/unsloth-ai/);
+    for (const t of ["Unsloth AI", "Claim ledger", "Technical underwriting", "Questions for the founders", "Awaiting human review"]) await visible(t);
+    await page.goto(`${BASE}/diligence/unsloth-ai/claims/1`, { waitUntil: "domcontentloaded" });
+    await visible("Not executed");
+    await page.goto(`${BASE}/agents`, { waitUntil: "domcontentloaded" });
+    await visible("DILIGENCE ANALYST");
+    await page.goto(`${BASE}/agents/failures`, { waitUntil: "domcontentloaded" });
+    await visible("FAILURE 0001");
+  });
   await step("/demo guided tour starts", async () => {
     await page.goto(`${BASE}/demo`, { waitUntil: "domcontentloaded" });
     await page.locator('[data-demo="demo-start"][data-demo-state="ready"]').waitFor({ timeout: 30_000 });
@@ -244,7 +262,7 @@ async function checkBrowser() {
   // Phone width: no horizontal overflow on the main pages.
   const phone = await browser.newContext({ ignoreHTTPSErrors: INSECURE, viewport: { width: 390, height: 844 }, isMobile: true });
   const p2 = await phone.newPage();
-  for (const route of ["/", "/formation", "/meet", "/companies/shengshu", "/founders/kevin-zakka", "/video", "/demo"]) {
+  for (const route of ["/", "/formation", "/meet", "/companies/shengshu", "/founders/kevin-zakka", "/video", "/demo", "/changes", "/diligence/unsloth-ai", "/agents"]) {
     try {
       await p2.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded" });
       await p2.waitForTimeout(400);

@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Demo video",
-  description: "A three-minute narrated walkthrough of Anti Radar on the verified snapshot collected Oct 20, 2026.",
+  description: "Anti Radar on video: the three-minute narrated walkthrough and the technical diligence tour.",
 };
 
 const RELEASE = "https://github.com/armaansingla14/Anti-Radar/releases/tag/v1.0.0";
@@ -44,6 +44,30 @@ export default function VideoPage() {
           Download from GitHub ↗
         </a>
       </div>
+
+      <section className="mt-16 border-t border-rule pt-10" id="diligence">
+        <p className="label mb-3">Technical diligence · 2 min</p>
+        <h2 className="font-serif text-[32px] leading-[1.1] tracking-[-0.01em] md:text-[40px]">Radar finds it. Diligence tests it.</h2>
+        <p className="mt-3 max-w-[70ch] text-[15px] leading-relaxed text-ink-2">
+          A captioned, silent recording of the diligence tour on the snapshot of Nov 5, 2026: a company that weakened on the
+          radar, the material claims it makes, the public evidence for and against each one, a generated (never executed)
+          test plan, technical underwriting, questions for the founders, and the evaluation of the agents that did the work.
+        </p>
+        <div className="mt-8 border border-ink bg-ink">
+          <video controls playsInline preload="metadata" className="block aspect-video w-full" data-demo="diligence-video">
+            <source src="/demo/anti-radar-diligence-demo.mp4" type="video/mp4" />
+            Your browser cannot play this video. <a href="/demo/anti-radar-diligence-demo.mp4">Download the MP4</a>.
+          </video>
+        </div>
+        <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3 font-mono text-[11px] uppercase tracking-[0.08em]">
+          <Link href="/demo/diligence" className="link text-ink">
+            Take the diligence tour →
+          </Link>
+          <Link href="/diligence" className="link text-ink-2">
+            Open diligence →
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

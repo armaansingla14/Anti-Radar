@@ -1,14 +1,16 @@
 {
-  "as_of": "2026-10-20",
-  "captured_at": "2026-10-20T17:07:01.288808+00:00",
-  "exported_at": "2026-10-21T03:46:59.972Z",
-  "source_commit": "b88bd8f",
-  "note": "Backend API responses for every page of the public site, recorded from the verified real-data snapshot (backend/radar/demo/snapshot). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
+  "as_of": "2026-11-05",
+  "captured_at": "2026-11-05T04:44:47.122003+00:00",
+  "exported_at": "2026-11-05T17:11:30.464Z",
+  "source_commit": "2d75a64",
+  "note": "Backend API responses for every page of the public site, recorded from the verified real-data snapshot (backend/radar/demo/snapshot plus the dated updates in snapshot_updates/). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
   "counts": {
-    "companies": 220,
-    "people": 2804,
-    "formation_candidates": 6,
-    "reports": 11,
-    "responses": 9038
+    "companies": 368,
+    "people": 4567,
+    "formation_candidates": 7,
+    "reports": 12,
+    "diligence_workspaces": 1,
+    "agent_failures": 20,
+    "responses": 15100
   }
 }

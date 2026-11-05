@@ -83,10 +83,13 @@ async function pool(urls) {
 async function main() {
   console.log(`export-snapshot: site ${SITE}, api ${API}`);
   const RECORDING = path.join(OUT, "recording");
-  fs.rmSync(RECORDING, { recursive: true, force: true });
-  fs.mkdirSync(RECORDING, { recursive: true });
+  const packOnly = process.argv.includes("--pack-only"); // re-pack an existing recording without crawling again
+  if (!packOnly) {
+    fs.rmSync(RECORDING, { recursive: true, force: true });
+    fs.mkdirSync(RECORDING, { recursive: true });
+  }
 
-  const [companies, people, formation, reports, archive, meet, diligence, failures] = await Promise.all([
+  const [companies, people, formation, reports, archive, meet, diligence, agentFailures] = await Promise.all([
     all("/companies"),
     all("/founders"),
     api("/formation"),
@@ -109,7 +112,7 @@ async function main() {
     ...COMPANY_TABS.map((t) => `/companies/${w.company.slug}?tab=${t}`),
   ]);
   // Agent evaluation control plane: overview, ledger (+ its filter links), every failure, regression cases.
-  const failureList = Array.isArray(failures) ? failures : [];
+  const failureList = Array.isArray(agentFailures) ? agentFailures : [];
   const uniq = (xs) => [...new Set(xs)].filter(Boolean);
   const agentPages = [
     "/agents", "/agents/failures", "/agents/cases",
@@ -160,8 +163,10 @@ async function main() {
     ...Array.from({ length: Math.ceil(people.length / FOUNDER_PAGE) }, (_, i) => `/founders?limit=${FOUNDER_PAGE}&offset=${(i + 1) * FOUNDER_PAGE}`),
   ].map((p) => `/api/proxy${p}`);
 
-  console.log(`  rendering ${pages.length} pages and ${proxy.length} client reads …`);
-  await pool([...pages, ...proxy]);
+  if (!packOnly) {
+    console.log(`  rendering ${pages.length} pages and ${proxy.length} client reads …`);
+    await pool([...pages, ...proxy]);
+  }
 
   // Search index: every exported entity (its page was rendered above), matched by name/slug/subtitle.
   const index = [
@@ -171,7 +176,15 @@ async function main() {
   index.sort((a, b) => a.entity_type.localeCompare(b.entity_type) || a.slug.localeCompare(b.slug));
   fs.writeFileSync(path.join(OUT, "search-index.json"), JSON.stringify(index));
 
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "backend/radar/demo/snapshot/MANIFEST.json"), "utf8"));
+  // The latest link of the snapshot chain: the base snapshot, then dated updates (snapshot_updates/<day>/).
+  const updatesDir = path.join(ROOT, "backend/radar/demo/snapshot_updates");
+  const updates = fs.existsSync(updatesDir)
+    ? fs.readdirSync(updatesDir).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && fs.existsSync(path.join(updatesDir, d, "MANIFEST.json"))).sort()
+    : [];
+  const manifestPath = updates.length
+    ? path.join(updatesDir, updates[updates.length - 1], "MANIFEST.json")
+    : path.join(ROOT, "backend/radar/demo/snapshot/MANIFEST.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   let commit = null;
   try {
     commit = execSync("git rev-parse --short HEAD", { cwd: ROOT }).toString().trim();
@@ -180,7 +193,9 @@ async function main() {
   }
   // Pack the recorded responses (one gzip file each) into responses.pack + responses.index.json, sorted by key
   // so the same data always produces the same two files.
-  const recorded = execSync(`find ${JSON.stringify(RECORDING)} -type f -name "*.json.gz"`).toString().split("\n").filter(Boolean);
+  const recorded = fs.readdirSync(RECORDING, { recursive: true })
+    .map((f) => path.join(RECORDING, String(f)))
+    .filter((f) => f.endsWith(".json.gz") && fs.statSync(f).isFile());
   const entries = recorded.map((file) => {
     const gz = fs.readFileSync(file);
     return { key: JSON.parse(gunzipSync(gz).toString("utf8")).key, gz };
@@ -205,7 +220,7 @@ async function main() {
     exported_at: new Date().toISOString(),
     source_commit: commit,
     note: "Backend API responses for every page of the public site, recorded from the verified real-data snapshot " +
-      "(backend/radar/demo/snapshot). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
+      "(backend/radar/demo/snapshot plus the dated updates in snapshot_updates/). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
     counts: {
       companies: companies.length, people: people.length, formation_candidates: candidates.length, reports: reports.length,
       diligence_workspaces: workspaces.length, agent_failures: failureList.length, responses: files,
