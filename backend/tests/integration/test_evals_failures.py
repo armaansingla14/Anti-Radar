@@ -25,10 +25,10 @@ NODE_RE = re.compile(r"^(?P<path>tests/[\w/]+\.py)::(?P<name>\w+)(\[(?P<param>[\
 
 
 def test_seeding_is_idempotent_with_documented_statuses(db):
-    assert seed_documented_failures(db) == {"created": 10, "updated": 0}
+    assert seed_documented_failures(db) == {"created": 11, "updated": 0}
     assert seed_documented_failures(db) == {"created": 0, "updated": 0}
     rows = list_failures(db)
-    assert [f.number for f in rows] == list(range(1, 11)) and all(f.origin == "documented" for f in rows)
+    assert [f.number for f in rows] == list(range(1, 12)) and all(f.origin == "documented" for f in rows)
     by_ref = {f.source_ref: f for f in rows}
     assert by_ref["docs/REAL_WORLD_EVALUATION.md §6.1"].status == "FIXED"
     assert by_ref["docs/REAL_WORLD_EVALUATION.md §6.1"].category == "MISSING_COUNTEREVIDENCE"
@@ -77,13 +77,13 @@ def test_review_persists_and_survives_reseed(db):
 def test_create_failure_numbers_and_validation(db):
     seed_documented_failures(db)
     f = create_failure(db, agent="RADAR ANALYST", claim_text="x", category="UNSUPPORTED_CLAIM", severity="LOW")
-    assert f.number == 11 and f.status == "OPEN" and f.origin == "reviewer" and f.detected_at is not None
+    assert f.number == 12 and f.status == "OPEN" and f.origin == "reviewer" and f.detected_at is not None
     import pytest
 
     with pytest.raises(ValueError):
         create_failure(db, agent="RADAR ANALYST", claim_text="x", category="NOPE", severity="LOW")
     with pytest.raises(ValueError):
         review_failure(db, 11, status="MAYBE", note="x")
-    assert list_failures(db, status="OPEN", agent="RADAR ANALYST")[0].number == 11
-    assert len(list_failures(db, category="SOURCE_QUALITY")) == 3
-    assert db.scalar(select(func.count()).select_from(AgentFailure)) == 11
+    assert list_failures(db, status="OPEN", agent="RADAR ANALYST")[0].number == 12
+    assert len(list_failures(db, category="SOURCE_QUALITY")) == 2  # smg-project is ATTRIBUTION_ERROR
+    assert db.scalar(select(func.count()).select_from(AgentFailure)) == 12

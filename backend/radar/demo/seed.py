@@ -379,15 +379,53 @@ def derive_day(day: date, *, history: bool) -> dict[str, Any]:
     return out
 
 
-# ── LEAD HOOK ────────────────────────────────────────────────────────────────
+# ── Derived research layer (V3) ──────────────────────────────────────────────
 
 
 def post_seed_steps(out: dict[str, Any]) -> None:
     """Last step of ``seed_demo`` (clock pinned to the newest replayed day, all links derived).
 
-    Placeholder for the steps that build on the fully replayed chain: diligence replay, template
-    reports, agent evaluations. Record their summaries in ``out``. Currently does nothing."""
-    return None
+    Everything here is deterministic and offline, so a reseed reproduces it exactly:
+    1. captured diligence runs (``demo/diligence/*.json.gz``) are re-analysed from their recorded artifacts;
+    2. template meeting briefs and Anti Briefs are generated from database facts (no LLM);
+    3. every stored report is evaluated, documented failures are seeded, and the regression cases run.
+    Each step is independent: a failure is recorded in ``out`` and never aborts the seed."""
+    steps: list[tuple[str, Any]] = []
+
+    def diligence() -> Any:
+        from radar.diligence.capture import replay_all
+
+        with session_scope() as s:
+            return replay_all(s)
+
+    def templates() -> Any:
+        from radar.demo.warm import generate_template_reports
+
+        with session_scope() as s:
+            return generate_template_reports(s)
+
+    def evaluations() -> Any:
+        from radar.evals.failures import seed_documented_failures
+        from radar.evals.metrics import evaluate_all
+        from radar.evals.runner import run_cases, store_outcomes
+
+        with session_scope() as s:
+            evaluated = len(evaluate_all(s))
+            seeded = seed_documented_failures(s)
+            from radar.evals.cases import load_cases
+
+            outcomes = run_cases(s, load_cases())
+            store_outcomes(s, outcomes)
+            return {"reports_evaluated": evaluated, "documented_failures": seeded,
+                    "cases": len(outcomes), "cases_passed": sum(1 for o in outcomes if o.passed)}
+
+    steps = [("diligence", diligence), ("template_reports", templates), ("evaluations", evaluations)]
+    for name, fn in steps:
+        try:
+            out[name] = fn()
+        except Exception as e:  # noqa: BLE001 — additive layers never fail the seed
+            log.exception("seed: %s step failed", name)
+            out[name] = {"error": f"{type(e).__name__}: {e}"[:300]}
 
 
 def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = True, fictional: bool | None = None,

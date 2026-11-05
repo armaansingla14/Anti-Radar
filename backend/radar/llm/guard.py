@@ -53,7 +53,9 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"\bact as (an?|the)\b",
         r"\b(new|updated|revised) (system )?instructions?\b",
         r"\bsystem prompt\b",
-        r"\b(rate|score|rank)\b[^.\n]{0,30}\b(100|10\s*/\s*10|ten out of ten|maximum|highest)\b",
+        # An imperative aimed at the reader ("rate this company 100"), not a reported score ("Founder Score 48/100").
+        r"\b(rate|score|rank)\s+(this|these|the|our|us|it|them|me|every)\b[^.\n]{0,30}"
+        r"\b(100|10\s*/\s*10|ten out of ten|maximum|highest)\b",
         r"\bdo not (mention|reveal|tell|disclose)\b",
         r"^\s*(system|assistant)\s*:",
         r"<\s*/?\s*(source|instructions|system)\b",

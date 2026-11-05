@@ -556,7 +556,17 @@ def task_injection(session: Session | None, case: EvalCase, provider: BaseProvid
                     cost=float(report.cost_usd or 0.0))
 
 
+def task_injection_detector(_s: Session | None, case: EvalCase, provider: BaseProvider | None) -> CaseOutcome:
+    """The prompt-injection detector must flag injected instructions and must NOT flag ordinary report text."""
+    inp = case.input
+    failures = [f"false positive on {t!r}: {hits}" for t in inp.get("clean") or [] if (hits := detect_injection(t))]
+    failures += [f"missed injection {t!r}" for t in inp.get("injected") or [] if not detect_injection(t)]
+    return _outcome(case, provider, failures, {"clean": len(inp.get("clean") or []),
+                                                "injected": len(inp.get("injected") or [])})
+
+
 register_task("claim_checks", task_claim_checks)
+register_task("injection_detector", task_injection_detector)
 register_task("citation_validation", task_citation_validation)
 register_task("formation_public", task_formation_public)
 register_task("current_org_elsewhere", task_current_org_elsewhere)

@@ -148,7 +148,7 @@ DOCUMENTED: list[dict[str, Any]] = [
     {
         "source_ref": f"{DOC} §6.3", "agent": "FORMATION SCORER", "entity_ref": "company:smg-project",
         "claim_text": "smg-project: team convergence of verified lab talent",
-        "category": "SOURCE_QUALITY", "severity": "MEDIUM", "status": "CONFIRMED",
+        "category": "ATTRIBUTION_ERROR", "severity": "MEDIUM", "status": "CONFIRMED",
         "evidence_summary": "Our two 'members' are minor contributors (6 and 3 commits) of a repo with 159 "
                             "contributors whose top committers are untracked: a coverage artifact that overstates "
                             "team convergence. No test guards the unfixed part; the related thesis-gate test is "
@@ -247,6 +247,21 @@ DOCUMENTED: list[dict[str, Any]] = [
             "tests/integration/test_relationships.py::test_bot_accounts_get_no_edges",
             "tests/integration/test_api_entities.py::test_company_page_drops_bot_team_members_and_other_orgs_lines",
         ],
+    },
+    {
+        "source_ref": "V3 evaluation run on the Nov 5, 2026 snapshot", "agent": "INJECTION GUARD",
+        "entity_ref": None,
+        "claim_text": "Meeting brief text \"Founder Score 48/100\" flagged as a prompt-injection attempt "
+                      "(output_follows_injection, HIGH) on 5 of 5 template meeting briefs",
+        "category": "TOOL_FAILURE", "severity": "HIGH", "status": "FIXED",
+        "evidence_summary": "Found by the agent evaluator, not by a person: the guard pattern "
+                            "`(rate|score|rank) ... 100` matched reported scores such as 'Score 48/100'. A false "
+                            "positive also disables live tools for an analyst run (any flagged source stops live "
+                            "fetching) and would fill the failure ledger with false alarms.",
+        "resolution": "The pattern now requires an imperative aimed at the reader ('rate this company 100'); "
+                      "reported scores no longer match. Injected instructions are still flagged.",
+        "regression_case": "injection-false-positive-001",
+        "regression_test": "tests/unit/test_llm_guard.py::test_reported_scores_are_not_injection",
     },
 ]
 

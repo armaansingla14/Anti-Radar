@@ -107,6 +107,8 @@ COMPONENTS: tuple[Agent, ...] = (
     Agent("meet", "MEET RANKER", None, (), "Who should we meet this week (services/meet.py).", True),
     Agent("resolution", "ENTITY RESOLUTION", None, (), "People/organisation resolution and bot filtering.", True),
     Agent("presenters", "PRESENTERS", None, (), "Deterministic page copy (services/presenters.py).", True),
+    Agent("guard", "INJECTION GUARD", None, (), "Prompt-injection detection on untrusted content (llm/guard.py).",
+          True),
 )
 
 _ALIASES = {
@@ -114,7 +116,7 @@ _ALIASES = {
     "memo": "ANTI MEMO", "diligence": "DILIGENCE ANALYST", "morning": "MORNING BRIEF",
     "morning_brief": "MORNING BRIEF", "narratives": "NARRATIVES", "search": "SEARCH PARSER",
     "thesis": "THESIS CLASSIFIER", "formation": "FORMATION SCORER", "meet": "MEET RANKER",
-    "resolution": "ENTITY RESOLUTION", "presenters": "PRESENTERS",
+    "resolution": "ENTITY RESOLUTION", "presenters": "PRESENTERS", "guard": "INJECTION GUARD",
 }
 
 
