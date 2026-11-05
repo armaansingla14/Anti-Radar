@@ -1,0 +1,12 @@
+id: notable-traction-001
+title: 27 stars counts but is not notable traction (Muennighoff shape)
+agent: formation
+task: new_project_noise
+failure_category: OVERCONFIDENT_INFERENCE
+regression_for: "docs/REAL_WORLD_EVALUATION.md §6.6"
+input:
+  checks:
+    - {label: prefix-sliding, repo: muennighoff/prefix-sliding, stars: 27, expect: {counts: true, notable: false}}
+    - {label: notable, repo: muennighoff/big-release, stars: 60, expect: {counts: true, notable: true}}
+expected:
+  all_checks_pass: true

@@ -1,0 +1,25 @@
+id: citation-001
+title: A citation to a nonexistent source is caught, then repaired by the guard
+agent: analyst
+task: citation_validation
+failure_category: CITATION_MISMATCH
+input:
+  valid_ids: [S1, S2]
+  sources:
+    - {id: S1, url: https://github.com/acme/gelgrip, title: GitHub repository acme/gelgrip, source_type: github,
+       snippet: "Open tactile gripper stack with 1400 stars.", fetched_days_before_report: 1}
+    - {id: S2, url: "radar://metrics/acme", title: ANTI RADAR metrics for Acme, source_type: system,
+       snippet: "stars 1400 (+12% 30d)", fetched_days_before_report: 1}
+  claims:
+    - {section: what_they_do, text: Acme ships a gripper used in 300 warehouses., epistemic: FACT, source_ids: [S99]}
+    - {section: signals, text: GitHub repository acme/gelgrip has 1400 stars., epistemic: FACT, source_ids: [S1]}
+expected_epistemic:
+  "300 warehouses": INFERENCE
+  "1400 stars": FACT
+expected:
+  pre_flags:
+    - {rule: nonexistent_citation, category: CITATION_MISMATCH, severity: HIGH, section: what_they_do}
+  invalid_ids: [S99]
+  downgraded: 1
+  after_contains: ["(unverified)"]
+  post_no_flags: [nonexistent_citation, fact_without_citation]

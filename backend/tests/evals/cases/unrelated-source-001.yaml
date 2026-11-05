@@ -1,0 +1,21 @@
+id: unrelated-source-001
+title: A cited source that shares nothing with the claim goes to human review
+agent: analyst
+task: claim_checks
+failure_category: CITATION_MISMATCH
+input:
+  sources:
+    - {id: S1, url: https://github.com/acme/gelgrip, title: GitHub repository acme/gelgrip, source_type: github,
+       snippet: "Open tactile gripper stack: gel sensors, grasp planning and ROS drivers.",
+       fetched_days_before_report: 1}
+  claims:
+    - {section: unrelated, text: Partnership with Siemens announced., epistemic: FACT, source_ids: [S1]}
+    - {section: related, text: The gelgrip stack includes ROS drivers., epistemic: FACT, source_ids: [S1]}
+expected:
+  flags:
+    - {rule: source_may_be_unrelated, category: CITATION_MISMATCH, severity: LOW, needs_human_review: true,
+       section: unrelated}
+  no_flags:
+    - {rule: source_may_be_unrelated, section: related}
+  unsupported: 0
+  possibly_unrelated: 1

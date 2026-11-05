@@ -1,0 +1,48 @@
+id: affiliation-001
+title: A conference talk is not employment (NVIDIA GTC)
+agent: meeting
+task: meeting_brief_template
+failure_category: AFFILIATION_INFERENCE
+regression_for: "docs/REAL_WORLD_EVALUATION.md §6.8 (affiliation inferred from weak evidence)"
+min_citations: 3
+input:
+  person:
+    name: Mara Quell
+    bio: Robotics researcher working on dexterous manipulation.
+    github_handle: maraquell
+    prior_affiliations: [Stanford]
+  signals:
+    - signal_type: talk
+      source_type: conference
+      title: Talk at NVIDIA GTC 2026 on tactile manipulation
+      url: https://www.nvidia.com/gtc/session-catalog/tactile-manipulation
+      days_ago: 5
+    - signal_type: repo_created
+      source_type: github
+      title: Repository maraquell/handsim created
+      url: https://github.com/maraquell/handsim
+      days_ago: 12
+  repos:
+    - full_name: maraquell/handsim
+      description: Simulation suite for dexterous hands
+      stars: 140
+      days_ago: 12
+  papers:
+    - arxiv_id: "2609.99101"
+      title: Tactile priors for in-hand manipulation
+      authors: [Mara Quell]
+      days_ago: 40
+expected:
+  no_employment_fact_about: [NVIDIA]
+  all_facts_cited: true
+  structured_valid: true
+  probe_claims:
+    - text: Joined NVIDIA as a research scientist.
+      epistemic: FACT
+      cite_urls: [https://www.nvidia.com/gtc/session-catalog/tactile-manipulation]
+      expect_flags:
+        - {rule: affiliation_from_event_source, category: AFFILIATION_INFERENCE, severity: HIGH}
+    - text: Gave a talk on tactile manipulation at NVIDIA GTC 2026.
+      epistemic: FACT
+      cite_urls: [https://www.nvidia.com/gtc/session-catalog/tactile-manipulation]
+      expect_no_flags: [AFFILIATION_INFERENCE]

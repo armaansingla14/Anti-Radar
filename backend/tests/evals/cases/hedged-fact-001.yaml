@@ -1,0 +1,20 @@
+id: hedged-fact-001
+title: Hedged language labelled FACT is an overconfident inference
+agent: analyst
+task: claim_checks
+failure_category: OVERCONFIDENT_INFERENCE
+input:
+  sources:
+    - {id: S1, url: https://github.com/orgs/newco, title: GitHub org newco, source_type: github,
+       snippet: "Organization newco created May 2026 with 3 public members.", fetched_days_before_report: 1}
+  claims:
+    - {section: hedged, text: This likely indicates a team forming around newco., epistemic: FACT, source_ids: [S1]}
+    - {section: dated, text: The newco organization was created in May 2026., epistemic: FACT, source_ids: [S1]}
+    - {section: quoted, text: "The README says \"probably the fastest gripper\" about newco.", epistemic: FACT,
+       source_ids: [S1]}
+expected:
+  flags:
+    - {rule: hedged_fact, category: OVERCONFIDENT_INFERENCE, severity: MEDIUM, section: hedged}
+  no_flags:
+    - {rule: hedged_fact, section: dated}
+    - {rule: hedged_fact, section: quoted}

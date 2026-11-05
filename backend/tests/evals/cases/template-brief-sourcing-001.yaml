@@ -1,0 +1,36 @@
+id: template-brief-sourcing-001
+title: The template Anti Brief cites a source for every FACT
+agent: analyst
+task: anti_brief_template
+failure_category: UNSUPPORTED_CLAIM
+min_citations: 5
+input:
+  company:
+    name: Lattice Motion
+    description: Learned controllers for legged warehouse robots.
+    website: https://lattice-motion.example
+    github_org: lattice-motion-eval
+    stage: pre_seed
+  repos:
+    - full_name: lattice-motion-eval/legctl
+      description: Learned locomotion controllers
+      stars: 2100
+      days_ago: 90
+    - full_name: lattice-motion-eval/sim2real
+      description: Sim-to-real transfer toolkit
+      stars: 480
+      days_ago: 45
+  signals:
+    - {signal_type: star_spike, source_type: github, title: legctl gained 700 stars in 7 days,
+       url: https://github.com/lattice-motion-eval/legctl, days_ago: 8}
+    - {signal_type: paper, source_type: arxiv, title: "LegCtl: learned controllers at warehouse scale",
+       url: https://arxiv.org/abs/2609.99201, days_ago: 15}
+    - {signal_type: hiring, source_type: jobs, title: Hiring a controls engineer,
+       url: https://lattice-motion.example/careers, days_ago: 3}
+  people:
+    - {name: Ines Varga, bio: Locomotion researcher., github_handle: inesvarga-eval, role: CEO, is_founder: true,
+       prior_affiliations: [ETH Zurich], source_url: https://lattice-motion.example/team}
+expected:
+  structured_valid: true
+  all_facts_cited: true
+  no_high_flags: true

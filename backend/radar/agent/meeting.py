@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -27,6 +28,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from radar import clock
+from radar.agent.analyst import timing_entry
 from radar.agent.brief_schema import Claim, MeetingBrief
 from radar.agent.render import meeting_brief_to_markdown
 from radar.agent.tools import AnalystTools, RegisteredSource, SourceRegistry, ToolInputError
@@ -393,6 +395,7 @@ def generate_meeting_brief(session: Session, person_id: str | uuid.UUID, *, forc
     if not force and (cached := latest_brief(session, person.id)) is not None:
         return cached
 
+    t0, started = time.perf_counter(), clock.now()
     registry = SourceRegistry(session, is_demo=person.is_demo)
     g = gather(session, person, registry)
     valid = registry.ids()
@@ -435,6 +438,7 @@ def generate_meeting_brief(session: Session, person_id: str | uuid.UUID, *, forc
                {"type": "gathered", "sources": len(sources), "signals": len(g.signals), "repos": len(g.repos),
                 "papers": len(g.papers), "formation_candidate": str(g.candidate.id) if g.candidate else None}],
     )
+    report.trace = [*report.trace, timing_entry(t0, started)]
     session.add(report)
     session.flush()
     return report

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # API is reached through the proxy.
     trust_proxy_client_ip: bool = False
     llm_daily_usd_cap: float = 10.0
+    # Model comparison (`radar eval --compare-models`) only uses providers named here, e.g. "anthropic,openai".
+    # Keys present in the environment are never used implicitly.
+    eval_providers: str = ""
     # Live (uncached) LLM query-parse calls allowed per minute from search, process-wide.
     llm_search_per_minute: int = 20
 

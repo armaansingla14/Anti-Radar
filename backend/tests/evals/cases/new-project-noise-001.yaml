@@ -1,0 +1,15 @@
+id: new-project-noise-001
+title: Hobby repositories without traction are not formation evidence
+agent: formation
+task: new_project_noise
+failure_category: SOURCE_QUALITY
+regression_for: "docs/REAL_WORLD_EVALUATION.md §6.5"
+input:
+  checks:
+    - {label: trivial stats repo, repo: nlucches/vllm-force-merge-stats, stars: 0, expect: {counts: false}}
+    - {label: "*-mcp repo", repo: rachittshah/notion-mcp, stars: 3, expect: {counts: false}}
+    - {label: serial author, repo: rachittshah/agent-kit, stars: 4, serial: 7, thesis_matches: [ai.agents, ai.infra],
+       expect: {counts: false}}
+    - {label: traction counts, repo: someone/grip-sim, stars: 600, expect: {counts: true, notable: true}}
+expected:
+  all_checks_pass: true

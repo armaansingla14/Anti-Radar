@@ -1,0 +1,13 @@
+id: why-anti-copy-001
+title: "'Why Anti Fund' copy never implies founders without a founder relation"
+agent: presenters
+task: why_anti_copy
+failure_category: UNSUPPORTED_CLAIM
+regression_for: "docs/FINAL_APPLICATION_AUDIT.md #8"
+input:
+  stage: pre_seed
+  founder_signal: {value: 9, max: 10}
+  founder_relation: false
+expected:
+  forbidden_pattern: "founder|founding"
+  must_include: ["Strong technical team linked to it."]

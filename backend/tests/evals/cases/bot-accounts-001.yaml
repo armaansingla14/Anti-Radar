@@ -1,0 +1,15 @@
+id: bot-accounts-001
+title: AI coding-agent accounts are bots, never team members
+agent: resolution
+task: bot_filter
+failure_category: ENTITY_RESOLUTION_ERROR
+regression_for: "commit 125f81a (AI coding-agent accounts)"
+input:
+  checks:
+    - {login: claude, expect: true}
+    - {login: copilot, expect: true}
+    - {login: devin-ai-integration, expect: true}
+    - {login: cursoragent, expect: true}
+    - {login: claudia-dev, expect: false}
+expected:
+  all_checks_pass: true

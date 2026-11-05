@@ -1,0 +1,22 @@
+id: public-founder-org-001
+title: A founder of an already-public organization is not a formation (youkaichao / Simon Mo shape)
+agent: formation
+task: formation_public
+failure_category: MISSING_COUNTEREVIDENCE
+regression_for: "docs/REAL_WORLD_EVALUATION.md §6.1"
+input:
+  checks:
+    - label: bio names an org older than 180 days
+      bio: "Core maintainer of @vllm-project.\nCo-Founder & Chief Scientist @Inferact ."
+      orgs: {Inferact: 380, vllm-project: 1200}
+      expect: Inferact
+    - label: young org is formation in progress
+      bio: Co-founder @newco
+      orgs: {newco: 40}
+      expect: null
+    - label: founding engineer is not a founder
+      bio: Founding Engineer @stainless-api
+      orgs: {stainless-api: 1500}
+      expect: null
+expected:
+  all_checks_pass: true

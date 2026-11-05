@@ -1,0 +1,19 @@
+id: stale-001
+title: A source older than 90 days is stale
+agent: analyst
+task: claim_checks
+failure_category: STALE_INFORMATION
+input:
+  sources:
+    - {id: S1, url: https://acme.example/about, title: About Acme, source_type: website,
+       snippet: "Acme has 12 engineers.", fetched_days_before_report: 120}
+    - {id: S2, url: https://acme.example/team, title: Acme team, source_type: website,
+       snippet: "Acme has 12 engineers.", fetched_days_before_report: 10}
+  claims:
+    - {section: old, text: Acme has 12 engineers., epistemic: FACT, source_ids: [S1]}
+    - {section: fresh, text: Acme has 12 engineers., epistemic: FACT, source_ids: [S2]}
+expected:
+  flags:
+    - {rule: stale_source, category: STALE_INFORMATION, severity: LOW, section: old}
+  no_flags:
+    - {rule: stale_source, section: fresh}

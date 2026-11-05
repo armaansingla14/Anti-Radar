@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from radar.agent.analyst import investigate
+from radar import clock
+from radar.agent.analyst import investigate, timing_entry
 from radar.agent.brief_schema import AntiBrief, AntiMemo, AntiMemoDraft, Claim
 from radar.agent.render import memo_to_markdown
 from radar.agent.tools import latest_score, resolve_entity
@@ -97,6 +99,7 @@ def generate_memo(
     provider: BaseProvider | None = None,
 ) -> ResearchReport:
     """Create and persist a ResearchReport (kind 'memo') for the entity."""
+    t0, started = time.perf_counter(), clock.now()
     entity = resolve_entity(session, entity_type, str(entity_id))
     base = _select_brief(session, entity.id, report_id)
     if base is None:
@@ -136,7 +139,7 @@ def generate_memo(
         markdown=memo_to_markdown(memo, sources, generator=generator, model=model), sources=sources, model=model,
         generator=generator, status="complete", cost_usd=cost, is_demo=entity.is_demo,
         trace=[{"type": "based_on", "report_id": str(base.id), "generator": base.generator},
-               {"type": "validation", **(validation or {})}],
+               {"type": "validation", **(validation or {})}, timing_entry(t0, started)],
     )
     session.add(report)
     session.flush()

@@ -1,0 +1,22 @@
+id: current-org-elsewhere-001
+title: A young-org member employed at an established org (Roger Wang shape)
+agent: meet
+task: current_org_elsewhere
+failure_category: MISSING_COUNTEREVIDENCE
+regression_for: "docs/REAL_WORLD_EVALUATION.md §6.2"
+input:
+  checks:
+    - label: company field names an old org they publicly belong to
+      company: inferact
+      github_orgs: [{login: Inferact, name: Inferact, days_old: 380}, {login: smg-project, days_old: 150}]
+      expect: Inferact
+    - label: not a public member
+      company: inferact
+      github_orgs: [{login: smg-project, days_old: 150}]
+      expect: null
+    - label: current org is young
+      company: smg-project
+      github_orgs: [{login: Inferact, name: Inferact, days_old: 380}, {login: smg-project, days_old: 150}]
+      expect: null
+expected:
+  all_checks_pass: true

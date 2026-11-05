@@ -1,0 +1,24 @@
+id: funding-001
+title: Funding claims need a funding source
+agent: analyst
+task: claim_checks
+failure_category: UNSUPPORTED_CLAIM
+input:
+  sources:
+    - {id: S1, url: https://github.com/acme/gelgrip, title: GitHub repository acme/gelgrip, source_type: github,
+       snippet: "Open tactile gripper stack. Stars: 1400", fetched_days_before_report: 1}
+    - {id: S2, url: https://techcrunch.com/2026/09/30/acme-raises-12m-seed, title: Acme raises $12M seed round,
+       source_type: press, snippet: "Acme raised a $12M seed round led by Example Ventures.",
+       fetched_days_before_report: 1}
+  claims:
+    - {section: positive, text: Acme raised a $12M seed round., epistemic: FACT, source_ids: [S1]}
+    - {section: control_press, text: Acme raised a $12M seed round., epistemic: FACT, source_ids: [S2]}
+    - {section: control_negated, text: "No customer, revenue or funding evidence was collected; traction is inferred from technical activity only.", epistemic: INFERENCE, source_ids: []}
+expected:
+  flags:
+    - {rule: funding_without_funding_source, category: UNSUPPORTED_CLAIM, severity: HIGH, section: positive}
+  no_flags:
+    - {rule: funding_without_funding_source, section: control_press}
+    - {rule: funding_without_funding_source, section: control_negated}
+    - {rule: customer_from_own_marketing}
+  unsupported: 1

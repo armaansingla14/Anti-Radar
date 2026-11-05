@@ -125,3 +125,53 @@ def import_reports(path: Path = REPORTS_FILE) -> int:
             ))
             n += 1
     return n
+
+
+def generate_template_reports(session, *, companies: int = 6) -> dict[str, int]:
+    """Deterministic template reports for the agent evaluation (no network, no LLM).
+
+    Meeting briefs for this week's Meet recommendations, and Anti Briefs for the companies on the home feed
+    followed by attention-gap companies (score desc, slug), first ``companies``. Entities that already have a
+    complete report of that kind are skipped, so a second call creates nothing."""
+    import uuid
+
+    from sqlalchemy import func
+
+    from radar.agent.analyst import investigate
+    from radar.agent.meeting import generate_meeting_brief, latest_brief
+    from radar.llm.provider import NullProvider
+    from radar.models import ScoreSnapshot
+    from radar.services import home, meet
+    from radar.settings import get_settings
+
+    out = {"meeting_briefs": 0, "briefs": 0, "skipped": 0}
+    for rec in meet.compute_week(session):
+        if latest_brief(session, rec.person_id) is not None:
+            out["skipped"] += 1
+            continue
+        generate_meeting_brief(session, rec.person_id, provider=NullProvider())
+        out["meeting_briefs"] += 1
+
+    feed = home.build_home(session, new=None, include_demo=get_settings().demo_synthetic)
+    ids = [uuid.UUID(str(c.id)) for c in feed.companies if c.entity_type == "company"]
+    latest_day = (select(ScoreSnapshot.entity_id, func.max(ScoreSnapshot.day).label("day"))
+                  .where(ScoreSnapshot.entity_type == "company").group_by(ScoreSnapshot.entity_id).subquery())
+    rows = session.execute(
+        select(ScoreSnapshot, Company.slug)
+        .join(latest_day, (latest_day.c.entity_id == ScoreSnapshot.entity_id) & (latest_day.c.day == ScoreSnapshot.day))
+        .join(Company, Company.id == ScoreSnapshot.entity_id)
+        .where(ScoreSnapshot.entity_type == "company")).all()
+    gaps = sorted(((snap, slug) for snap, slug in rows if (snap.attention or {}).get("flagged")),
+                  key=lambda t: (-float(t[0].score or 0.0), t[1]))
+    ids += [snap.entity_id for snap, _ in gaps]
+    for cid in list(dict.fromkeys(ids))[:companies]:
+        exists = session.scalar(select(ResearchReport.id).where(
+            ResearchReport.kind == "brief", ResearchReport.entity_id == cid, ResearchReport.status == "complete")
+            .limit(1))
+        if exists is not None:
+            out["skipped"] += 1
+            continue
+        investigate(session, "company", cid, live_fetch=False, provider=NullProvider())
+        out["briefs"] += 1
+    session.flush()
+    return out

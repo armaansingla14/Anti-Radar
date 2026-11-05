@@ -1,0 +1,22 @@
+id: customer-001
+title: Customer claims sourced only from the company's own marketing
+agent: analyst
+task: claim_checks
+failure_category: SOURCE_QUALITY
+input:
+  subject_domain: acme.example
+  sources:
+    - {id: S1, url: https://acme.example/customers, title: Acme customers, source_type: website,
+       snippet: "Used by 40 robotics teams worldwide.", fetched_days_before_report: 2}
+    - {id: S2, url: https://news.example.org/robotics/acme-adoption, title: Robotics teams adopt Acme grippers,
+       source_type: news, snippet: "40 robotics teams now use Acme grippers, according to interviews.",
+       fetched_days_before_report: 3}
+  claims:
+    - {section: own_only, text: Used by 40 robotics teams., epistemic: FACT, source_ids: [S1]}
+    - {section: third_party, text: Used by 40 robotics teams., epistemic: FACT, source_ids: [S1, S2]}
+expected:
+  flags:
+    - {rule: customer_from_own_marketing, category: SOURCE_QUALITY, severity: MEDIUM, section: own_only}
+  no_flags:
+    - {rule: customer_from_own_marketing, section: third_party}
+  unsupported: 0

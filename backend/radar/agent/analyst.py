@@ -17,6 +17,7 @@ Progress is reported through ``on_event`` dicts:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
@@ -263,6 +264,12 @@ def _llm_brief(
 # ── entry point ──────────────────────────────────────────────────────────────
 
 
+def timing_entry(t0: float, started) -> dict[str, Any]:
+    """The last trace entry of a run: wall time measured with perf_counter (read by radar.evals)."""
+    return {"type": "timing", "started_at": started.isoformat(), "finished_at": clock.now().isoformat(),
+            "ms": round((time.perf_counter() - t0) * 1000, 1)}
+
+
 def investigate(
     session: Session,
     entity_type: str,
@@ -273,6 +280,7 @@ def investigate(
     provider: BaseProvider | None = None,
 ) -> ResearchReport:
     """Research one company/person and persist a ``ResearchReport`` (kind 'brief')."""
+    t0, started = time.perf_counter(), clock.now()
     emit = _Events(on_event)
     tools: AnalystTools | None = None
     try:
@@ -318,7 +326,8 @@ def investigate(
         session.add(report)
         session.flush()
         emit({"type": "done", "report_id": str(report.id)})
-        report.trace = [*emit.trace, {"type": "validation", **(validation or {})}]
+        report.trace = [*emit.trace, {"type": "validation", **(validation or {})},
+                        timing_entry(t0, started)]
         session.flush()
         return report
     except Exception as e:
