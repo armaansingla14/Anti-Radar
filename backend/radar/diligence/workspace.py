@@ -64,7 +64,8 @@ def index(session: Session, *, include_demo: bool = False) -> dict[str, Any]:
         st = diligence_status(session, cid)
         run = latest_run(session, cid, complete_only=True) or latest_run(session, cid)
         workspaces.append({"company": company_ref(c, doms.get(cid)), "status": st["status"],
-                           "run": run_summary(run), "finished_at": st.get("finished_at")})
+                           "run": run_summary(run), "finished_at": st.get("finished_at"),
+                           "pending_review": st.get("pending_review", []), "last_error": st.get("last_error")})
     workspaces.sort(key=lambda w: (w["finished_at"] is None, -(_ts(w["finished_at"])), w["company"]["slug"]))
 
     q = select(Company.id).where(Company.dismissed.is_(False),
@@ -104,8 +105,8 @@ def review_out(r: ReviewDecision) -> dict[str, Any]:
             "note": r.note, "reviewer": r.reviewer, "created_at": _iso(r.created_at)}
 
 
-def _claim_out(row: DiligenceClaim, body_claim: dict[str, Any] | None, reviews: list[dict[str, Any]],
-               *, full: bool = True) -> dict[str, Any]:
+def _claim_out(row: DiligenceClaim, body_claim: dict[str, Any] | None, reviews: list[dict[str, Any]]
+               ) -> dict[str, Any]:
     b = body_claim or {}
     return {
         "id": str(row.id), "ordinal": row.ordinal, "text": row.claim_text, "claim_type": row.claim_type,
@@ -118,7 +119,7 @@ def _claim_out(row: DiligenceClaim, body_claim: dict[str, Any] | None, reviews: 
         "company_evidence": (b.get("company_evidence") or [])[:MAX_EVIDENCE_OUT],
         "independent_evidence": (b.get("independent_evidence") or [])[:MAX_EVIDENCE_OUT],
         "contradictory_evidence": (b.get("contradictory_evidence") or [])[:MAX_EVIDENCE_OUT],
-        "test_plan": row.test_plan if full else ({"available": True} if row.test_plan else None),
+        "test_plan": row.test_plan,
         "reviews": reviews,
     }
 
@@ -163,7 +164,7 @@ def workspace(session: Session, company: Company) -> dict[str, Any]:
                    "sources_analyzed": run.sources_analyzed, "last_updated": _iso(run.finished_at),
                    "technical_domain": domain},
         "executive_summary": body.get("executive_summary"),
-        "claims": [_claim_out(r, by_ord.get(r.ordinal), revs.get(str(r.id), []), full=False) for r in rows],
+        "claims": [_claim_out(r, by_ord.get(r.ordinal), revs.get(str(r.id), [])) for r in rows],
         "underwriting": underwriting,
         "contradictions": body.get("contradictory_evidence") or [],
         "risks": body.get("key_risks") or [],

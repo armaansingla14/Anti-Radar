@@ -136,7 +136,10 @@ RISK_SCALE: tuple[str, ...] = ("LOW", "MODERATE", "HIGH", "UNKNOWN")
 
 def definitions() -> dict[str, dict[str, str]]:
     """Every definition, for the API and the report appendix."""
+    from radar.diligence.rules import RULES  # rules imports this module
+
     return {
+        "rules": dict(RULES),
         "claim_types": {str(k): v for k, v in CLAIM_TYPE_DEFINITIONS.items()},
         "statuses": {str(k): v for k, v in STATUS_DEFINITIONS.items()},
         "status_labels": {str(k): v for k, v in STATUS_LABELS.items()},

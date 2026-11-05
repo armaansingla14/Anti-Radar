@@ -498,6 +498,16 @@ def _independent(items: Any) -> list[dict]:
             and str(e.get("publisher") or "").lower() not in ("company", "")]
 
 
+def _cited_source_ids(cl: dict) -> set[str]:
+    """S-ids a diligence claim cites: its own source and every evidence item's (gaps cite nothing)."""
+    ids = {str(cl.get("source_id")).upper()} if cl.get("source_id") else set()
+    for key in ("company_evidence", "independent_evidence", "contradictory_evidence", "evidence"):
+        for e in cl.get(key) or []:
+            if isinstance(e, dict) and e.get("source_id") and not e.get("gap"):
+                ids.add(str(e["source_id"]).upper())
+    return ids
+
+
 def check_diligence(body: dict) -> CheckResult:
     """Structural rules for a diligence report (claims with a verification status)."""
     res = CheckResult()
@@ -506,8 +516,10 @@ def check_diligence(body: dict) -> CheckResult:
         status = str(cl.get("verification_status") or cl.get("status") or "").upper()
         url = cl.get("source_url")
         quote = cl.get("source_quote") or cl.get("quote")
+        ids = _cited_source_ids(cl)
+        res.cited_ids.update(ids)
         res.claims.append(ClaimRef(section="claims", text=text, epistemic=cl.get("epistemic") or "COMPANY_CLAIM",
-                                   source_ids=[]))
+                                   source_ids=sorted(ids)))
         if url:
             res.citations_total += 1
         if not url or not quote:

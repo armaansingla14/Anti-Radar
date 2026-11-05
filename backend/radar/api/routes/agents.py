@@ -129,7 +129,7 @@ def _failure_out(session: Session, f: AgentFailure) -> FailureOut:
         report_id=str(f.report_id) if f.report_id else None, entity_ref=f.entity_ref, claim_text=f.claim_text,
         evidence_summary=f.evidence_summary or "", category=f.category, severity=f.severity,
         resolution=f.resolution or "", regression_case=f.regression_case, regression_test=f.regression_test,
-        status=f.status, origin=f.origin, source_ref=f.source_ref, detected_at=f.detected_at,
+        related_tests=F.related_tests(f.source_ref), status=f.status, origin=f.origin, source_ref=f.source_ref, detected_at=f.detected_at,
         created_at=f.created_at, updated_at=f.updated_at,
         reviews=[ReviewOut(decision=r.decision, note=r.note, reviewer=r.reviewer, created_at=r.created_at)
                  for r in F.review_history(session, f.number)],

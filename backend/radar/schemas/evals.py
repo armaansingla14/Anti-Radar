@@ -158,6 +158,7 @@ class FailureOut(BaseModel):
     resolution: str
     regression_case: str | None = None
     regression_test: str | None = None
+    related_tests: list[str] = Field(default_factory=list)
     status: str
     origin: str
     source_ref: str | None = None

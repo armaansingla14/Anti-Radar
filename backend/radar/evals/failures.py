@@ -253,7 +253,7 @@ DOCUMENTED: list[dict[str, Any]] = [
         "entity_ref": None,
         "claim_text": "Meeting brief text \"Founder Score 48/100\" flagged as a prompt-injection attempt "
                       "(output_follows_injection, HIGH) on 5 of 5 template meeting briefs",
-        "category": "TOOL_FAILURE", "severity": "HIGH", "status": "FIXED",
+        "category": "TOOL_FAILURE", "severity": "HIGH", "status": "FIXED", "origin": "evaluator",
         "evidence_summary": "Found by the agent evaluator, not by a person: the guard pattern "
                             "`(rate|score|rank) ... 100` matched reported scores such as 'Score 48/100'. A false "
                             "positive also disables live tools for an analyst run (any flagged source stops live "
@@ -395,19 +395,30 @@ def _summary(d: dict[str, Any]) -> str:
     return d["evidence_summary"] + (f" Related tests: {', '.join(rel)}." if rel else "")
 
 
+def related_tests(source_ref: str | None) -> list[str]:
+    """Related test node ids of a documented failure (by its source_ref); [] for any other failure."""
+    if not source_ref:
+        return []
+    return next((list(d.get("related_tests") or []) for d in DOCUMENTED if d["source_ref"] == source_ref), [])
+
+
 def seed_documented_failures(session: Session) -> dict[str, int]:
-    """Idempotent by (origin='documented', source_ref). Updates the text fields; keeps a status a human changed."""
+    """Idempotent by source_ref among ledger entries. Updates the text fields; keeps a status a human changed.
+
+    An entry's ``origin`` says who found the failure: 'documented' (a person) unless the entry says 'evaluator'."""
     created = updated = 0
     for d in DOCUMENTED:
-        row = session.scalar(select(AgentFailure).where(AgentFailure.origin == "documented",
+        origin = d.get("origin", "documented")
+        row = session.scalar(select(AgentFailure).where(AgentFailure.origin.in_(("documented", "evaluator")),
                                                         AgentFailure.source_ref == d["source_ref"]))
         fields = {k: d.get(k) for k in _SEED_FIELDS}
         fields["evidence_summary"] = _summary(d)
         if row is None:
-            create_failure(session, origin="documented", source_ref=d["source_ref"], status=d["status"], **fields)
+            create_failure(session, origin=origin, source_ref=d["source_ref"], status=d["status"], **fields)
             created += 1
             continue
-        changed = False
+        changed = row.origin != origin
+        row.origin = origin
         for k, v in fields.items():
             if k == "resolution" and review_history(session, row.number):
                 continue  # reviewer notes were appended; keep them

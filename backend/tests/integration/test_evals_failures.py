@@ -24,11 +24,22 @@ BACKEND = Path(__file__).resolve().parents[2]
 NODE_RE = re.compile(r"^(?P<path>tests/[\w/]+\.py)::(?P<name>\w+)(\[(?P<param>[\w.-]+)\])?$")
 
 
+def test_related_tests_are_exposed_for_ledger_entries():
+    from radar.evals.failures import DOCUMENTED, related_tests
+
+    ref = next(d["source_ref"] for d in DOCUMENTED if d.get("related_tests"))
+    assert related_tests(ref) and all("::" in t for t in related_tests(ref))
+    assert related_tests(None) == [] and related_tests("rule:unknown") == []
+
+
 def test_seeding_is_idempotent_with_documented_statuses(db):
     assert seed_documented_failures(db) == {"created": 20, "updated": 0}
     assert seed_documented_failures(db) == {"created": 0, "updated": 0}
     rows = list_failures(db)
-    assert [f.number for f in rows] == list(range(1, 21)) and all(f.origin == "documented" for f in rows)
+    assert [f.number for f in rows] == list(range(1, 21))
+    found_by_evaluator = [f for f in rows if f.origin == "evaluator"]
+    assert len(found_by_evaluator) == 1 and "Founder Score 48/100" in found_by_evaluator[0].claim_text
+    assert all(f.origin == "documented" for f in rows if f not in found_by_evaluator)
     by_ref = {f.source_ref: f for f in rows}
     assert by_ref["docs/REAL_WORLD_EVALUATION.md §6.1"].status == "FIXED"
     assert by_ref["docs/REAL_WORLD_EVALUATION.md §6.1"].category == "MISSING_COUNTEREVIDENCE"

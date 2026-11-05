@@ -189,3 +189,17 @@ def test_diligence_structural_rules():
     assert got == [("diligence_status_without_independent_evidence", "2x faster than vLLM"),
                    ("diligence_claim_unsourced", "Trusted by 50 teams")]
     assert res.unsupported == {0, 2} and len(res.claims) == 4
+
+
+def test_diligence_claims_count_their_cited_sources():
+    """Diligence citations live on the claim and its evidence items (S-ids), not inline: they were counted as 0 used."""
+    body = {"claims": [
+        {"claim_text": "Open source", "verification_status": "VERIFIED", "source_id": "S1", "source_url": "u",
+         "source_quote": "q", "independent_evidence": [{"publisher": "code", "source_id": "s3"},
+                                                       {"publisher": "code", "gap": True, "source_id": "S9"}]},
+        {"claim_text": "2x faster", "verification_status": "UNVERIFIED", "source_id": "S1", "source_url": "u",
+         "source_quote": "q", "company_evidence": [{"publisher": "company", "source_id": "S2"}]},
+    ]}
+    res = check_diligence(body)
+    assert res.cited_ids == {"S1", "S2", "S3"}
+    assert res.claims[0].source_ids == ["S1", "S3"]

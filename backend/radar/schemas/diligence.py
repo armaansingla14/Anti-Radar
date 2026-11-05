@@ -58,6 +58,8 @@ class WorkspaceSummary(BaseModel):
     status: DiligenceState
     run: DiligenceRunSummary | None = None
     finished_at: str | None = None
+    pending_review: list[dict[str, str]] = Field(default_factory=list)
+    last_error: str | None = None
 
 
 class DiligenceCandidate(BaseModel):

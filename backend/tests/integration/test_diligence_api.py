@@ -50,7 +50,8 @@ def test_workspace_payload(client, seeded_run):
     assert ws["company"]["id"] == str(c.id) and ws["status"]["status"] == "NEEDS_REVIEW"
     assert ws["header"]["sources_analyzed"] == 29 and ws["header"]["date"] == "2026-10-06"
     assert len(ws["claims"]) == 12 and ws["claims"][0]["ordinal"] == 1
-    assert ws["claims"][0]["test_plan"] in (None, {"available": True})  # full plans come from the claim endpoint
+    plan = ws["claims"][0]["test_plan"]
+    assert plan is None or "procedure" in plan  # full plans are in the workspace (no per-claim request)
     assert {u["key"] for u in ws["underwriting"]} >= {"CLAIM_VERIFICATION", "SECURITY", "OPEN_SOURCE_HEALTH"}
     assert all(u["target_id"] == f"{run.id}:{u['key']}" for u in ws["underwriting"])
     assert ws["contradictions"] and ws["questions"] and ws["sources"] and ws["unknowns"]
