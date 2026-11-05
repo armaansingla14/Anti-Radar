@@ -84,7 +84,7 @@ Beyond the ledger, each workspace has:
 - **The critical founder question:** the repository is Apache-2.0, but `studio/` ships under AGPL-3.0.
 - **Open-source health:** a HIGH risk, since 61% of commits come from one contributor.
 
-A hand audit of this run found 9 real extraction and matching errors. Each one is filed in the failure ledger with a regression test. Method: [`docs/DILIGENCE_METHOD.md`](docs/DILIGENCE_METHOD.md). Tour script: [`demo/DILIGENCE_DEMO_SCRIPT.md`](demo/DILIGENCE_DEMO_SCRIPT.md).
+A hand audit of this run found 9 real extraction and matching errors. Each one is filed in the failure ledger with a regression test. Method: [`docs/DILIGENCE_METHOD.md`](docs/DILIGENCE_METHOD.md). Release status: [`docs/V3_READY.md`](docs/V3_READY.md). Tour script: [`demo/DILIGENCE_DEMO_SCRIPT.md`](demo/DILIGENCE_DEMO_SCRIPT.md).
 
 ## Agent evaluation
 
