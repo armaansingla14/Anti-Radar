@@ -105,7 +105,8 @@ export default async function FormationReportPage({ params }: PageProps<"/format
       <Quiet>Nothing to draw yet — no recorded links between these entities.</Quiet>
     ),
     <span>
-      <span className="tnum">{personTies}</span> person–person {personTies === 1 ? "tie" : "ties"} · hover to trace · click to open
+      <span className="tnum">{personTies}</span> person–person {personTies === 1 ? "tie" : "ties"}
+      <span className="max-sm:hidden"> · hover to trace · click to open</span>
     </span>,
   );
   const timeline = sec(

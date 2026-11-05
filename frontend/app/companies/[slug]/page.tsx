@@ -191,7 +191,9 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
           "team-graph",
           "Team graph",
           <EntityGraph graph={graph} focalId={c.id} />,
-          <span>2 hops · hover to trace</span>,
+          <span>
+            2 hops<span className="max-sm:hidden"> · hover to trace</span>
+          </span>,
         )
       : null;
   const repos = sec("repositories", "Repositories", <RepoTable repos={detail.repositories} />, <span className="tnum">{detail.repositories.length}</span>);

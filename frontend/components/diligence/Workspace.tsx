@@ -503,7 +503,7 @@ export function ClaimAssessment({
         writable={writable}
       />
       {testable && (
-        <details className="group/plan border-t border-ink pt-2" open={planOpen}>
+        <details className="group/plan border-t border-ink pt-2" open={planOpen} data-demo="test-plan">
           <summary className="label flex cursor-pointer list-none items-baseline justify-between text-ink hover:text-accent [&::-webkit-details-marker]:hidden">
             <span>Test plan · generated, not run</span>
             <span aria-hidden className="text-ink-3 group-open/plan:hidden">+</span>
@@ -737,7 +737,7 @@ export function Questions({ items, demo, claimLink = (o) => `#claim-${o}` }: { i
   return (
     <ol className="border-t border-ink">
       {items.map((q, i) => (
-        <li key={i} className="grid grid-cols-[34px_minmax(0,1fr)] gap-x-3 border-b border-rule py-4">
+        <li key={i} id={`question-${i + 1}`} className="grid scroll-mt-24 grid-cols-[34px_minmax(0,1fr)] gap-x-3 border-b border-rule py-4">
           <span className="tnum pt-1 font-mono text-[11px] text-ink-3">{String(i + 1).padStart(2, "0")}</span>
           <div className="min-w-0">
             <p className="font-serif text-[18px] leading-snug text-ink">{q.question}</p>

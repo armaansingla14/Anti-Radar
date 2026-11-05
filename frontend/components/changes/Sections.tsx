@@ -208,12 +208,13 @@ export function SignalsByFamily({ total, families }: { total: number; families: 
 
 // ── Score changes ────────────────────────────────────────────────────────────
 
-function ScoreRow({ c, focus }: { c: ScoreChange; focus?: string }) {
+function ScoreRow({ c, focus, diligence }: { c: ScoreChange; focus?: string; diligence?: ReadonlySet<string> }) {
   const href = refHref({ type: c.entity_type, slug: c.slug, id: c.id });
   const comps = topComponents(c);
   const up = c.delta > 0;
+  const workspace = c.entity_type === "company" && c.slug && diligence?.has(c.slug) ? `/diligence/${encodeURIComponent(c.slug)}` : null;
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 py-2.5">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 py-2.5" data-demo="score-row" data-demo-slug={c.slug ?? undefined}>
       <div className="min-w-0">
         {href ? (
           <Link href={href} className="font-serif text-[16.5px] leading-tight text-ink decoration-accent decoration-1 underline-offset-4 hover:underline">
@@ -221,6 +222,16 @@ function ScoreRow({ c, focus }: { c: ScoreChange; focus?: string }) {
           </Link>
         ) : (
           <span className="font-serif text-[16.5px] leading-tight text-ink">{c.name}</span>
+        )}
+        {workspace && (
+          <Link
+            href={workspace}
+            data-demo="open-diligence"
+            className="ml-2.5 font-mono text-[9.5px] uppercase tracking-[0.08em] text-accent hover:underline"
+            title="A technical diligence workspace exists for this company"
+          >
+            Open diligence →
+          </Link>
         )}
         {comps.length > 0 && (
           <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10.5px] text-ink-2">
@@ -245,7 +256,23 @@ function ScoreRow({ c, focus }: { c: ScoreChange; focus?: string }) {
   );
 }
 
-function ScoreColumn({ id, title, list, tone, empty, focus }: { id: string; title: string; list: ScoreChangeList; tone: "up" | "down"; empty: string; focus?: string }) {
+function ScoreColumn({
+  id,
+  title,
+  list,
+  tone,
+  empty,
+  focus,
+  diligence,
+}: {
+  id: string;
+  title: string;
+  list: ScoreChangeList;
+  tone: "up" | "down";
+  empty: string;
+  focus?: string;
+  diligence?: ReadonlySet<string>;
+}) {
   return (
     <div className="min-w-0">
       <div id={id} className={clsx("flex items-baseline justify-between gap-3 border-b-2 pb-2", tone === "up" ? "border-accent" : "border-ink")}>
@@ -259,7 +286,7 @@ function ScoreColumn({ id, title, list, tone, empty, focus }: { id: string; titl
         <Quiet>{empty}</Quiet>
       ) : (
         <>
-          <Folded items={list.items} keyOf={(x) => x.id} noun="listed" render={(x) => <ScoreRow c={x} focus={focus} />} />
+          <Folded items={list.items} keyOf={(x) => x.id} noun="listed" render={(x) => <ScoreRow c={x} focus={focus} diligence={diligence} />} />
           {list.items.length < list.count && <p className="label mt-1 text-ink-3">Top {list.items.length} of {list.count} listed</p>}
         </>
       )}
@@ -267,7 +294,8 @@ function ScoreColumn({ id, title, list, tone, empty, focus }: { id: string; titl
   );
 }
 
-export function ScoreChangesBlock({ report }: { report: ChangesReport }) {
+/** `diligence`: company slugs with a diligence workspace (their rows get an "Open diligence" link). */
+export function ScoreChangesBlock({ report, diligence }: { report: ChangesReport; diligence?: ReadonlySet<string> }) {
   const s = report.score_changes;
   const base = dayLabel(report.base_day) ?? "the base day";
   const facts: [string, ReactNode][] = [
@@ -300,8 +328,8 @@ export function ScoreChangesBlock({ report }: { report: ChangesReport }) {
       </p>
       {s.comparable && (
         <div className="mt-6 grid gap-x-12 gap-y-10 lg:grid-cols-2">
-          <ScoreColumn id="accelerated" title="Accelerated" list={s.accelerated} tone="up" empty="No compared company rose by the threshold or more." />
-          <ScoreColumn id="weakened" title="Weakened" list={s.weakened} tone="down" empty="No compared company fell by the threshold or more." />
+          <ScoreColumn id="accelerated" title="Accelerated" list={s.accelerated} tone="up" empty="No compared company rose by the threshold or more." diligence={diligence} />
+          <ScoreColumn id="weakened" title="Weakened" list={s.weakened} tone="down" empty="No compared company fell by the threshold or more." diligence={diligence} />
         </div>
       )}
     </div>

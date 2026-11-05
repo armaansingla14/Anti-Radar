@@ -34,6 +34,20 @@ function statusText(s: WarmStatus | null, error: string | null): string {
   return "Preparing the radar…";
 }
 
+/** Title-card copy; the defaults are the /demo tour's. */
+export interface TitleCopy {
+  tagline: string;
+  dek: string;
+  /** Shown next to Start once the tour is ready, e.g. "Ready · ten scenes · about three minutes". */
+  readyLine: string;
+}
+
+export const RADAR_TITLE: TitleCopy = {
+  tagline: "Conviction Before Consensus.",
+  dek: "This isn't another startup database. Radar looks for technical change before a company becomes obvious.",
+  readyLine: "Ready · ten scenes · about three minutes",
+};
+
 export function TitleCard({
   visible,
   ready,
@@ -43,6 +57,7 @@ export function TitleCard({
   isSnapshot,
   onStart,
   onRetry,
+  copy = RADAR_TITLE,
 }: {
   visible: boolean;
   ready: boolean;
@@ -52,6 +67,7 @@ export function TitleCard({
   isSnapshot: boolean;
   onStart: () => void;
   onRetry: () => void;
+  copy?: TitleCopy;
 }) {
   return (
     <section
@@ -76,12 +92,10 @@ export function TitleCard({
           </Rise>
           <Rise delay={420} className="mt-9 flex items-center gap-6">
             <span aria-hidden className="h-px w-16 bg-ink" />
-            <p className="font-serif text-[clamp(30px,3.1vw,48px)] italic leading-tight text-ink">Conviction Before Consensus.</p>
+            <p className="font-serif text-[clamp(30px,3.1vw,48px)] italic leading-tight text-ink">{copy.tagline}</p>
           </Rise>
           <Rise delay={720}>
-            <p className="ml-[88px] mt-5 max-w-[54ch] text-[18px] leading-relaxed text-ink-2">
-              This isn&apos;t another startup database. Radar looks for technical change before a company becomes obvious.
-            </p>
+            <p className="ml-[88px] mt-5 max-w-[54ch] text-[18px] leading-relaxed text-ink-2">{copy.dek}</p>
           </Rise>
 
           <Rise delay={1020} className="ml-[88px] mt-14 flex flex-wrap items-center gap-x-8 gap-y-3">
@@ -115,7 +129,7 @@ export function TitleCard({
             <div className="min-w-[280px]" aria-live="polite">
               {ready && !error ? (
                 <p className="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-2">
-                  Ready · ten scenes · about three minutes
+                  {copy.readyLine}
                 </p>
               ) : (
                 <div>
@@ -145,6 +159,18 @@ export function TitleCard({
   );
 }
 
+export interface FinalStat {
+  n: number | null;
+  label: string;
+  glyph?: string;
+}
+
+/** Closing-card copy; the defaults are the /demo tour's ("CONVICTION BEFORE CONSENSUS." + radar counts). */
+export interface FinalCopy {
+  heading: ReactNode;
+  stats: FinalStat[];
+}
+
 export function FinalCard({
   visible,
   asOf,
@@ -153,6 +179,7 @@ export function FinalCard({
   people,
   onReplay,
   onExit,
+  copy,
 }: {
   visible: boolean;
   asOf: string | null;
@@ -161,7 +188,20 @@ export function FinalCard({
   people: number;
   onReplay: () => void;
   onExit: () => void;
+  copy?: FinalCopy | null;
 }) {
+  const heading = copy?.heading ?? (
+    <>
+      CONVICTION
+      <br />
+      BEFORE <span className="text-accent">CONSENSUS.</span>
+    </>
+  );
+  const stats: FinalStat[] = copy?.stats ?? [
+    { n: formations, label: "formation candidates on the radar today" },
+    { n: people, label: "people worth a first conversation this week" },
+    { n: null, label: "every fact carries its public source", glyph: "§" },
+  ];
   return (
     <section
       data-demo="demo-final"
@@ -179,16 +219,12 @@ export function FinalCard({
             </p>
           </Rise>
           <Rise delay={350} className="mt-6 border-t border-ink pt-10">
-            <h2 className="font-serif text-[clamp(56px,7.2vw,118px)] font-normal leading-[0.95] tracking-[0.03em] text-ink">
-              CONVICTION
-              <br />
-              BEFORE <span className="text-accent">CONSENSUS.</span>
-            </h2>
+            <h2 className="font-serif text-[clamp(56px,7.2vw,118px)] font-normal leading-[0.95] tracking-[0.03em] text-ink">{heading}</h2>
           </Rise>
           <Rise delay={750} className="mt-10 grid max-w-[980px] grid-cols-3 gap-10 border-t border-rule pt-5">
-            <Stat n={formations} label="formation candidates on the radar today" />
-            <Stat n={people} label="people worth a first conversation this week" />
-            <Stat n={null} label="every fact carries its public source" glyph="§" />
+            {stats.map((st) => (
+              <Stat key={st.label} n={st.n} label={st.label} glyph={st.glyph} />
+            ))}
           </Rise>
           <Rise delay={1050} className="mt-14 flex items-center gap-8">
             <button

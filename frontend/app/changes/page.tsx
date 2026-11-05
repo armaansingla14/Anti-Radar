@@ -17,6 +17,8 @@ import {
   SignalsByFamily,
 } from "@/components/changes/Sections";
 import { ApiError, getChanges } from "@/lib/api";
+import { loadDiligenceIndex } from "@/components/entity/data";
+import { workspaceMap } from "@/components/diligence/logic";
 import type { ChangesReport } from "@/lib/types-changes";
 
 export const metadata: Metadata = { title: "What changed" };
@@ -50,6 +52,7 @@ function RangePicker({ report }: { report: ChangesReport }) {
 
 export default async function ChangesPage({ searchParams }: PageProps<"/changes">) {
   const range = parseRange(await searchParams);
+  const diligenceP = loadDiligenceIndex(); // "Open diligence" on score rows: one fetch for the page
   let report: ChangesReport | null = null;
   let rejected: string | null = null;
   try {
@@ -76,6 +79,7 @@ export default async function ChangesPage({ searchParams }: PageProps<"/changes"
   }
 
   const r = report;
+  const diligence = new Set(workspaceMap(await diligenceP).keys());
   const s = r.score_changes;
   const contents: [string, string, number | null][] = [
     [S.companies, "New companies", r.new_companies.count],
@@ -171,7 +175,7 @@ export default async function ChangesPage({ searchParams }: PageProps<"/changes"
           S.scores,
           "Score changes",
           s.comparable ? <span className="tnum">{s.compared} compared</span> : <span>not compared</span>,
-          <ScoreChangesBlock report={r} />,
+          <ScoreChangesBlock report={r} diligence={diligence} />,
         )}
 
         {sec(S.momentum, "Momentum acceleration", <span className="tnum">{r.momentum_acceleration.count}</span>, <MomentumBlock list={r.momentum_acceleration} />)}

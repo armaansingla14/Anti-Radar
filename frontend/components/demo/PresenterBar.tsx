@@ -11,7 +11,7 @@ const key =
   "inline-flex h-8 w-8 items-center justify-center border font-mono text-[13px] transition-colors disabled:cursor-default disabled:opacity-30";
 
 /**
- * Slim presenter strip under the stage (never over it): scene N/10, the scene name, one line of context
+ * Slim presenter strip under the stage (never over it): scene N / total, the scene name, one line of context
  * built from the data, ← → and Exit. A burgundy hairline on its top edge shows progress. H hides it.
  */
 export function PresenterBar({
@@ -23,7 +23,10 @@ export function PresenterBar({
   onPrev,
   onNext,
   onExit,
+  total = SCENE_COUNT,
 }: {
+  /** Scenes in this tour (the counter reads "NN / total"). */
+  total?: number;
   step: DemoStep;
   hidden: boolean;
   settled: boolean;
@@ -33,7 +36,7 @@ export function PresenterBar({
   onNext: () => void;
   onExit: () => void;
 }) {
-  const progress = Math.min(1, step.scene / SCENE_COUNT);
+  const progress = Math.min(1, step.scene / total);
   return (
     <div
       data-demo="demo-bar"
@@ -56,7 +59,7 @@ export function PresenterBar({
         <span aria-hidden className="h-5 w-px shrink-0 bg-rule-strong" />
         <span data-demo="demo-counter" className="tnum shrink-0 font-mono text-[11.5px] tracking-[0.08em] text-ink">
           {pad2(step.scene)}
-          <span className="text-ink-3"> / {SCENE_COUNT}</span>
+          <span className="text-ink-3"> / {total}</span>
         </span>
         <span data-demo="demo-scene-title" className="shrink-0 font-serif text-[19px] italic leading-none text-ink">
           {step.title}

@@ -20,7 +20,8 @@ export type SceneKey =
 /** One stop of the tour. A scene has one or more steps (e.g. list → detail). */
 export interface DemoStep {
   scene: number;
-  scene_key: SceneKey;
+  /** SceneKey for the /demo tour; other tours (e.g. /demo/diligence) use their own keys. "final" shows the closing card. */
+  scene_key: SceneKey | (string & {});
   /** Short scene name for the presenter bar. */
   title: string;
   /** One quiet line describing what is on screen (built from data). */
@@ -57,10 +58,16 @@ export interface LabMember {
   candidate_slug: string;
 }
 
-export interface DemoPlan {
+/** What the presenter needs from any tour's plan. */
+export interface TourPlan {
   as_of: string | null;
   is_snapshot: boolean;
   steps: DemoStep[];
+  /** The entities the tour picked (for the script, screenshots and tests). */
+  picks: object;
+}
+
+export interface DemoPlan extends TourPlan {
   /** Entities chosen, for the script / screenshots / tests. */
   picks: {
     candidate: { slug: string; title: string; score: number; precise: number; tier: string; families: string[]; independent_signals: number } | null;

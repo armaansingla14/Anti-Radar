@@ -11,7 +11,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 class Waking extends Error {}
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" }, signal });
@@ -28,7 +28,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 /** GET with retries while the backend is waking (503 backend_waking / network errors), up to `budgetMs`. */
-async function getWhileWaking<T>(path: string, onStatus: (s: WarmStatus) => void, signal: AbortSignal, budgetMs = 180_000): Promise<T> {
+export async function getWhileWaking<T>(path: string, onStatus: (s: WarmStatus) => void, signal: AbortSignal, budgetMs = 180_000): Promise<T> {
   const end = Date.now() + budgetMs;
   for (let attempt = 1; ; attempt++) {
     try {
@@ -41,7 +41,7 @@ async function getWhileWaking<T>(path: string, onStatus: (s: WarmStatus) => void
   }
 }
 
-async function optional<T>(p: Promise<T>, fallback: T): Promise<T> {
+export async function optional<T>(p: Promise<T>, fallback: T): Promise<T> {
   try {
     return await p;
   } catch {
@@ -70,9 +70,16 @@ export async function warmAndPlan(onStatus: (s: WarmStatus) => void, signal: Abo
     : [];
   const plan = buildPlan({ home, formation, meet, companies, briefs, meetingBriefs });
 
-  // Warm every page the tour opens (server render + backend queries), bounded so Start is never held long.
-  // Skipped when this tab warmed them in the last ten minutes (a reload should land on Start quickly).
-  const urls = [...new Set(plan.steps.map((s) => s.url).filter((u): u is string => !!u))];
+  await warmPages(plan.steps.map((st) => st.url), onStatus, signal);
+  return plan;
+}
+
+/**
+ * Warm every page a tour opens (server render + backend queries), bounded so Start is never held long.
+ * Skipped when this tab warmed the same pages in the last ten minutes (a reload should land on Start quickly).
+ */
+export async function warmPages(urls_: (string | null)[], onStatus: (s: WarmStatus) => void, signal: AbortSignal): Promise<void> {
+  const urls = [...new Set(urls_.filter((u): u is string => !!u))];
   const key = `anti-demo-warmed:${urls.join("|")}`;
   let warmedAt = 0;
   try {
@@ -92,5 +99,4 @@ export async function warmAndPlan(onStatus: (s: WarmStatus) => void, signal: Abo
       /* storage unavailable */
     }
   }
-  return plan;
 }

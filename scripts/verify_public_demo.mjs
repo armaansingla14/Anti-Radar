@@ -55,13 +55,34 @@ const ROUTES = [
   ["/formation", "Technical teams before the company announcement"], ["/formation/person-sameh-khamis", "Sameh Khamis"],
   ["/meet", "Who should we meet"], ["/founders", "Kevin Zakka"], ["/founders/kevin-zakka", "Kevin Zakka"],
   ["/companies", "ShengShu"], ["/companies/shengshu", "ShengShu"],
-  ["/reports/a89e4ce9-2cc8-4a75-a2e1-752565e09141", "Anti Brief"], ["/reports/f6a438de-8eab-48d5-a661-c32523a00597", "Meeting Brief"],
   ["/thesis", null], ["/daily", null], ["/brief/today", null], ["/status", null], ["/search?q=vllm", "vLLM"], ["/watchlist", null],
   ["/retrospective", null],
+  // V3: since last snapshot, technical diligence, agent evaluation.
+  ["/changes", "Oct 20"], ["/diligence", "what should we believe"], ["/diligence/unsloth-ai", "Unsloth AI"],
+  ["/diligence/unsloth-ai/claims/1", "Not executed"], ["/companies/unsloth-ai?tab=diligence", "Open diligence"],
+  ["/agents", "can we trust the research system"], ["/agents/failures", "FAILURE 0001"], ["/agents/cases", "injection-false-positive-001"],
+  ["/demo/diligence", null],
 ];
 
+// Report ids change with every reseed: resolve one Anti Brief and one Meeting Brief from the deployed data.
+async function reportRoutes() {
+  const out = [];
+  const briefs = await http(`${BASE}/api/proxy/reports?kind=brief&limit=50`, { accept: "application/json" });
+  try {
+    const rows = JSON.parse(briefs.body);
+    const id = (Array.isArray(rows) ? rows : rows.items ?? [])[0]?.id;
+    id ? out.push([`/reports/${id}`, "Anti Brief"]) : fail("resolve an Anti Brief", "no brief in /api/proxy/reports");
+  } catch {
+    fail("resolve an Anti Brief", `HTTP ${briefs.status || briefs.error}`);
+  }
+  const meet = await http(`${BASE}/meet`);
+  const ids = [...new Set([...meet.body.matchAll(/\/reports\/([0-9a-f-]{36})/g)].map((m) => m[1]))];
+  ids.length ? out.push([`/reports/${ids[0]}`, "Meeting Brief"]) : fail("resolve a Meeting Brief", "no report link on /meet");
+  return out;
+}
+
 async function checkHttp() {
-  for (const [route, expect] of ROUTES) {
+  for (const [route, expect] of [...ROUTES, ...(await reportRoutes())]) {
     const r = await http(`${BASE}${route}`);
     const bad = BAD_TEXT.find((re) => re.test(r.body.replace(/data-[a-z-]+="[^"]*"/g, "")));
     if (r.status !== 200) fail(`GET ${route}`, `HTTP ${r.status || r.error}`);

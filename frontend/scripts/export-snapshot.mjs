@@ -125,7 +125,7 @@ async function main() {
   const pages = [
     "/", "/?new=today", "/?new=week", "/formation", "/meet", "/meet?week=current", "/founders", "/companies", "/thesis",
     "/daily", "/brief", "/brief/today", "/status", "/watchlist", "/retrospective", "/search", "/unlock", "/demo",
-    "/changes", "/diligence",
+    "/changes", "/diligence", "/demo/diligence",
     ...diligencePages,
     ...agentPages,
     ...["high", "emerging", "early"].map((t) => `/formation?tier=${t}`),
@@ -153,6 +153,9 @@ async function main() {
     ...(meetTop ? [`/reports?entity_id=${meetTop.person.id}&kind=meeting_brief&limit=5`] : []),
     ...candidates.map((c) => `/formation/${c.id}/score`),
     ...reports.map((r) => `/reports/${r.id}/markdown`),
+    // /demo/diligence pre-flight (the most recent workspace, its company, where it shows in Radar, the agents' audit trail).
+    "/diligence", "/changes", "/agents", "/agents/failures", "/agents/cases",
+    ...workspaces.flatMap((w) => [`/diligence/${w.company.slug}`, `/companies/${w.company.slug}`]),
     ...Array.from({ length: Math.ceil(companies.length / COMPANY_PAGE) }, (_, i) => `/companies?limit=${COMPANY_PAGE}&offset=${(i + 1) * COMPANY_PAGE}`),
     ...Array.from({ length: Math.ceil(people.length / FOUNDER_PAGE) }, (_, i) => `/founders?limit=${FOUNDER_PAGE}&offset=${(i + 1) * FOUNDER_PAGE}`),
   ].map((p) => `/api/proxy${p}`);

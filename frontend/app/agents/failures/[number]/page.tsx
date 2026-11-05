@@ -17,9 +17,9 @@ export async function generateMetadata({ params }: PageProps<"/agents/failures/[
   return { title: n ? `${failureDisplay({ number: n })} · Agents` : "Failure · Agents" };
 }
 
-function Row({ k, children }: { k: string; children: ReactNode }) {
+function Row({ k, children, demo }: { k: string; children: ReactNode; demo?: string }) {
   return (
-    <div className="grid gap-x-6 gap-y-1 border-b border-rule py-3.5 md:grid-cols-[180px_minmax(0,1fr)]">
+    <div className="grid gap-x-6 gap-y-1 border-b border-rule py-3.5 md:grid-cols-[180px_minmax(0,1fr)]" data-demo={demo}>
       <dt className="label pt-0.5 text-ink">{k}</dt>
       <dd className="min-w-0 text-[14px] leading-relaxed text-ink">{children}</dd>
     </div>
@@ -62,7 +62,7 @@ export default async function FailurePage({ params }: PageProps<"/agents/failure
   const writable = canWrite(session, dataSource() === "snapshot");
 
   return (
-    <article className="mx-auto max-w-[980px] pb-16">
+    <article className="mx-auto max-w-[980px] pb-16" data-demo="failure" data-demo-number={f.number}>
       <header className="border-b-[3px] border-double border-ink pb-6">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <Link href="/agents" className="label link text-ink-2">
@@ -115,7 +115,7 @@ export default async function FailurePage({ params }: PageProps<"/agents/failure
           <span className="label mb-1 block text-ink-3">What the system asserted</span>
           <span className="font-serif text-[18px] leading-snug">{f.claim_text}</span>
         </Row>
-        <Row k="Evidence">
+        <Row k="Evidence" demo="failure-evidence">
           <span className="label mb-1 block text-ink-3">Why it was wrong</span>
           {evidenceText(f.evidence_summary, f.related_tests) || <span className="text-ink-3">No evidence summary recorded.</span>}
         </Row>
@@ -131,7 +131,7 @@ export default async function FailurePage({ params }: PageProps<"/agents/failure
         <Row k="Resolution">{f.resolution || <span className="text-ink-3">Not resolved yet.</span>}</Row>
         <Row k="Regression case">
           {f.regression_case ? (
-            <Link href={caseHref(f.regression_case)} className="link font-mono text-[12px]">
+            <Link href={caseHref(f.regression_case)} className="link font-mono text-[12px]" data-demo="regression-case">
               {f.regression_case}
             </Link>
           ) : (

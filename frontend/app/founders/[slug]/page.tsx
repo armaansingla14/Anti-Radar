@@ -174,7 +174,9 @@ export default async function FounderPage({ params, searchParams }: PageProps<"/
     "graph",
     "Founder graph",
     graph ? <EntityGraph graph={graph} focalId={p.id} /> : <Quiet>The relationship graph is unavailable right now.</Quiet>,
-    <span>2 hops · hover to trace · click to open</span>,
+    <span>
+      2 hops<span className="max-sm:hidden"> · hover to trace · click to open</span>
+    </span>,
   );
   const repos = sec("repositories", "Repositories", <RepoTable repos={detail.repositories} />, <span className="tnum">{detail.repositories.length}</span>);
   const collaborators = sec(

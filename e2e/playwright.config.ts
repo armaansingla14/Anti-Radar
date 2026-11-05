@@ -1,8 +1,8 @@
 /**
- * Playwright config for the /demo tour (demo-tour.spec.ts).
+ * Playwright config for the presenter tours: /demo (demo-tour.spec.ts) and /demo/diligence (diligence-tour.spec.ts).
  *
- *   npx playwright test -c playwright.config.ts            # fast functional pass
- *   RECORD=1 npx playwright test -c playwright.config.ts   # paced run, 1920×1080 video (see record-demo.sh)
+ *   npx playwright test -c playwright.config.ts demo-tour.spec.ts             # fast functional pass of one tour
+ *   RECORD=1 npx playwright test -c playwright.config.ts demo-tour.spec.ts    # paced run, 1920×1080 video (see record-demo.sh)
  *
  * BASE_URL defaults to http://localhost:3000. Chromium host libraries missing on this machine are loaded
  * from ~/.local/chromelibs (same as shot.mjs / demo-screenshots.mjs).
@@ -19,7 +19,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [str
 
 export default defineConfig({
   testDir: ".",
-  testMatch: /demo-tour\.spec\.ts$/,
+  testMatch: /(demo|diligence)-tour\.spec\.ts$/,
   outputDir: "test-results",
   timeout: 12 * 60_000,
   expect: { timeout: 20_000 },

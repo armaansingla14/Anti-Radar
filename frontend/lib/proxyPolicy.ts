@@ -11,8 +11,11 @@
 export const PROXY_READ_SECTIONS: ReadonlySet<string> = new Set([
   "health", // /demo warm-up (waking backend)
   "home", // /demo warm-up
+  "agents", // /demo/diligence pre-flight (agents, failures, cases); agents/failures/{n}/review (write)
   "brief", // "Download .md" link (brief/markdown)
-  "companies", // load-more, palette preview, /demo
+  "changes", // /demo/diligence pre-flight (where the company shows up in Radar)
+  "companies", // load-more, palette preview, /demo, /demo/diligence
+  "diligence", // /demo/diligence pre-flight; diligence/{company}/run (write)
   "founders", // load-more, palette preview
   "formation", // score anatomy drawer, /demo
   "meet", // /demo; meet/refresh (write)

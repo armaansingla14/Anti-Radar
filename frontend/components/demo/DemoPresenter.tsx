@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FinalCard, TitleCard } from "./Cards";
+import { FinalCard, TitleCard, type FinalCopy, type TitleCopy } from "./Cards";
 import {
   animateScroll,
   bringIntoView,
@@ -17,13 +17,30 @@ import {
   waitFor,
   waitForPage,
 } from "./frame";
-import type { DemoPlan, DemoStep } from "./plan";
+import { SCENE_COUNT, type DemoPlan, type DemoStep, type TourPlan } from "./plan";
 import { BAR_HEIGHT, PresenterBar } from "./PresenterBar";
 import { warmAndPlan, type WarmStatus } from "./warm";
 
+/**
+ * A tour: how to resolve its plan (pre-flight in the browser), how many scenes it has and its card copy.
+ * The default is the /demo radar tour; /demo/diligence passes its own.
+ */
+export interface TourConfig<P extends TourPlan = TourPlan> {
+  sceneCount: number;
+  load: (onStatus: (s: WarmStatus) => void, signal: AbortSignal) => Promise<P>;
+  /** Title-card copy (default: the radar tour's). */
+  title?: TitleCopy;
+  /** Closing-card copy from the resolved plan (default: the radar tour's heading and counts). */
+  final?: (plan: P | null) => FinalCopy | null;
+  /** Accessible name of the stage frame. */
+  stageTitle?: string;
+}
+
+export const RADAR_TOUR: TourConfig = { sceneCount: SCENE_COUNT, load: warmAndPlan };
+
 /** Automation hooks for the Playwright tour / screenshot scripts (read-only view + the presenter's own moves). */
 export interface AntiDemoApi {
-  plan: DemoPlan | null;
+  plan: TourPlan | null;
   state: () => { index: number; scene: number; settled: boolean; path: string | null; total: number };
   next: () => void;
   prev: () => void;
@@ -56,10 +73,11 @@ const matchOf = (url: string) => url.split("?")[0];
  * resolves the scenes from live data; the stage is the real app in a same-origin frame, driven with the
  * app's own router; a slim bar underneath carries scene N/10, ← → and Exit.
  */
-export function DemoPresenter() {
+export function DemoPresenter({ tour = RADAR_TOUR }: { tour?: TourConfig } = {}) {
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [plan, setPlan] = useState<DemoPlan | null>(null);
-  const planRef = useRef<DemoPlan | null>(null);
+  const [plan, setPlan] = useState<TourPlan | null>(null);
+  const planRef = useRef<TourPlan | null>(null);
+  const { sceneCount, load } = tour;
   const [warm, setWarm] = useState<WarmStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -78,16 +96,16 @@ export function DemoPresenter() {
     const prev = html.style.overflow;
     html.style.overflow = "hidden";
     const n = Number(new URLSearchParams(window.location.search).get("scene"));
-    startScene.current = Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
+    startScene.current = Number.isInteger(n) && n >= 1 && n <= sceneCount ? n : null;
     return () => {
       html.style.overflow = prev;
     };
-  }, []);
+  }, [sceneCount]);
 
   // Pre-flight: demo dataset cookie → wake backend → resolve scenes → warm pages.
   useEffect(() => {
     const ctl = new AbortController();
-    warmAndPlan(setWarm, ctl.signal)
+    load(setWarm, ctl.signal)
       .then((p) => {
         planRef.current = p;
         setPlan(p);
@@ -97,7 +115,7 @@ export function DemoPresenter() {
         setError(err instanceof Error && err.message !== "network" ? err.message : "The backend could not be reached. It may still be starting.");
       });
     return () => ctl.abort();
-  }, [attempt]);
+  }, [attempt, load]);
 
   const navigate = useCallback(async (url: string, ready: string | null, cancelled: () => boolean) => {
     const frame = frameRef.current;
@@ -355,7 +373,7 @@ export function DemoPresenter() {
             ref={frameRef}
             data-demo="demo-stage"
             src="/"
-            title="Anti Radar"
+            title={tour.stageTitle ?? "Anti Radar"}
             onLoad={onFrameLoad}
             className="block h-full w-full border-0 bg-paper"
           />
@@ -373,6 +391,7 @@ export function DemoPresenter() {
         error={error}
         asOf={plan?.as_of ?? null}
         isSnapshot={plan?.is_snapshot ?? false}
+        copy={tour.title}
         onStart={start}
         onRetry={() => {
           setError(null);
@@ -384,13 +403,15 @@ export function DemoPresenter() {
         visible={isFinal}
         asOf={plan?.as_of ?? null}
         isSnapshot={plan?.is_snapshot ?? false}
-        formations={plan?.counts.formations ?? 0}
-        people={plan?.counts.people ?? 0}
+        formations={(plan as DemoPlan | null)?.counts?.formations ?? 0}
+        people={(plan as DemoPlan | null)?.counts?.people ?? 0}
+        copy={tour.final ? tour.final(plan) : null}
         onReplay={() => void go(0)}
         onExit={exit}
       />
       {step && (
         <PresenterBar
+          total={sceneCount}
           step={step}
           hidden={!barVisible}
           settled={settled}

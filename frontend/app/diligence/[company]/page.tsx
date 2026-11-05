@@ -59,7 +59,7 @@ export default async function DiligenceWorkspacePage({ params }: PageProps<"/dil
   const s = ws.sections ?? {};
 
   const header = (
-    <header className="border-b-[3px] border-double border-ink pb-7">
+    <header className="border-b-[3px] border-double border-ink pb-7" data-demo="diligence-header">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <Link href="/diligence" className="label link text-ink-2">
           Diligence
