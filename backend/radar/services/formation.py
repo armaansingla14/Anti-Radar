@@ -398,6 +398,9 @@ def formation_cards(session: Session, cands: Sequence[FormationCandidate], *,
                 ages.update(data_age(session, et, ids))
     labs = {pid: person_lab_contributions(p) for pid, p in people.items()}
     today = clock.today()
+    from radar.services.changes import formation_changes
+
+    change = formation_changes(session, [c.anchor_id for c in cands])  # since the previous snapshot
     # Company anchors' repositories (org age, top repository traction) — one query.
     company_ids = [c.anchor_id for c in cands if isinstance(anchors.get(c.anchor_id), Company)]
     company_repos: dict[uuid.UUID, list[Repository]] = defaultdict(list)
@@ -459,6 +462,7 @@ def formation_cards(session: Session, cands: Sequence[FormationCandidate], *,
             why_now=enrich_why_now(_evidence_items(c.why_now, WHY_NOW_LIMIT), c.kind, new_project, repos_by_name),
             anchor=_entity_ref(anchor, c.anchor_type, c.anchor_id, c.title), is_demo=c.is_demo, data_age=age,
             headline_facts=[t for _, t in facts], headline_fact_kinds=[k for k, _ in facts],
+            change=change.get(c.anchor_id),
         ))
     return out
 

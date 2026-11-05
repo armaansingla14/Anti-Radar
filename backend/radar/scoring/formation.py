@@ -65,6 +65,7 @@ evidence actually attached to the candidate. Labels never claim a company was fo
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import re
@@ -85,6 +86,7 @@ from radar.models.core import (
     CompanyMetric,
     CompanyPerson,
     FormationCandidate,
+    FormationHistory,
     Job,
     Person,
     RepoContributor,
@@ -1515,10 +1517,20 @@ def run(session: Session, day: date | None = None, thesis: Thesis | None = None)
         fc.day = day
         fc.updated_at = now
     session.flush()
+    # FormationCandidate keeps only the current state: record what qualified on ``day`` (replacing a re-run).
+    session.execute(delete(FormationHistory).where(FormationHistory.day == day))
+    for x in keep:
+        session.add(FormationHistory(
+            day=day, slug=_slug(x), kind=x.inp.kind, anchor_type=x.inp.anchor_type, anchor_id=x.inp.anchor_id,
+            title=x.title[:400], theme=x.inp.theme, score=x.score, tier=x.tier, label=x.label,
+            signal_families=list(x.families), independent_signals=x.independent_signals,
+            member_ids=[m.id for m in x.inp.members], components=copy.deepcopy(x.components),
+            is_demo=x.inp.is_demo))
+    session.flush()
     counts = {t: sum(1 for x in keep if x.tier == t) for t in ("high", "emerging", "early")}
     summary = {"day": day.isoformat(), "considered": len(scored), "stored": len(keep), **counts,
                "teams": sum(1 for x in keep if x.inp.kind == "team"),
-               "people": sum(1 for x in keep if x.inp.kind == "person"), "deleted": len(stale),
+               "people": sum(1 for x in keep if x.inp.kind == "person"), "deleted": len(stale), "history": len(keep),
                "rejected": rejection_summary(rejected)}
     log.info("formation.run %s", summary)
     return summary

@@ -6,7 +6,8 @@ Precedence:
    real-data snapshot (no live ingestion yet) — so a snapshot captured on
    2026-10-06 still reads correctly when the repo is cloned months later.
    With ``DEMO_SNAPSHOT=true`` (the verified-snapshot demo backend) the pin is the
-   snapshot MANIFEST ``as_of`` and holds regardless of any live runs in the database.
+   ``as_of`` of the newest MANIFEST in the snapshot chain (base snapshot + dated updates)
+   and holds regardless of any live runs in the database.
 3. the real current time
 
 `now()`/`today()` are the *data* clock (what day the radar is reasoning about).
@@ -73,12 +74,11 @@ def snapshot_pinned() -> bool:
 
 
 def _manifest_as_of() -> date | None:
-    import json
-    from pathlib import Path
-
+    """``as_of`` of the newest link in the committed snapshot chain (base snapshot, then dated updates)."""
     try:
-        path = Path(__file__).parent / "demo" / "snapshot" / "MANIFEST.json"
-        m = json.loads(path.read_text()) if path.exists() else None
+        from radar.demo.seed import latest_manifest
+
+        m = latest_manifest()
         return date.fromisoformat(m["as_of"]) if m and m.get("as_of") else None
     except Exception:  # noqa: BLE001 — missing/corrupt manifest: no pin from it
         return None
@@ -96,8 +96,8 @@ def init_from_db() -> date | None:
     Live runs are recognised by provider/params (see `is_live_run`), not by comparing
     timestamps: older databases stamped runs with the pinned time, so ordering is unreliable.
 
-    With DEMO_SNAPSHOT the pin is the snapshot MANIFEST ``as_of`` (falling back to the last
-    snapshot replay recorded in the DB), regardless of live runs.
+    With DEMO_SNAPSHOT the pin is the newest snapshot-chain MANIFEST ``as_of`` (falling back to the
+    last snapshot replay recorded in the DB), regardless of live runs.
     """
     from sqlalchemy import select
 

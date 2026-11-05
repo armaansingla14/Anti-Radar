@@ -41,7 +41,7 @@ def test_demo_snapshot_pins_clock_to_manifest_regardless_of_live_runs(db, monkey
     from datetime import date
 
     from radar import clock
-    from radar.demo.seed import snapshot_manifest
+    from radar.demo.seed import latest_manifest
     from radar.models import IngestionRun
 
     db.add(IngestionRun(provider="snapshot", status="ok", params={"as_of": "2026-01-01"}))
@@ -50,7 +50,7 @@ def test_demo_snapshot_pins_clock_to_manifest_regardless_of_live_runs(db, monkey
     try:
         assert clock.init_from_db() is None  # live data present: no pin
         monkeypatch.setattr(clock, "snapshot_pinned", lambda: True)
-        manifest = snapshot_manifest()
+        manifest = latest_manifest()
         expected = date.fromisoformat(manifest["as_of"]) if manifest else date(2026, 1, 1)
         assert clock.init_from_db() == expected and clock.as_of() == expected
     finally:

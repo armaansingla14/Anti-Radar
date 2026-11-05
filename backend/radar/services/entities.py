@@ -701,6 +701,13 @@ def company_scoped_lines(session: Session, lines: Sequence[str], owners: Iterabl
     return [ln for ln in lines if not (refs[ln] & foreign)]
 
 
+def _since(session: Session, entity_type: str, entity_id: uuid.UUID):
+    """Score change since the previous snapshot (services.changes); None when there is nothing to compare."""
+    from radar.services import changes
+
+    return changes.entity_since(session, entity_type, entity_id)
+
+
 def company_detail(session: Session, id_or_slug: str) -> CompanyDetail | None:
     c = P.resolve_entity(session, Company, id_or_slug)
     if c is None:
@@ -765,6 +772,7 @@ def company_detail(session: Session, id_or_slug: str) -> CompanyDetail | None:
         match_candidates=match_candidates(session, "company", c.id), watched=summary.watched,
         data_note=P.data_note(c.is_demo), data_age=data_age(session, "company", [c.id]).get(c.id),
         velocity=P.velocity_metrics(P.company_metrics(session, [c.id]).get(c.id)),
+        since_snapshot=_since(session, "company", c.id),
     )
 
 
@@ -984,6 +992,7 @@ def person_detail(session: Session, id_or_slug: str) -> PersonDetail | None:
         sources=_sources(prov_rows, tl, extra), watched=p.id in P.watched_ids(session),
         relationships=person_relationships(session, p),
         data_note=P.data_note(p.is_demo), data_age=data_age(session, "person", [p.id]).get(p.id),
+        since_snapshot=_since(session, "person", p.id),
     )
 
 
@@ -1060,7 +1069,8 @@ def report_filename(session: Session, r: ResearchReport) -> str:
 
     slug = _report_slug(session, r) or "radar"
     slug = re.sub(r"[^a-z0-9\-]+", "-", slug.lower()).strip("-") or "radar"
-    kind = {"memo": "memo", "brief": "brief", "morning_brief": "morning-brief"}.get(r.kind, "report")
+    kinds = {"memo": "memo", "brief": "brief", "morning_brief": "morning-brief", "diligence": "diligence"}
+    kind = kinds.get(r.kind, "report")
     day = (r.created_at or clock.now()).date().isoformat()
     return f"anti-{kind}-{slug}-{day}.md"
 

@@ -94,6 +94,20 @@ def is_reconstructed(snap: ScoreSnapshot) -> bool:
     return bool((snap.attention or {}).get("reconstructed"))
 
 
+def snapshots_on_day(session: Session, day: date, entity_type: str | None = None,
+                     ids: Iterable[uuid.UUID] | None = None) -> dict[uuid.UUID, ScoreSnapshot]:
+    """Snapshots scored exactly on ``day`` (no carry-forward) — the basis of "since last snapshot" diffs."""
+    q = select(ScoreSnapshot).where(ScoreSnapshot.day == day)
+    if entity_type:
+        q = q.where(ScoreSnapshot.entity_type == entity_type)
+    if ids is not None:
+        ids = list(set(ids))
+        if not ids:
+            return {}
+        q = q.where(ScoreSnapshot.entity_id.in_(ids))
+    return {r.entity_id: r for r in session.scalars(q)}
+
+
 def comparable_baseline(current: ScoreSnapshot, past: ScoreSnapshot) -> float | None:
     """The score of ``current`` to diff against ``past``, or None if the two are not comparable.
 

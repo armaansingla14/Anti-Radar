@@ -361,6 +361,21 @@ class Narrative(BaseModel):
     citations: list[str] = Field(default_factory=list)  # source ids or signal ids
 
 
+class SinceSnapshot(BaseModel):
+    """Score change since the previous verified snapshot (services.changes). ``delta`` is only set when
+    ``comparable``: both days have a live score of the same version and the entity was re-observed in
+    between; otherwise ``reason`` says why. Percentiles are cohort-relative, so part of a delta can
+    come from the cohort changing."""
+
+    base_day: date
+    current_day: date
+    base_score: float | None = None
+    current_score: float | None = None
+    delta: float | None = None
+    comparable: bool = False
+    reason: str | None = None
+
+
 class CompanyDetail(BaseModel):
     summary: CompanySummary
     description: str | None = None
@@ -384,6 +399,7 @@ class CompanyDetail(BaseModel):
     data_note: str | None = None
     data_age: DataAge | None = None
     velocity: list[VelocityMetric] = Field(default_factory=list)  # empty until scoring computes it
+    since_snapshot: SinceSnapshot | None = None  # change since the previous snapshot (services.changes)
 
 
 class PersonDetail(BaseModel):
@@ -405,6 +421,7 @@ class PersonDetail(BaseModel):
     data_age: DataAge | None = None
     # Stored relationships (relationships table) touching this person; VERIFIED / INFERRED as stored.
     relationships: list[RelationshipOut] = Field(default_factory=list)
+    since_snapshot: SinceSnapshot | None = None  # change since the previous snapshot (services.changes)
 
 
 # ── Feeds ────────────────────────────────────────────────────────────────────
@@ -809,6 +826,15 @@ class FormationMember(BaseModel):
     verified: bool = False  # True when ``pedigree`` is backed by verified commits (Person.attrs lab_contributions)
 
 
+class FormationChangeBadge(BaseModel):
+    """How a formation candidate changed since the previous snapshot (formation history)."""
+
+    status: Literal["NEW", "STRENGTHENED", "WEAKENED", "UNCHANGED"]
+    base_day: date
+    base_score: float | None = None  # None when NEW
+    base_tier: FormationTier | None = None
+
+
 class FormationCard(BaseModel):
     id: str
     slug: str
@@ -838,6 +864,7 @@ class FormationCard(BaseModel):
     headline_facts: list[str] = Field(default_factory=list)
     # Parallel to ``headline_facts``: pedigree | traction | formation | momentum (display glyph).
     headline_fact_kinds: list[str] = Field(default_factory=list)
+    change: FormationChangeBadge | None = None  # since the previous snapshot; None when not available
 
 
 class FormationCounts(BaseModel):

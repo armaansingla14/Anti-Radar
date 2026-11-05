@@ -1,6 +1,13 @@
-"""Demo seeding: replay the committed real-data snapshot, optionally add the labeled
-fictional set, import pre-generated LLM outputs, then classify + score, then build the
-relationship graph and FORMATION RADAR candidates.
+"""Demo seeding: replay the committed real-data snapshot chain (the base snapshot, then every dated
+update, oldest first), optionally add the labeled fictional set, import pre-generated LLM outputs, and
+derive each link on its own day: classify + score, relationship graph, FORMATION RADAR candidates
+(+ formation history) and the week's Who Should We Meet list.
+
+Each link is replayed *and derived* before the next one loads, so every day's scores and formation
+candidates see only the data that existed on that day. Only the base link reconstructs score history
+(days strictly before the base day); updates get a live score for their own day. ``backfill_first_seen``
+runs once, after the base link (bootstrap): entities first seen in an update keep the update day.
+Links already replayed into the database are skipped, so re-running applies only new updates.
 
     radar seed-demo                          # verified snapshot only (fictional per DEMO_SYNTHETIC)
     radar seed-demo --if-empty --no-fictional  # demo backend startup: seed once, never synthetic
@@ -15,7 +22,8 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-from datetime import date, datetime, timedelta
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -44,16 +52,34 @@ def snapshot_manifest(directory: Path = SNAPSHOT_DIR) -> dict[str, Any] | None:
     return json.loads(m.read_text()) if m.exists() else None
 
 
+def _manifest_day(directory: Path) -> date | None:
+    try:
+        m = snapshot_manifest(directory) or {}
+        return date.fromisoformat(m["as_of"]) if m.get("as_of") else None
+    except (ValueError, OSError):
+        return None
+
+
 def snapshot_chain(base: Path = SNAPSHOT_DIR, updates: Path = SNAPSHOT_UPDATES_DIR) -> list[Path]:
-    """The base snapshot followed by every dated update, oldest first (only directories with a manifest)."""
+    """The base snapshot followed by every dated update, oldest first (only directories with a manifest).
+
+    In-progress captures (``<day>.tmp``, renamed into place when complete) are never part of the chain."""
     chain = [base] if (base / "MANIFEST.json").exists() else []
     if updates.exists():
-        chain += sorted(d for d in updates.iterdir() if d.is_dir() and (d / "MANIFEST.json").exists())
+        dirs = [d for d in updates.iterdir()
+                if d.is_dir() and not d.name.endswith(".tmp") and (d / "MANIFEST.json").exists()]
+        chain += sorted(dirs, key=lambda d: (_manifest_day(d) or date.max, d.name))
     return chain
 
 
 def snapshot_chain_manifests() -> list[dict[str, Any]]:
     return [m for d in snapshot_chain() if (m := snapshot_manifest(d))]
+
+
+def latest_manifest() -> dict[str, Any] | None:
+    """The manifest of the newest link in the chain (the day a DEMO_SNAPSHOT backend is pinned to)."""
+    manifests = [m for m in snapshot_chain_manifests() if m.get("as_of")]
+    return max(manifests, key=lambda m: m["as_of"]) if manifests else None
 
 
 def reset_database() -> None:
@@ -67,8 +93,9 @@ def is_empty() -> bool:
         return (s.scalar(select(func.count()).select_from(Company)) or 0) == 0
 
 
-def load_snapshot(directory: Path = SNAPSHOT_DIR) -> dict[str, Any]:
-    """Replay captured provider batches through the normal ingestion pipeline."""
+def load_snapshot(directory: Path = SNAPSHOT_DIR, *, link: int = 0, kind: str = "base") -> dict[str, Any]:
+    """Replay captured provider batches through the normal ingestion pipeline (clock pinned to the
+    manifest ``as_of``). Records one ``IngestionRun(provider="snapshot")`` with the link position."""
     manifest = snapshot_manifest(directory)
     if not manifest:
         return {"loaded": 0, "note": "no snapshot present"}
@@ -114,10 +141,10 @@ def load_snapshot(directory: Path = SNAPSHOT_DIR) -> dict[str, Any]:
                 records_fetched=totals["files"],
                 signals_created=totals["signals"],
                 params={"as_of": as_of.isoformat(), "captured_at": manifest.get("captured_at"),
-                        "files": totals["files"]},
+                        "files": totals["files"], "link": link, "kind": kind, "dir": directory.name},
             )
         )
-    return {**totals, "as_of": as_of.isoformat()}
+    return {**totals, "as_of": as_of.isoformat(), "link": link, "kind": kind}
 
 
 def backfill_first_seen() -> None:
@@ -258,13 +285,15 @@ def import_llm_cache(path: Path = LLM_CACHE_FILE) -> int:
     return import_cache(path)
 
 
-def score_history(days: tuple[int, ...] = (30, 21, 14, 10, 7, 5, 3, 2, 1)) -> int:
-    """Reconstruct past score snapshots from backfilled histories so deltas are meaningful on day one."""
+def score_history(days: tuple[int, ...] = (30, 21, 14, 10, 7, 5, 3, 2, 1), *, day: date | None = None) -> int:
+    """Reconstruct past score snapshots (``day`` - d, strictly before ``day``) from backfilled histories so
+    deltas are meaningful on day one, then score ``day`` live. Bootstrap only: never call it for a later
+    link, or the reconstruction would overwrite earlier *live* snapshots."""
     from radar.scoring.run import score_all
 
-    today = clock.today()
+    today = day or clock.today()
     n = 0
-    for d in sorted(days, reverse=True):
+    for d in sorted({d for d in days if d > 0}, reverse=True):
         with session_scope() as s:
             score_all(s, today - timedelta(days=d), reconstruct=True)
             n += 1
@@ -273,16 +302,39 @@ def score_history(days: tuple[int, ...] = (30, 21, 14, 10, 7, 5, 3, 2, 1)) -> in
     return n + 1
 
 
-def seed_formation() -> dict[str, Any]:
-    """Relationships + FORMATION RADAR candidates for the seeded day (deterministic, no LLM), so demo and
-    snapshot backends show formation candidates without waiting for a scheduled run."""
+def score_live(day: date) -> int:
+    from radar.scoring.run import score_all
+
+    with session_scope() as s:
+        score_all(s, day)
+    return 1
+
+
+def seed_formation(day: date | None = None) -> dict[str, Any]:
+    """Relationships + FORMATION RADAR candidates (and formation history) for ``day`` (deterministic, no LLM),
+    so demo and snapshot backends show formation candidates without waiting for a scheduled run."""
     from radar.ops import compute_formation
 
     try:
-        return compute_formation(clock.today())
+        return compute_formation(day or clock.today())
     except Exception as e:  # noqa: BLE001 — formation is additive; never fail the whole seed over it
         log.exception("seed: formation step failed")
         return {"error": str(e)[:300]}
+
+
+def seed_meet_week(day: date | None = None) -> dict[str, Any]:
+    """Store (replace) the Who Should We Meet list for ``day``'s ISO week, ranked as of that day."""
+    from radar.services import meet
+
+    day = day or clock.today()
+    week = meet.iso_week(datetime.combine(day, time(18, 0), tzinfo=UTC))
+    try:
+        with session_scope() as s:
+            rows = meet.compute_week(s, week, force=True)
+            return {"week": week, "people": len(rows)}
+    except Exception as e:  # noqa: BLE001 — additive, like formation
+        log.exception("seed: meet step failed")
+        return {"week": week, "error": str(e)[:300]}
 
 
 def synthetic_default() -> bool:
@@ -292,14 +344,59 @@ def synthetic_default() -> bool:
     return bool(getattr(get_settings(), "demo_synthetic", False))
 
 
-def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = True, fictional: bool | None = None,
-              history: bool = True, llm_outputs: bool = True) -> dict[str, Any]:
-    """Seed the database. ``if_empty`` skips everything (and only re-pins the clock) when any
-    company row already exists, so it is safe to call on every container start."""
+def replayed_points() -> list[date]:
+    """Snapshot days already replayed into this database (IngestionRun provider="snapshot"), sorted."""
+    out: set[date] = set()
+    with session_scope() as s:
+        for params in s.scalars(select(IngestionRun.params).where(IngestionRun.provider == "snapshot")):
+            try:
+                out.add(date.fromisoformat((params or {}).get("as_of") or ""))
+            except ValueError:
+                continue
+    return sorted(out)
+
+
+def derive_day(day: date, *, history: bool) -> dict[str, Any]:
+    """Everything derived for one snapshot day: topics, stages, scores, relationships, formation, Meet.
+
+    ``history=True`` (bootstrap only) reconstructs scores for days before ``day``; otherwise ``day`` is
+    scored live only."""
     from radar.pipeline.stage import apply_stage_estimates
     from radar.thesis.classifier import classify_entities, ensure_topics
     from radar.thesis.loader import get_thesis
 
+    out: dict[str, Any] = {"day": day.isoformat()}
+    thesis = get_thesis()
+    with session_scope() as s:
+        ensure_topics(s, thesis)
+        out["classified"] = classify_entities(s, thesis)
+    with session_scope() as s:
+        out["staged"] = apply_stage_estimates(s)
+    apply_demo_stages()
+    out["score_days"] = score_history(day=day) if history else score_live(day)
+    out["formation"] = seed_formation(day)
+    out["meet"] = seed_meet_week(day)
+    return out
+
+
+# ── LEAD HOOK ────────────────────────────────────────────────────────────────
+
+
+def post_seed_steps(out: dict[str, Any]) -> None:
+    """Last step of ``seed_demo`` (clock pinned to the newest replayed day, all links derived).
+
+    Placeholder for the steps that build on the fully replayed chain: diligence replay, template
+    reports, agent evaluations. Record their summaries in ``out``. Currently does nothing."""
+    return None
+
+
+def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = True, fictional: bool | None = None,
+              history: bool = True, llm_outputs: bool = True, chain: Sequence[Path] | None = None) -> dict[str, Any]:
+    """Seed the database. ``if_empty`` skips everything (and only re-pins the clock) when any
+    company row already exists, so it is safe to call on every container start.
+
+    ``chain`` overrides the snapshot directories (default: ``snapshot_chain()``); each link is replayed
+    with the clock pinned to its manifest day and derived on that day before the next link loads."""
     if fictional is None:
         fictional = synthetic_default()
     if if_empty and not is_empty():
@@ -308,28 +405,63 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
     if reset:
         reset_database()
     out: dict[str, Any] = {"fictional_included": fictional}
-    if snapshot:
-        out["snapshot"] = load_snapshot()
-        backfill_first_seen()
-    if fictional:
-        out["fictional"] = seed_fictional()
     out["llm_cache"] = import_llm_cache() if llm_outputs else 0
-    thesis = get_thesis()
-    with session_scope() as s:
-        ensure_topics(s, thesis)
-        out["classified"] = classify_entities(s, thesis)
-    with session_scope() as s:
-        out["staged"] = apply_stage_estimates(s)
-    apply_demo_stages()
-    out["score_days"] = score_history() if history else 0
-    if not history:
-        from radar.scoring.run import score_all
-
-        with session_scope() as s:
-            score_all(s, clock.today())
-    out["formation"] = seed_formation()
+    links = list(chain if chain is not None else snapshot_chain()) if snapshot else []
+    done = replayed_points()
+    out["links"] = []
+    fictional_done = False
+    replayed = 0
+    for i, directory in enumerate(links):
+        day = _manifest_day(directory)
+        info: dict[str, Any] = {"dir": directory.name, "as_of": day.isoformat() if day else None,
+                                "kind": "base" if i == 0 else "update"}
+        if day is None:
+            info["skipped"] = "manifest without as_of"
+        elif day in done:
+            info["skipped"] = "already replayed"
+        elif done and day < done[-1]:
+            info["skipped"] = f"older than the newest replayed snapshot ({done[-1]}); run with --reset"
+        if "skipped" in info:
+            out["links"].append(info)
+            continue
+        base = not done  # the first link ever replayed into this database bootstraps it
+        info["kind"] = "base" if base else "update"
+        info["load"] = load_snapshot(directory, link=i, kind=info["kind"])
+        if base:
+            backfill_first_seen()
+            if fictional:
+                out["fictional"] = seed_fictional()
+                fictional_done = True
+        info["derived"] = derive_day(day, history=history and base)
+        if base:
+            out["snapshot"] = info["load"]
+        out["links"].append(info)
+        done = sorted({*done, day})
+        replayed += 1
+    if not replayed:
+        if done:
+            # Nothing new in the chain (idempotent re-run). Only when the fictional set is asked for and not
+            # yet loaded: add it and re-derive the newest replayed day live (never reconstruct over it).
+            if fictional and not fictional_done:
+                clock.set_as_of(done[-1])
+                out["fictional"] = seed_fictional()
+                derived = derive_day(done[-1], history=False)
+                out["links"].append({"refreshed": derived["day"], "derived": derived})
+        else:
+            # No snapshot at all (tests, fictional-only): the original single-day flow on today's clock.
+            if fictional:
+                out["fictional"] = seed_fictional()
+            derived = derive_day(clock.today(), history=history)
+            out["links"].append({"refreshed": derived["day"], "derived": derived})
+    derived_links = [x["derived"] for x in out["links"] if x.get("derived")]
+    out["score_days"] = sum(d["score_days"] for d in derived_links)
+    if derived_links:
+        last = derived_links[-1]
+        out["classified"], out["staged"] = last["classified"], last["staged"]
+        out["formation"], out["meet"] = last["formation"], last["meet"]
     from radar.demo.warm import import_reports
 
     out["reports"] = import_reports() if llm_outputs else 0
     clock.init_from_db()
+    post_seed_steps(out)
     return out

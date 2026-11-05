@@ -39,9 +39,9 @@ def pin_snapshot_clock() -> date | None:
     except Exception:  # noqa: BLE001 — DB not ready; fall back to the committed manifest
         day = None
     if day is None:
-        from radar.demo.seed import snapshot_manifest
+        from radar.demo.seed import latest_manifest
 
-        manifest = snapshot_manifest() or {}
+        manifest = latest_manifest() or {}
         if manifest.get("as_of"):
             day = date.fromisoformat(manifest["as_of"])
     if day is not None:
