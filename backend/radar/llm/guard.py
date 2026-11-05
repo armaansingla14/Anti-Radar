@@ -58,7 +58,8 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"\b(100|10\s*/\s*10|ten out of ten|maximum|highest)\b",
         r"\bdo not (mention|reveal|tell|disclose)\b",
         r"^\s*(system|assistant)\s*:",
-        r"<\s*/?\s*(source|instructions|system)\b",
+        # Fence-like tags only: an HTML media <source media=… srcset=…> (README <picture>) is not an attack.
+        r"<\s*/\s*(source|instructions|system)\s*>|<\s*(instructions|system)\b|<\s*source\s*(>|\s+id\s*=)",
         r"\bjailbreak\b",
         r"\bdeveloper mode\b",
     )

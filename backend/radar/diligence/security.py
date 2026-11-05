@@ -201,16 +201,24 @@ def security_review(artifacts: list[ArtifactDraft], deps: dict[str, Any] | None 
         paths = {p.lower() for t in trees for p in t.data.get("paths") or []}
         has_security_md = any(p in paths for p in ("security.md", ".github/security.md", "docs/security.md"))
         if not has_security_md:
-            t = sorted(trees, key=lambda a: a.key)[0]
+            # Cite the main (most-starred) repository, not an alphabetically earlier side repo.
+            stars = {a.data.get("full_name"): a.data.get("stars") or 0 for a in artifacts if a.kind == "repo"}
+            t = sorted(trees, key=lambda a: (-stars.get(a.data.get("full_name"), 0), a.key))[0]
             findings.append(_finding("LOW", "No SECURITY.md (vulnerability disclosure policy) in the repository", t,
                                      "no SECURITY.md at the root, .github/ or docs/",
                                      "Without a disclosure policy, researchers have no clear channel to report issues.",
                                      False, None, "policy"))
 
-    # Deduplicate (same title + path + line) and order deterministically.
+    # Deduplicate (same title + path + line; the same piped install command once, wherever it is repeated) and order
+    # deterministically.
     uniq: dict[tuple, dict[str, Any]] = {}
     for f in findings:
-        uniq.setdefault((f["title"], f["evidence"]["path"], f["evidence"]["line"]), f)
+        url = re.search(r"https?://\S+", f["evidence"].get("quote") or "") if f["kind"] == "supply_chain" else None
+        if url and "pipe a remote script" in f["title"]:
+            key: tuple = ("curl_pipe", url.group(0).rstrip("`'\")"))
+        else:
+            key = (f["title"], f["evidence"]["path"], f["evidence"]["line"])
+        uniq.setdefault(key, f)
     findings = sorted(uniq.values(), key=lambda f: (SEVERITY_ORDER[f["severity"]], f["kind"], f["title"],
                                                     f["evidence"]["line"] or 0))
     for i, f in enumerate(findings, 1):

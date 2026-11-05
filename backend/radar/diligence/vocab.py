@@ -39,6 +39,8 @@ TERMS: tuple[Term, ...] = (
     _t("CUDA", r"\bCUDA\b", "hardware", "cuda", "cu"),
     _t("NVIDIA GPUs", r"\bNVIDIA\b", "hardware", "nvidia", "cuda", "cu"),
     _t("Intel Gaudi", r"\bGaudi\s?\d?\b|\bHabana\b", "hardware", "gaudi", "habana", "hpu"),
+    _t("Intel GPUs", r"\bIntel\b(?!\s+Gaudi)|\bXPUs?\b|\boneAPI\b", "hardware", "intel", "xpu", "oneapi", "ipex", "sycl"),
+    _t("CPU", r"\bCPUs?\b", "hardware", "cpu"),
     _t("TPU", r"\bTPUs?\b", "hardware", "tpu", "xla"),
     _t("AWS Trainium/Inferentia", r"\bTrainium\b|\bInferentia\b|\bNeuron SDK\b", "hardware", "neuron", "trainium",
        "inferentia"),
@@ -47,7 +49,7 @@ TERMS: tuple[Term, ...] = (
     _t("ARM", r"\bARM64\b|\baarch64\b|\bGraviton\b", "hardware", "arm64", "aarch64", "neon", "graviton"),
     # operating systems
     _t("Windows", r"\bWindows\b", "os", "windows", "win32", "win64", "msvc", "ps1"),
-    _t("macOS", r"\bmacOS\b|\bOS X\b", "os", "macos", "darwin", "osx"),
+    _t("macOS", r"\bmacOS\b|\bOS X\b|\bMac\b", "os", "macos", "darwin", "osx"),
     _t("Linux", r"\bLinux\b", "os", "linux"),
     _t("Android", r"\bAndroid\b", "os", "android"),
     _t("iOS", r"\biOS\b", "os", "ios"),

@@ -175,15 +175,45 @@ def m_open_source(claim: ClaimDraft, ctx: Context) -> list[dict]:
         if repo.data.get("archived"):
             out.append(evidence_item(repo, relation=Relation.CONTEXT, strength=Strength.INDIRECT,
                                      matcher="open_source", note=f"{name} is archived (read-only)."))
+        mixed = _nested_licences(ctx.for_repo("tree", name) if name else None)
+        if mixed and spdx:
+            out.append(evidence_item(
+                repo, relation=Relation.CONTEXT, strength=Strength.INDIRECT, matcher="mixed_licence",
+                quote=", ".join(p for p, _ in mixed[:3]),
+                note=f"{name} is {spdx} at the root, but part of it ships under {', '.join(sorted({lic for _, lic in mixed}))} "
+                     f"({mixed[0][0]}): copyleft or source-available terms apply to that component."))
     return out
 
 
+# Sub-directory licence files whose name states a copyleft or source-available licence (e.g. studio/LICENSE.AGPL-3.0).
+_NESTED_LICENCE = re.compile(r"(?:^|/)(?:LICEN[CS]E|COPYING)[.-]((?:A|L)?GPL[-\w.]*|SSPL[-\w.]*|BUSL[-\w.]*|"
+                             r"Elastic[-\w.]*|CC-BY-NC[-\w.]*|Commons[-\w.]*)$", re.I)
+
+
+def _nested_licences(tree: ArtifactDraft | None) -> list[tuple[str, str]]:
+    """[(path, licence)] for licence files below the repository root that name a restrictive licence."""
+    out = []
+    for p in (tree.data.get("paths") or []) if tree else []:
+        m = _NESTED_LICENCE.search(p)
+        if m and "/" in p and "vendor/" not in p and "node_modules/" not in p:
+            out.append((p, m.group(1).upper().replace("LICENSE.", "")))
+    return sorted(out)
+
+
+# Legal boilerplate is never capability evidence, and generic words ("distributed", "parallel") are only meaningful
+# as path components, not in prose.
+_LEGAL_FILE = re.compile(r"(?:^|/)(?:LICEN[CS]E|NOTICE|COPYING|COPYRIGHT)(?:[.-][^/]*)?$", re.I)
+_GENERIC_TEXT_ALIASES = frozenset({"distributed", "parallel", "scale", "charts", "helm", "cluster", "clusters"})
+
+
 def _file_mentions(art: ArtifactDraft, term: Term) -> str | None:
+    if _LEGAL_FILE.search(str(art.data.get("path") or art.url or "")):
+        return None
     text = art.text or ""
     m = term.pattern.search(text)
     if not m and term.text_aliases:
         for a in term.path_aliases:
-            if len(a) >= 3:
+            if len(a) >= 3 and a not in _GENERIC_TEXT_ALIASES:
                 m = re.search(rf"(?<![A-Za-z0-9]){re.escape(a)}(?![A-Za-z0-9])", text, re.I)
                 if m:
                     break
@@ -533,9 +563,11 @@ _REL_ORDER = {Relation.CONTRADICTS: 0, Relation.SUPPORTS: 1, Relation.CONTEXT: 2
 
 
 def sort_evidence(items: list[dict]) -> list[dict]:
+    """Conflicts first, then direct support. Ties keep the matchers' order, which visits repositories most-starred
+    first, so a claim about the product cites its main repository rather than an alphabetically earlier side repo."""
+    order = {id(e): i for i, e in enumerate(items)}
     return sorted(items, key=lambda e: (_REL_ORDER.get(e["relation"], 3), e["strength"] != Strength.DIRECT,
-                                        e.get("gap", False), e["publisher"], e["artifact_key"], e["matcher"],
-                                        e["quote"]))
+                                        e.get("gap", False), e["publisher"], order[id(e)]))
 
 
 def attach_evidence(claims: list[ClaimDraft], ctx: Context) -> None:

@@ -263,6 +263,127 @@ DOCUMENTED: list[dict[str, Any]] = [
         "regression_case": "injection-false-positive-001",
         "regression_test": "tests/unit/test_llm_guard.py::test_reported_scores_are_not_injection",
     },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #1", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:unsloth-ai",
+        "claim_text": "Third-party evidence included 'Show HN: Observable Notebooks' (labelled a company post) and a "
+                      "quantitative-finance Jupyter thread",
+        "category": "ENTITY_RESOLUTION_ERROR", "severity": "HIGH", "status": "FIXED",
+        "evidence_summary": "Hacker News was searched for the company's generic repository name 'notebooks', so unrelated "
+                            "threads matched. Here they only reached 'context', but such items can count as independent "
+                            "support and inflate a claim's status.",
+        "resolution": "Search terms are the company name and repo/package names that contain it; a kept story must "
+                      "mention the company name. Launch posts by known team handles are company statements.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_generic_repo_names_are_not_search_terms_for_third_party_evidence",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #2", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:unsloth-ai",
+        "claim_text": "'Unsloth supports MacOS, Linux, Windows, NVIDIA, AMD, Intel and CPU setups.' rated SUPPORTED",
+        "category": "OVERCONFIDENT_INFERENCE", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Code evidence covered AMD, NVIDIA, Windows, Linux and macOS, but the vocabulary had no "
+                            "entries for Intel GPUs or CPU, so those facets were silently ignored instead of counted as "
+                            "uncovered (rule R4 makes uncovered facets PARTIALLY SUPPORTED).",
+        "resolution": "Intel GPUs (XPU/oneAPI), CPU and 'Mac' are named facets; a facet without code evidence is "
+                      "reported as a gap.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_every_named_platform_is_a_facet_including_intel_cpu_and_mac",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #3", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:unsloth-ai",
+        "claim_text": "Multi-GPU claim supported by 'within a NOTICE text file distributed' (from the LICENSE file)",
+        "category": "CITATION_MISMATCH", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "The generic alias 'distributed' matched licence boilerplate, attaching an unrelated file as "
+                            "evidence for a scalability claim.",
+        "resolution": "Licence/notice files are never capability evidence; generic words count only as path "
+                      "components, not in prose.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_licence_text_and_generic_words_are_not_capability_evidence",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #4", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:unsloth-ai",
+        "claim_text": "ECONOMICS claim: 'The llama.cpp library that lets users run and save models with Unsloth'; "
+                      "three claims each listed twice (homepage and docs wording)",
+        "category": "ATTRIBUTION_ERROR", "severity": "LOW", "status": "FIXED",
+        "evidence_summary": "A README credits line about another project was extracted as the company's own economics "
+                            "claim ('save'), and near-identical claims on two pages were not merged, inflating the "
+                            "ledger from 9 distinct claims to 12.",
+        "resolution": "Acknowledgement/credits/citation/licence sections are skipped; 'save' needs money or time "
+                      "context; same-type claims naming the same targets, or one containing the other, are merged "
+                      "with both sources kept.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_the_same_claim_on_two_pages_is_one_ledger_entry",
+        "related_tests": ["tests/unit/test_diligence_realdata_regressions.py::test_readme_credits_section_is_not_a_company_claim",
+                          "tests/unit/test_diligence_realdata_regressions.py::test_setup_instructions_are_not_claims"],
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #5", "agent": "INJECTION GUARD",
+        "entity_ref": "company:unsloth-ai",
+        "claim_text": "README '<picture><source media=… srcset=…>' flagged as a prompt-injection attempt",
+        "category": "TOOL_FAILURE", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "The fence pattern matched any '<source' tag, including HTML media sources common in "
+                            "READMEs; in an analyst run a flagged source disables live tools.",
+        "resolution": "Only fence-like tags are flagged ('</source>', '<source id=…>', '<instructions>', '<system>').",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_llm_guard.py::test_html_media_source_tags_are_not_injection",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #6",
+        "agent": "DILIGENCE ANALYST", "entity_ref": "company:unsloth-ai",
+        "claim_text": "'Unsloth is an open-source framework…' VERIFIED by unslothai/hyperlearn (an older side "
+                      "repository) instead of unslothai/unsloth",
+        "category": "ATTRIBUTION_ERROR", "severity": "LOW", "status": "FIXED",
+        "evidence_summary": "Evidence was ordered alphabetically by artifact key, so the first verifying item came from "
+                            "a 2.5k-star side project rather than the 79k-star product repository.",
+        "resolution": "Ties keep the matchers' order, which visits repositories most-starred first.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_open_source_cites_the_main_repository_and_reports_mixed_licensing",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #7",
+        "agent": "DILIGENCE ANALYST", "entity_ref": "company:unsloth-ai",
+        "claim_text": "Open-source claims VERIFIED with no mention that studio/ ships under AGPL-3.0 "
+                      "(studio/LICENSE.AGPL-3.0) while the root licence is Apache-2.0",
+        "category": "MISSING_COUNTEREVIDENCE", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Only the root licence reported by GitHub was checked. A copyleft component inside a commercial "
+                            "product matters to an investor even though AGPL is open source.",
+        "resolution": "Licence files below the root that name copyleft or source-available terms are reported as "
+                      "context on open-source claims, and they generate a licensing question for the founders.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_open_source_cites_the_main_repository_and_reports_mixed_licensing",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #8",
+        "agent": "DILIGENCE ANALYST", "entity_ref": "company:unsloth-ai",
+        "claim_text": "Technical underwriting: TECHNICAL DIFFERENTIATION STRONG and SCALABILITY STRONG",
+        "category": "OVERCONFIDENT_INFERENCE", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Differentiation counted platform-compatibility claims (NVIDIA, Windows…) while all four "
+                            "performance claims were unverified; scalability was STRONG on file paths mentioning "
+                            "'distributed' with no measurement of behaviour at scale.",
+        "resolution": "Differentiation needs native/kernel code plus an independently supported performance or "
+                      "architecture claim; scalability needs verification or third-party evidence. Code paths alone "
+                      "rate MEDIUM.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_underwriting_does_not_rate_strong_on_platform_support_or_paths_alone",
+    },
+    {
+        "source_ref": "Hand audit of the first live diligence run (Unsloth AI, Nov 5, 2026) #9",
+        "agent": "DILIGENCE ANALYST", "entity_ref": "company:unsloth-ai",
+        "claim_text": "Security review: 'Unpinned base image importlib.metadata', 'Unpinned base image ${BASE_IMAGE}', "
+                      "the same 'curl … | sh' install line reported 4 times, and a missing SECURITY.md cited on a side repo",
+        "category": "TOOL_FAILURE", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Python inside a RUN heredoc was parsed as FROM instructions; build-argument images were "
+                            "called unpinned; repeated install instructions were counted per occurrence, inflating the "
+                            "MEDIUM count from 6 to 10.",
+        "resolution": "Heredoc bodies and RUN continuations are skipped; build-argument images are not judged; a piped "
+                      "install command is one finding; policy findings cite the main repository.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_regressions.py::test_dockerfile_heredoc_python_and_build_args_are_not_base_images",
+        "related_tests": ["tests/unit/test_diligence_realdata_regressions.py::test_repeated_install_pipe_is_one_finding_and_policy_cites_the_main_repo"],
+    },
 ]
 
 _SEED_FIELDS = ("agent", "entity_ref", "claim_text", "category", "severity", "evidence_summary", "resolution",

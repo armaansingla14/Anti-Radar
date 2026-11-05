@@ -268,9 +268,16 @@ def company_facts(session: Session, company: Company) -> CompanyFacts:
         ).all()
         for eid, metric, day, value in rows:
             metrics.setdefault(f"{metric}:{names[eid]}", []).append([day.isoformat(), float(value)])
+    from radar.models import CompanyPerson, Person
+
+    handles = {h.lower() for row in session.execute(
+        select(Person.github_handle, Person.x_handle).join(CompanyPerson, CompanyPerson.person_id == Person.id)
+        .where(CompanyPerson.company_id == company.id)).all() for h in row if h}
+    if company.x_handle:
+        handles.add(company.x_handle.lower())
     return CompanyFacts(name=company.name, slug=company.slug, website=company.website, domain=company.domain,
                         github_org=company.github_org, thesis_tags=list(company.thesis_tags or []),
-                        metrics=dict(sorted(metrics.items())))
+                        team_handles=sorted(handles), metrics=dict(sorted(metrics.items())))
 
 
 # ── website ──────────────────────────────────────────────────────────────────
@@ -752,16 +759,46 @@ def _strip_html(s: str | None) -> str:
     return re.sub(r"\s+", " ", html_lib.unescape(_TAG.sub(" ", s or ""))).strip()
 
 
+def _brand(facts: CompanyFacts) -> str:
+    """The distinctive part of the company name ("Unsloth AI" → "Unsloth")."""
+    words = [w for w in re.split(r"[\s._-]+", facts.name or "") if w]
+    core = [w for w in words if w.lower() not in _NAME_SUFFIXES]
+    return " ".join(core or words)
+
+
+_NAME_SUFFIXES = {"ai", "inc", "labs", "lab", "llc", "ltd", "corp", "co", "hq", "io", "technologies", "systems"}
+
+
 def _names(arts: dict[str, ArtifactDraft], facts: CompanyFacts) -> list[str]:
-    names = [facts.name]
+    """Search terms that identify THIS company. Repository and package names are used only when they contain the
+    company's own name: generic names ("notebooks", "docs", "studio") match unrelated threads."""
+    brand = _brand(facts)
+    names = [facts.name, brand]
     names += [a.data.get("full_name", "").split("/")[-1] for a in arts.values() if a.kind == "repo"]
     names += [str(a.data.get("name")) for a in arts.values() if a.kind == "package" and "own" in (a.data.get("roles") or [])]
     out: list[str] = []
     for n in names:
         n = (n or "").strip()
-        if len(n) >= 4 and n.lower() not in {x.lower() for x in out}:
-            out.append(n)
+        if len(n) < 4 or n.lower() in {x.lower() for x in out}:
+            continue
+        if n not in (facts.name, brand) and not _mentions(n, brand):
+            continue
+        out.append(n)
     return out[:3]
+
+
+def _own_post(h: dict, title: str, facts: CompanyFacts, names: list[str]) -> bool:
+    """A company statement: posted by a known team member, or a Show/Launch HN that names the company (or links its
+    site). When authorship is unknown we err towards "company": calling a company's own launch post independent
+    would inflate the support for its claims."""
+    author = str(h.get("author") or "").lower()
+    if author and author in set(facts.team_handles):
+        return True
+    if not re.match(r"^(Show|Launch) HN\b", title):
+        return False
+    host = urlparse(str(h.get("url") or "")).hostname or ""
+    own_site = bool(facts.domain) and (host == facts.domain or host.endswith("." + str(facts.domain)))
+    return own_site or _mentions(title, _brand(facts)) or any(_mentions(title, n) for n in names)
 
 
 def _mentions(text: str, name: str) -> bool:
@@ -776,13 +813,14 @@ def collect_hn(f: Fetcher, arts: dict[str, ArtifactDraft], facts: CompanyFacts) 
                           params={"query": q, "tags": "story", "hitsPerPage": 8})
         for h in (data or {}).get("hits") or []:
             oid = str(h.get("objectID") or "")
-            if oid.isdigit() and (_mentions(h.get("title") or "", q) or _mentions(h.get("url") or "", q)):
+            brand = _brand(facts)
+            if oid.isdigit() and (_mentions(h.get("title") or "", brand) or _mentions(h.get("url") or "", brand)):
                 stories.setdefault(oid, h)
     top = sorted(stories.values(), key=lambda h: (-(h.get("points") or 0), str(h.get("objectID"))))[:MAX_HN_STORIES]
     for h in top:
         oid = str(h["objectID"])
         title = h.get("title") or ""
-        own = bool(re.match(r"^(Show|Launch) HN\b", title)) and any(_mentions(title, n) for n in names)
+        own = _own_post(h, title, facts, names)
         a = _artifact(f"hn:{oid}", "hn_story", Publisher.COMPANY if own else Publisher.THIRD_PARTY,
                       f"https://news.ycombinator.com/item?id={oid}", title,
                       "\n".join(x for x in (title, _strip_html(h.get("story_text"))[:3000]) if x),
@@ -803,7 +841,8 @@ def collect_hn(f: Fetcher, arts: dict[str, ArtifactDraft], facts: CompanyFacts) 
             text = _strip_html(c.get("comment_text"))[:3000]
             if not cid.isdigit() or not text:
                 continue
-            by_company = story_is_company and c.get("author") == story_author
+            by_company = (story_is_company and c.get("author") == story_author) or \
+                str(c.get("author") or "").lower() in set(facts.team_handles)
             a = _artifact(f"hn-comment:{cid}", "hn_comment", Publisher.COMPANY if by_company else Publisher.THIRD_PARTY,
                           f"https://news.ycombinator.com/item?id={cid}", f"Comment on: {h.get('title') or oid}"[:300],
                           text, {"story_id": oid, "author": c.get("author"), "created_at": c.get("created_at")})

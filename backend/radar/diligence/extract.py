@@ -57,7 +57,8 @@ CUES: tuple[tuple[ClaimType, re.Pattern[str]], ...] = tuple(
          r"|\b(?:used|trusted|loved|relied on|adopted|deployed) by\b|\bin production at\b|\bFortune \d+\b"),
         (ClaimType.ECONOMICS,
          rf"\$\s?{_N}|\bcosts?\b|\bcheaper\b|\bpric(?:e|es|ing)\b|\bTCO\b|\bper (?:million|1M|token|hour|GPU[- ]hour)\b"
-         r"|\bsav(?:e|es|ings)\b|\bfree tier\b"),
+         r"|\bsav(?:e|es|ings)\b(?=[^.]{0,40}(?:\$|%|\bcosts?\b|\bmoney\b|\bspend|\bhours?\b|\btime\b))"
+         r"|\bfree tier\b"),
         (ClaimType.SCALABILITY,
          r"\bscal(?:e|es|able|ability|ing)\b|\bdistributed\b|\bmulti[- ]?(?:GPU|node)s?\b|\bthousands of\b"
          r"|\bmillions? of\b|\bbillions? of\b|\bhorizontal(?:ly)?\b|\bclusters?\b|\btensor[- ]parallel"),
@@ -92,6 +93,9 @@ _BOILERPLATE = re.compile(
     r"|join (?:our|the) (?:discord|slack|community)|star us|follow us|we'?re hiring|careers)\b|©",
     re.IGNORECASE,
 )
+# UI / setup instructions ("Pick the build…", "Click Install") describe how to use the product, not what it claims.
+_INSTRUCTION = re.compile(r"^\W*(?:pick|click|select|choose|press|tap|open|enter|type|navigate|go to|copy|paste|"
+                          r"download|scroll|drag|toggle|set|make sure|ensure you|note:?)\b", re.IGNORECASE)
 _QUANT = re.compile(rf"\b{_N}\s?(?:x|×|%|ms|k\b|m\b|b\b|\+|tokens|GB|TB|tok/s)|\$\s?\d", re.IGNORECASE)
 _MATURITY = re.compile(r"\bproduction[- ](?:ready|grade)\b|\bbattle[- ]tested\b|\benterprise[- ]ready\b", re.I)
 _FIGURE = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)\s?(x|×|%)(?![A-Za-z0-9])", re.IGNORECASE)
@@ -166,12 +170,26 @@ def clean_inline(raw: str) -> str:
     return norm(s).strip(" -–—:;")
 
 
+_HEADING = re.compile(r"[ \t]*#{1,6}[ \t]+(.+)")
+_NON_CLAIM_SECTION = re.compile(r"(?i)\b(acknowledg|credits?\b|thanks|thank you|citations?\b|cite\b|licen[cs]e|"
+                                r"contributors?\b|sponsors?\b|backers\b)")
+
+
 def sentences(art: ArtifactDraft) -> list[tuple[int, str, str]]:
     """[(offset, raw quote, clean text)] for every candidate sentence in the artifact."""
     text = art.text or ""
     markdown = art.kind in ("readme", "doc")
     out = []
+    skipping = False
     for ls, le in _line_spans(text, markdown):
+        line_start = text.rfind("\n", 0, ls) + 1  # spans start after "## " markers; headings are judged on the raw line
+        heading = _HEADING.match(text[line_start:le]) if markdown else None
+        if heading:
+            # Credits, citations and licence sections describe other people's work, not the company's claims.
+            skipping = bool(_NON_CLAIM_SECTION.search(heading.group(1)))
+            continue
+        if skipping:
+            continue
         for s, e in _sentence_spans(text, ls, le):
             raw = text[s:e].strip()
             if not raw or len(raw) > 600:
@@ -202,7 +220,8 @@ def classify(text: str) -> ClaimType | None:
 def materiality(clean: str, ctype: ClaimType, source_rank: int) -> float | None:
     """Score a candidate (None = not material: vague, boilerplate, a question, or the wrong length)."""
     words = clean.split()
-    if not (MIN_WORDS <= len(words) <= MAX_WORDS) or clean.rstrip().endswith("?") or _BOILERPLATE.search(clean):
+    if not (MIN_WORDS <= len(words) <= MAX_WORDS) or clean.rstrip().endswith("?") or _BOILERPLATE.search(clean) \
+            or _INSTRUCTION.match(clean):
         return None
     terms = find_terms(clean)
     has_num = bool(re.search(r"\d", clean))
@@ -243,6 +262,30 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b) if a and b else 0.0
 
 
+def _containment(a: set[str], b: set[str]) -> float:
+    return len(a & b) / min(len(a), len(b)) if a and b else 0.0
+
+
+def _same_claim(c: ClaimDraft, k: ClaimDraft, toks: set[str], ktoks: set[str]) -> bool:
+    """Two candidates are one claim when their wording overlaps strongly, one contains the other, they state the
+    same figures, or (same type) they name the same set of concrete targets — e.g. the homepage and the docs both
+    listing "MacOS, Linux, Windows, NVIDIA, AMD, Intel and CPU"."""
+    if _jaccard(toks, ktoks) >= DUPLICATE_JACCARD:
+        return True
+    a, b = norm(c.text).lower(), norm(k.text).lower()
+    if a in b or b in a:
+        return True
+    if k.claim_type != c.claim_type:
+        return False
+    figs = figures(c.text)
+    if figs and figures(k.text) == figs:
+        return True
+    terms = {t.name for t in find_terms(c.text)}
+    if len(terms) >= 2 and terms == {t.name for t in find_terms(k.text)}:
+        return True
+    return _containment(toks, ktoks) >= 0.75 and min(len(toks), len(ktoks)) >= 4
+
+
 def _company_ev(art: ArtifactDraft, quote: str) -> dict:
     return evidence_item(art, relation=Relation.SUPPORTS, strength=Strength.INDIRECT, matcher="extraction",
                          note="The company states this.", quote=quote)
@@ -275,11 +318,7 @@ def merge_and_rank(cands: list[ClaimDraft], *, cap: int = MAX_CLAIMS) -> list[Cl
     kept: list[tuple[ClaimDraft, set[str]]] = []
     for c in ordered:
         toks = tokens(c.text)
-        figs = figures(c.text)
-        dup = next((k for k, kt in kept if _jaccard(toks, kt) >= DUPLICATE_JACCARD
-                    or norm(c.text).lower() in norm(k.text).lower() or norm(k.text).lower() in norm(c.text).lower()
-                    or (figs and k.claim_type == c.claim_type and figures(k.text) == figs)),
-                   None)
+        dup = next((k for k, kt in kept if _same_claim(c, k, toks, kt)), None)
         if dup is not None:
             if all(e["artifact_key"] != c.source_key or e["quote"] != c.source_quote for e in dup.company_evidence):
                 dup.company_evidence.extend(c.company_evidence)

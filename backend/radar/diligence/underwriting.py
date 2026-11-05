@@ -34,8 +34,11 @@ TITLES = {
 }
 
 RULES = {
-    "TECHNICAL_DIFFERENTIATION": "STRONG: ≥3 capability/architecture/performance claims with direct code support; "
-                                 "MEDIUM: 1–2; WEAK: code collected but none; UNKNOWN: no code tree.",
+    "TECHNICAL_DIFFERENTIATION": "STRONG: native/kernel code in public and a performance or architecture claim "
+                                 "VERIFIED/SUPPORTED by evidence beyond the company's own statements; MEDIUM: "
+                                 "native/kernel code, or an architecture claim with direct code support, but no "
+                                 "performance claim independently supported; WEAK: code collected, neither; UNKNOWN: no "
+                                 "code tree. Platform-compatibility claims are listed but do not raise the rating.",
     "ARCHITECTURE": "STRONG: tree + languages + parsed manifests + a supported architecture claim; MEDIUM: tree + "
                     "languages + manifests; WEAK: only part of these; UNKNOWN: none collected.",
     "CLAIM_VERIFICATION": "STRONG: ≥60% of claims VERIFIED/SUPPORTED and none CONTRADICTED; MEDIUM: ≥30% and at most "
@@ -52,8 +55,9 @@ RULES = {
                           "harness exists or a performance claim is partially supported; WEAK: performance claims "
                           "without either; a stale benchmark baseline lowers the rating one level; UNKNOWN: no "
                           "performance claims.",
-    "SCALABILITY": "STRONG: a scalability claim VERIFIED/SUPPORTED; MEDIUM: distributed-execution code present; WEAK: "
-                   "scalability claims without code evidence; UNKNOWN: neither claims nor code.",
+    "SCALABILITY": "STRONG: a scalability claim VERIFIED, or SUPPORTED with third-party/registry evidence; MEDIUM: "
+                   "supported by the company's code only, or distributed-execution code present; WEAK: scalability "
+                   "claims without code evidence; UNKNOWN: neither claims nor code.",
     "INFRASTRUCTURE": "HIGH: multi-cloud claimed but single provider in code; MODERATE: no CI workflows or no "
                       "container/deployment artifacts; LOW: CI and deployment artifacts present; UNKNOWN: no tree.",
     "AI_SYSTEMS": "HIGH: one hosted model provider and no switching evidence; MODERATE: no evaluation evidence; LOW: "
@@ -87,16 +91,29 @@ def technical_differentiation(claims: list[ClaimDraft], artifacts: list[Artifact
                                                       ClaimType.PERFORMANCE)]
     backed = [c for c in relevant if _code_direct(c)]
     n = len(backed)
-    rating = "STRONG" if n >= 3 else "MEDIUM" if n >= 1 else "WEAK"
     kernels = sorted({p for t in trees for p in t.data.get("paths") or []
                       if is_source_path(p) and any(k in p.lower() for k in ("kernel", ".cu", ".hip", "triton", "csrc"))})
+    perf = [c for c in claims if c.claim_type == ClaimType.PERFORMANCE]
+    perf_backed = [c for c in perf if c.status in (VS.VERIFIED, VS.SUPPORTED)]
+    arch_backed = [c for c in backed if c.claim_type == ClaimType.ARCHITECTURE]
+    if (kernels or arch_backed) and (perf_backed or [c for c in arch_backed if c.status in (VS.VERIFIED, VS.SUPPORTED)]
+                                     and not perf):
+        rating = "STRONG"
+    elif kernels or arch_backed:
+        rating = "MEDIUM"
+    else:
+        rating = "WEAK"
+    if kernels and perf and not perf_backed:
+        headline = (f"Native/kernel code is public ({len(kernels)} files), but none of the {len(perf)} performance "
+                    "claim(s) built on it is independently supported.")
+    else:
+        headline = f"{n} of {len(relevant)} technical claims have direct support in public code."
     known = [f"Claim {c.ordinal} has direct code support: {_code_direct(c)[0]['note']}." for c in backed]
     if kernels:
         known.append(f"Low-level kernel/native source files present ({len(kernels)}), e.g. {', '.join(kernels[:3])}.")
     unknown = [f"Claim {c.ordinal} ({c.claim_type.lower().replace('_', ' ')}) has no direct code support."
                for c in relevant if c not in backed]
-    return _cat("TECHNICAL_DIFFERENTIATION", EVIDENCE, rating,
-                f"{n} of {len(relevant)} technical claims have direct support in public code.", known, [], unknown,
+    return _cat("TECHNICAL_DIFFERENTIATION", EVIDENCE, rating, headline, known, [], unknown,
                 [_ev(e) for c in backed for e in _code_direct(c)[:1]])
 
 
@@ -253,8 +270,10 @@ def scalability(claims: list[ClaimDraft], artifacts: list[ArtifactDraft]) -> dic
     if not sc and not dist:
         return _cat("SCALABILITY", EVIDENCE, "UNKNOWN", "No scalability claims and no distributed-execution code.",
                     [], [], ["Behaviour at scale is unknown."])
-    good = [c for c in sc if c.status in (VS.VERIFIED, VS.SUPPORTED)]
-    rating = "STRONG" if good else "MEDIUM" if dist else "WEAK"
+    beyond_code = [c for c in sc if c.status == VS.VERIFIED or (c.status == VS.SUPPORTED and any(
+        e.get("publisher") in ("third_party", "registry") and e["relation"] == "supports" for e in c.evidence))]
+    code_only = [c for c in sc if c.status == VS.SUPPORTED and c not in beyond_code]
+    rating = "STRONG" if beyond_code else "MEDIUM" if (code_only or dist) else "WEAK"
     known = [f"Claim {c.ordinal}: {c.status.replace('_', ' ').lower()} — {c.text}" for c in sc]
     if dist:
         known.append(f"Distributed-execution code: {', '.join(dist)}.")

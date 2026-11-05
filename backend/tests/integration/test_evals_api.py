@@ -50,7 +50,7 @@ def test_failures_list_filter_detail_create_review(db, client):
     seed_documented_failures(db)
     db.commit()
     rows = client.get("/api/agents/failures").json()
-    assert [f["number"] for f in rows] == list(range(1, 12)) and rows[0]["display"] == "FAILURE 0001"
+    assert [f["number"] for f in rows] == list(range(1, 21)) and rows[0]["display"] == "FAILURE 0001"
     assert len(client.get("/api/agents/failures", params={"status": "CONFIRMED"}).json()) == 3
     assert len(client.get("/api/agents/failures", params={"category": "SOURCE_QUALITY"}).json()) == 2
     assert len(client.get("/api/agents/failures", params={"agent": "meet"}).json()) == 3
@@ -62,7 +62,7 @@ def test_failures_list_filter_detail_create_review(db, client):
                                                   "category": "AFFILIATION_INFERENCE", "severity": "HIGH"})
     assert r.status_code == 201, r.text
     f = r.json()
-    assert f["number"] == 12 and f["agent"] == "RADAR ANALYST" and f["origin"] == "reviewer" and f["status"] == "OPEN"
+    assert f["number"] == 21 and f["agent"] == "RADAR ANALYST" and f["origin"] == "reviewer" and f["status"] == "OPEN"
     assert client.post("/api/agents/failures", json={"agent": "analyst", "claim_text": "x", "category": "NOPE",
                                                      "severity": "HIGH"}).status_code == 422
     r = client.post("/api/agents/failures/11/review", json={"status": "CONFIRMED", "note": "verified by hand"})

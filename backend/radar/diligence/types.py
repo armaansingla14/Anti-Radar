@@ -56,6 +56,9 @@ class CompanyFacts:
     domain: str | None = None
     github_org: str | None = None
     thesis_tags: list[str] = field(default_factory=list)
+    # Lower-cased GitHub / X handles of people linked to the company: a launch post by one of them is a
+    # company statement, not independent evidence.
+    team_handles: list[str] = field(default_factory=list)
     # "<metric>:<owner/repo>" -> [[iso day, value], ...] (oldest first), from MetricSnapshot
     metrics: dict[str, list[list[Any]]] = field(default_factory=dict)
 
@@ -67,6 +70,7 @@ class CompanyFacts:
         return cls(
             name=str(d.get("name") or ""), slug=str(d.get("slug") or ""), website=d.get("website"),
             domain=d.get("domain"), github_org=d.get("github_org"), thesis_tags=list(d.get("thesis_tags") or []),
+            team_handles=list(d.get("team_handles") or []),
             metrics={k: [list(p) for p in v] for k, v in (d.get("metrics") or {}).items()},
         )
 

@@ -317,15 +317,31 @@ def parse_go_mod(text: str, path: str) -> tuple[list[dict[str, Any]], str | None
 
 def parse_dockerfile(text: str, path: str) -> dict[str, Any]:
     froms, add_urls, users, stages = [], [], [], set()
+    heredoc: str | None = None
+    continued = False
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
-        m = re.match(r"(?i)^FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", line)
+        # Instructions only: skip heredoc bodies and RUN continuation lines (Python "from x import y" inside a RUN
+        # heredoc is not a FROM instruction).
+        if heredoc is not None:
+            if line == heredoc:
+                heredoc = None
+            continue
+        if continued:
+            continued = raw.rstrip().endswith("\\")
+            continue
+        h = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
+        if h and not re.match(r"(?i)^(FROM|USER|ADD)\b", line):
+            heredoc = h.group(1)
+        continued = raw.rstrip().endswith("\\")
+        m = re.match(r"(?i)^FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?\s*$", line)
         if m:
             image = m.group(1)
             tag = image.split("@", 1)[0].rsplit("/", 1)[-1]
             stage_ref = image.lower() in stages  # FROM <earlier build stage>, not a registry image
-            froms.append({"image": image, "line": n, "stage_ref": stage_ref,
-                          "latest": not stage_ref and (":" not in tag or tag.endswith(":latest")),
+            from_arg = "$" in image  # chosen by a build argument: pinning cannot be judged from the Dockerfile
+            froms.append({"image": image, "line": n, "stage_ref": stage_ref, "from_arg": from_arg,
+                          "latest": not stage_ref and not from_arg and (":" not in tag or tag.endswith(":latest")),
                           "pinned_digest": "@sha256:" in image})
             if m.group(2):
                 stages.add(m.group(2).lower())

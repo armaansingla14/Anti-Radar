@@ -91,6 +91,16 @@ def generate_questions(claims: list[ClaimDraft], conflicts: list[dict[str, Any]]
                           "were affected users notified?", f["title"], 80, [],
                           [{"url": e["url"], "title": f["title"], "artifact_key": e.get("artifact_key", "")}]))
 
+    licence_asked = False
+    for c in claims:
+        mixed = next((e for e in c.evidence if e.get("matcher") == "mixed_licence"), None)
+        if mixed and not licence_asked and c.claim_type == ClaimType.OPEN_SOURCE:
+            licence_asked = True
+            out.append(_q(f"{mixed['note'].split(':')[0]}. Which components does a commercial deployment need, and "
+                          "under which licence are they offered to customers?",
+                          f"Claim {c.ordinal} (open source) holds, but the licence is not uniform across the "
+                          "repository.", 78, [c.ordinal], [mixed]))
+
     for c in claims:
         if c.ordinal in covered:
             continue
