@@ -165,6 +165,7 @@ companies:
         confidence: HIGH
       - name: Factory
         website: https://factory.ai
+        alias_domains: [factory.com]       # factory.ai redirects here
         github_org: Factory-AI
         ats: {provider: ashby, slug: factory}
         type: DIRECT
@@ -386,6 +387,7 @@ companies:
         confidence: MEDIUM
 
   - name: Enigma
+    slug: enigma-inc
     website: https://enigma.inc
     github_org: Enigma-Incorporated        # linked from the homepage; the existing 'enigma' entity is unrelated
     newsroom_url: https://www.enigma.inc/posts
@@ -480,7 +482,8 @@ companies:
         confidence: HIGH
 
   - name: Kela Systems
-    website: https://kelasys.com            # redirects to kela.io; careers on Comeet (no supported board API); no newsroom page
+    website: https://kelasys.com            # careers on Comeet (no supported board API); no newsroom page
+    alias_domains: [kela.io]               # kelasys.com redirects here
     public_stage: Series A
     public_year: 2024
     sector: Defense systems for modern military operations.

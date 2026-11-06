@@ -35,6 +35,16 @@ The radar's existing collectors are pointed at each portfolio company and comp:
 - **arXiv.** Only papers whose code points into the org.
 - **USAspending.gov.** Federal awards, by exact recipient name after removing punctuation and legal suffixes. Matching is never fuzzy.
 
+Many newsrooms are rendered by JavaScript frameworks (Next.js, Framer, Webflow). On those the index page is read for:
+- visible dates next to exactly one same-site link, including `dd.mm.yyyy` only when a date on the page settles the day/month order;
+- CMS `data-date` attributes;
+- JSON-LD lists without urls (matched to their link text);
+- embedded JSON page state (`__NEXT_DATA__`), which is parsed and never executed.
+
+When the index still yields fewer than 5 dated items, posts are discovered from the site's sitemaps (robots.txt `Sitemap:` lines, else `/sitemap.xml`) under the newsroom section, plus the newsroom's own post links. Each post page (at most 20) gives its title and publication date (`article:published_time`, JSON-LD, `<time>`, or a visible date by the title). A sitemap `lastmod` is used only as a last resort, and is then labelled `date_basis=sitemap_lastmod`.
+
+Every record of a portfolio crawl is keyed to the configured identity. A redirect target (cognition.ai → cognition.com) becomes an alternate key, and the domains the config verifies (website, newsroom, `alias_domains`) resolve to that company, so a redirect never creates a second company. A configured `slug` names the company when it is created.
+
 Every fetch goes through the SSRF-guarded client with robots.txt. External text is treated as untrusted data: it is quoted, never followed, and instruction-like text is flagged.
 
 ## Event types and normalisation
@@ -55,7 +65,7 @@ Signals with a known shape map directly:
 | Raw change | Event |
 |---|---|
 | USAspending award | COMMERCIAL.government_contract (amount kept) |
-| GitHub release | Major or minor semver gives TECHNICAL.repository_release. Patch or pre-release gives NOISE. |
+| GitHub release | TECHNICAL.repository_release for a major or first release of a repository with 200 stars or more, or a minor release of the organisation's flagship (most-starred) repository with 1,000 stars or more that is not an SDK / client / CLI / cookbook / examples repository. Everything else (patches, pre-releases, SDK minors, small repositories) is NOISE. |
 | New repository | TECHNICAL.open_source_release at 50 stars or more, otherwise NOISE |
 | Paper | TECHNICAL.research_paper |
 | Founder or leader affiliation change | TALENT.executive_join / executive_departure |
@@ -63,7 +73,22 @@ Signals with a known shape map directly:
 | Any other page change | NOISE: minor copy update or routine docs |
 | Pricing page change | PRODUCT.pricing_change |
 
-Company posts and Hacker News titles go through ordered title rules. The first match wins:
+A Show HN or Launch HN counts as the company's own only when the story URL points at the company's site or GitHub org. One that merely mentions the company is third-party discussion: public attention at 50 points or more, otherwise NOISE.
+
+Company posts and Hacker News titles first go through context rules, which use the title, the URL, the post text and the company's name:
+
+| Rule | Event | Matches |
+|---|---|---|
+| N1m | RISK.marketplace_security (WATCH) | A security word together with marketplace, extension, plugin or package |
+| N8s | NOISE customer_story | Case studies and customer stories (by URL, "How X … with Company", "X cuts … with Company"). Counted in `customer_stories_30d`. |
+| N6p | COMMERCIAL.proposed_award (WATCH) | Proposed, letter of intent, preliminary memorandum, selected for negotiation, would receive / would help, plus an award word, in the title or the post text |
+| N0g | NOISE guide | guide, what is, how to, explained, what it costs, examples, use cases |
+| N11c | NOISE catalog_addition | "\<third-party thing\> is now available / in preview on \<platform\>" when the thing is not the company's own. Never counted as a launch. |
+| N17 | PRODUCT.product_sunset | sunset, deprecate, discontinue, shutting down |
+| N11b | PRODUCT.product_beta (WATCH) | beta, preview, early access |
+| N8o | PRODUCT.capability_announcement | "\<Company\> deploys \<thing\>". A customer announcement needs "\<Customer\> deploys \<Company\>". |
+
+Then the ordered title rules. The first match wins:
 
 | Rule | Type | Subtype | Matches |
 |---|---|---|---|
@@ -77,11 +102,11 @@ Company posts and Hacker News titles go through ordered title rules. The first m
 | N8 | COMMERCIAL | customer_announcement | deploys, selects, customer |
 | N9 | TALENT | executive_join / executive_departure | joins, appoints / steps down + a leadership title |
 | N11 | PRODUCT | product_launch | launch, introducing, announcing, now available, GA |
-| N10 | TECHNICAL | benchmark_claim | benchmark, N× faster, state-of-the-art, SOTA |
+| N10 | TECHNICAL | benchmark_claim, performance_claim | benchmark, N× faster, state-of-the-art, SOTA; doubles / triples / N× throughput, speed or latency (routed to RUN DILIGENCE) |
 | N12 | TECHNICAL | research_paper | paper, technical report |
 | N13 | TECHNICAL | open_source_release | open-source |
-| N14 | PRODUCT | new_feature | now supports, integration |
-| N15 | PRODUCT | pricing_change | pricing |
+| N14 | PRODUCT | integration, new_feature | integrates, integration; now supports |
+| N15 | PRODUCT | pricing_change | new pricing, pricing update, price cut / increase / change, now costs |
 | N16 | STRATEGIC | market_entry | expands to, new office |
 | — | NOISE | generic_post | anything else |
 
@@ -121,9 +146,9 @@ The first matching rule decides. M9 can then cap the result.
 
 | Rule | Condition | Outcome | Example |
 |---|---|---|---|
-| M1 | RISK event (security incident, outage, lawsuit, recall) | MATERIAL ("risk signal", never "crisis") | The company publishes an incident report |
+| M1 | RISK event (security incident, outage, lawsuit, recall) | MATERIAL ("risk signal", never "crisis"). A security issue in a third-party item on the company's marketplace gives WATCH. | The company publishes an incident report |
 | M2 | FINANCING announced by the company or a primary source | MATERIAL | "Acme raises $40M Series B" on acme.com |
-| M3 | Government contract of $1M or more; a company-announced partner or customer naming a tracked company or an agency | MATERIAL. A smaller or unpriced award, or an unnamed partner, gives WATCH. | DOE award of $2.4M |
+| M3 | Government contract of $1M or more; a company-announced partner or customer naming a tracked company or an agency | MATERIAL. A smaller or unpriced award, or an unnamed partner, gives WATCH. A proposed award (letter of intent) is WATCH until it is awarded. | DOE award of $2.4M |
 | M4 | Launch or major release announced by the company, and the first in 90 days | MATERIAL. A repeat launch, new feature or pricing change gives WATCH. | "Introducing Gelgrip 2" |
 | M5 | Founder or executive join or departure from a verified source | MATERIAL. Unverified gives WATCH. | "Jane Doe joins as CTO" on the company newsroom |
 | M6 | At least 10 roles of one specialised class in 14 days, or a new class | MATERIAL. At least 5 roles, acceleration or closures give WATCH. Always INFERENCE. | 12 new ML research roles |
@@ -196,6 +221,7 @@ Proxies are stored in `metric_snapshots` as `proxy_*` metrics with source `deriv
 | Open technical roles (a public hiring signal) | headcount |
 | Contributors | engineering headcount |
 | Federal award obligations | revenue |
+| Customer stories published in the last 30 days | revenue, or a customer count |
 
 Windows are dated by the event itself: posting, release, publication, story or award date.
 

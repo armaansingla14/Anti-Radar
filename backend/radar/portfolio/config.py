@@ -88,6 +88,8 @@ def _github_org(v: str | None) -> str | None:
 class CompConfig(_Strict):
     name: str = Field(min_length=1, max_length=300)
     website: str
+    # Other domains of the same company verified by hand (e.g. where the website redirects: factory.ai -> factory.com)
+    alias_domains: list[str] = Field(default_factory=list)
     github_org: str | None = None
     ats: AtsBoard | None = None
     usaspending_recipient: str | None = Field(default=None, max_length=300)
@@ -106,6 +108,17 @@ class CompConfig(_Strict):
     def _check_github_org(cls, v: str | None) -> str | None:
         return _github_org(v)
 
+    @field_validator("alias_domains")
+    @classmethod
+    def _check_aliases(cls, v: list[str]) -> list[str]:
+        out = []
+        for d in v:
+            dom = config_domain(_website(d))
+            if not dom:
+                raise ValueError(f"invalid alias domain {d!r}")
+            out.append(dom)
+        return out
+
     @field_validator("source_url")
     @classmethod
     def _src(cls, v: str) -> str:
@@ -118,6 +131,8 @@ class CompanyConfig(_Strict):
     name: str = Field(min_length=1, max_length=300)
     slug: str | None = Field(default=None, max_length=200)
     website: str
+    # Other domains of the same company verified by hand (e.g. where the website redirects: factory.ai -> factory.com)
+    alias_domains: list[str] = Field(default_factory=list)
     github_org: str | None = None
     ats: AtsBoard | None = None
     newsroom_url: str | None = None
@@ -140,6 +155,17 @@ class CompanyConfig(_Strict):
     def _check_github_org(cls, v: str | None) -> str | None:
         return _github_org(v)
 
+    @field_validator("alias_domains")
+    @classmethod
+    def _check_aliases(cls, v: list[str]) -> list[str]:
+        out = []
+        for d in v:
+            dom = config_domain(_website(d))
+            if not dom:
+                raise ValueError(f"invalid alias domain {d!r}")
+            out.append(dom)
+        return out
+
     @field_validator("newsroom_url")
     @classmethod
     def _newsroom(cls, v: str | None) -> str | None:
@@ -158,6 +184,12 @@ class CompanyConfig(_Strict):
     @property
     def domain(self) -> str | None:
         return config_domain(self.website)
+
+
+def own_domains(cfg: CompanyConfig | CompConfig) -> list[str]:
+    """Every domain the config verifies for one company: website, newsroom (may be the redirect target), aliases."""
+    doms = [config_domain(cfg.website), registrable_domain(getattr(cfg, "newsroom_url", None)), *cfg.alias_domains]
+    return sorted({d for d in doms if d})
 
 
 class SourceConfig(_Strict):

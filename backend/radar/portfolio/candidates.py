@@ -108,6 +108,9 @@ def _signals(session: Session, companies: dict[uuid.UUID, Company], horizon: dat
                Signal.signal_type.not_in(list(SKIP_SIGNAL_TYPES)))
     ).all()
     repos = {r.id: r for r in session.scalars(select(Repository).where(Repository.company_id.in_(ids)))}
+    top_stars: dict[uuid.UUID, int] = defaultdict(int)
+    for r in repos.values():
+        top_stars[r.company_id] = max(top_stars[r.company_id], r.stars or 0)
     page_titles = _page_titles(session, [s for _, s in rows if s.signal_type == "website_changed"])
     out: list[RawChange] = []
     seen: set[tuple[uuid.UUID, uuid.UUID]] = set()
@@ -118,10 +121,12 @@ def _signals(session: Session, companies: dict[uuid.UUID, Company], horizon: dat
         company = companies[owner]
         repo = repos.get(sig.entity_id)
         meta = dict(sig.meta or {})
+        meta["company_name"] = company.name
         if repo is not None:
             meta.setdefault("repo", repo.full_name)
             meta["repo_stars"] = repo.stars or 0
             meta["repo_archived"] = bool(repo.archived)
+            meta["repo_flagship"] = (repo.stars or 0) >= top_stars[repo.company_id] and (repo.stars or 0) > 0
         if sig.signal_type == "website_changed":
             meta.update(page_titles.get(sig.id, {}))
         at = _aware(sig.event_at)

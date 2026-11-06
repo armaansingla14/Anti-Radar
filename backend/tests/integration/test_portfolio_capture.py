@@ -21,7 +21,7 @@ def test_capture_appends_to_todays_update_and_keeps_config(db, tmp_path, monkeyp
     (target / "MANIFEST.json").write_text(json.dumps({"as_of": "2026-10-06", "sources": ["github"], "note": "n"}))
     seen = {}
 
-    def fake_capture(targets):
+    def fake_capture(targets, only=None):
         seen["targets"] = [(t.name, t.role, t.ats, t.usaspending_recipient) for t in targets]
         sig = NormalizedSignal(entity=targets[0].ref, signal_type="company_post", source_type="website",
                                source_url="https://acme-robotics.com/news/x", title="Introducing X",

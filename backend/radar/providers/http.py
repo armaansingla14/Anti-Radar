@@ -519,6 +519,16 @@ class RobotsCache:
         rp = self._cache[base]
         return True if rp is None else rp.can_fetch(self.agent, url)
 
+    def sitemaps(self, url: str) -> list[str]:
+        """``Sitemap:`` URLs declared in the origin's robots.txt (fetched through ``allowed``)."""
+        self.allowed(url)
+        p = urlparse(url)
+        rp = self._cache.get(f"{p.scheme}://{p.netloc}")
+        try:
+            return list(rp.site_maps() or []) if rp is not None else []
+        except Exception:  # noqa: BLE001
+            return []
+
 
 def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()

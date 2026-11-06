@@ -1,0 +1,32 @@
+id: portfolio-newsroom-js-001
+title: JS-rendered newsrooms still yield dated company posts (visible dates, CMS attributes, page state, post pages)
+agent: portfolio
+task: portfolio_newsroom
+failure_category: TOOL_FAILURE
+regression_for: "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #10"
+input:
+  pages:
+    - label: visible date next to one link
+      url: https://www.acme-robotics.com/blog
+      html: '<main><a href="/blog/api-beta"><div title="Frontier Models for Every Robot">Frontier Models for Every Robot</div><div>October 13, 2026</div></a><a href="/blog/old"><div title="Older">Older post</div><div>April 16, 2026</div></a></main>'
+      expect:
+        - {url: "https://www.acme-robotics.com/blog/api-beta", title: Frontier Models for Every Robot, date: "2026-10-13"}
+        - {url: "https://www.acme-robotics.com/blog/old", title: Older, date: "2026-04-16"}
+    - label: webflow collection attributes; off-site coverage ignored
+      url: https://www.helion-fusion.com/newsroom
+      html: '<div class="w-dyn-item" data-date="2026-10-22" data-title="Signs Letter of Intent"><a href="/newsroom/loi">Read</a></div><div class="w-dyn-item" data-date="2026-06-04"><a href="https://press.example.org/x">Press</a></div>'
+      expect:
+        - {url: "https://www.helion-fusion.com/newsroom/loi", title: Signs Letter of Intent, date: "2026-10-22"}
+    - label: embedded Next.js state, parsed not executed
+      url: https://acme-labs.com/blog
+      html: '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"posts":[{"title":"Introducing Gelgrip 3","publishedAt":"2026-10-30T09:00:00Z","slug":{"current":"gelgrip-3"}}]}}}</script>'
+      expect:
+        - {url: "https://acme-labs.com/blog/gelgrip-3", title: Introducing Gelgrip 3, date: "2026-10-30"}
+    - label: post page with article:published_time
+      post_page: true
+      url: https://acme-labs.com/news/r2
+      html: '<head><meta property="og:title" content="Acme unveils R2"><meta property="article:published_time" content="2026-10-21T08:00:00Z"></head><body><h1>Acme unveils R2</h1></body>'
+      expect:
+        - {url: "https://acme-labs.com/news/r2", title: Acme unveils R2, date: "2026-10-21"}
+expected:
+  all_checks_pass: true

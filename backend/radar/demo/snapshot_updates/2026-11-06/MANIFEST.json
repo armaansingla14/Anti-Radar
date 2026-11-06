@@ -1,0 +1,54 @@
+{
+  "kind": "verified_snapshot",
+  "captured_at": "2026-11-06T22:11:32.596871+00:00",
+  "capture_started_at": "2026-11-06T20:58:44.151971+00:00",
+  "as_of": "2026-11-06",
+  "sources": [
+    "arxiv",
+    "ats",
+    "github",
+    "hackernews",
+    "usaspending",
+    "website"
+  ],
+  "files": 192,
+  "portfolio": {
+    "config": "portfolio.yaml",
+    "companies": 16,
+    "targets": 1,
+    "source": "https://antifund.com/",
+    "checked_at": "2026-11-06",
+    "captured_at": "2026-11-06T22:11:32.596901+00:00",
+    "passes": [
+      {
+        "at": "2026-11-06T22:08:07.990737+00:00",
+        "targets": 10,
+        "sources": [
+          "arxiv",
+          "ats",
+          "github",
+          "hackernews",
+          "usaspending",
+          "website"
+        ]
+      },
+      {
+        "at": "2026-11-06T22:11:32.596904+00:00",
+        "targets": 1,
+        "sources": [
+          "arxiv",
+          "ats",
+          "github",
+          "hackernews",
+          "usaspending",
+          "website"
+        ]
+      }
+    ]
+  },
+  "note": "Real public data collected by ANTI RADAR from official public APIs and websites. Every record keeps its source URL and observation time; metrics are exactly as observed. No synthetic events. Derived scores are recomputed on load. Captured as an update on top of the earlier snapshots in the chain.",
+  "update_of": [
+    "2026-10-20",
+    "2026-11-05"
+  ]
+}

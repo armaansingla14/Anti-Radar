@@ -34,6 +34,14 @@ WHY: dict[str, str] = {
     "repositioning": "A new self-description can mean a change of target market or product focus.",
     "market_entry": "Entering a new market changes the competitive set and the go-to-market.",
     "public_attention": "Public attention can lead adoption or hiring, but is not adoption itself.",
+    "performance_claim": "A performance claim can be tested against public evidence before it is relied on.",
+    "proposed_award": "A proposed award signals government interest; it is not money until finalized.",
+    "marketplace_security": "A security issue in the company's ecosystem can affect user trust, though it is not a "
+                            "flaw in the company's own product.",
+    "product_beta": "A beta shows what is coming; adoption is decided at general availability.",
+    "product_sunset": "Retiring a product refocuses the company and can strand some users.",
+    "integration": "An integration can open distribution through another platform's users.",
+    "capability_announcement": "A new capability shows where the product is heading.",
 }
 AREAS: dict[str, list[str]] = {
     "new_round": ["capital", "runway"], "acquisition": ["capital", "strategy"],
@@ -49,7 +57,10 @@ AREAS: dict[str, list[str]] = {
     "outage": ["risk", "reliability"], "lawsuit": ["risk", "legal"], "recall": ["risk", "product"],
     "repository_archived": ["risk", "technology"], "regulatory_milestone": ["regulatory"],
     "repositioning": ["strategy", "market"], "market_entry": ["strategy", "market"],
-    "public_attention": ["attention"],
+    "public_attention": ["attention"], "performance_claim": ["technology", "claims"],
+    "proposed_award": ["government", "revenue"], "marketplace_security": ["risk", "security"],
+    "product_beta": ["product"], "product_sunset": ["product", "strategy"], "integration": ["product", "distribution"],
+    "capability_announcement": ["product", "technology"],
 }
 NOISE_WHY = "Routine change: counted in the funnel, not surfaced."
 

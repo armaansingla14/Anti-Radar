@@ -10,7 +10,7 @@ Priority: HIGH when >= 2 material events including one of the company's own, or 
 material event or >= 3 to watch; LOW otherwise. Only HIGH / MEDIUM companies are surfaced, top ``TOP_N``.
 
 Suggested action (first rule that applies; never "contact founder"):
-RISK → REVIEW; a DIRECT competitor's launch or financing → UPDATE_COMPETITIVE_MAP; a performance / benchmark claim or
+the company's own RISK → REVIEW; a DIRECT competitor's launch or financing → UPDATE_COMPETITIVE_MAP; a performance / benchmark claim or
 an event that bears on a diligence claim → RUN_DILIGENCE; a hiring cluster → PREPARE_FOUNDER_QUESTIONS; only WATCH
 events → MONITOR; otherwise REVIEW. "What this could mean" and questions are templates, labelled INFERENCE.
 """
@@ -26,7 +26,7 @@ WATCH_CAP = 5
 HIRING_SUBTYPES = frozenset({"specialized_hiring_cluster", "new_role_class", "hiring_acceleration"})
 COMPETITIVE_SUBTYPES = frozenset({"product_launch", "major_release", "new_round", "acquisition",
                                   "strategic_investment"})
-PERF_SUBTYPES = frozenset({"benchmark_claim"})
+PERF_SUBTYPES = frozenset({"benchmark_claim", "performance_claim"})
 PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 
@@ -55,7 +55,7 @@ def event_action(*, materiality: str, event_type: str, subtype: str, relation: s
     """Suggested review for one event from one company's point of view."""
     if materiality == "NOISE":
         return "NO_ACTION"
-    if event_type == "RISK":
+    if event_type == "RISK" and relation == "SELF":
         return "REVIEW"
     if relation == "COMPETITOR" and subtype in COMPETITIVE_SUBTYPES:
         return "UPDATE_COMPETITIVE_MAP"
@@ -71,12 +71,13 @@ def event_action(*, materiality: str, event_type: str, subtype: str, relation: s
 def card_action(items: list[AttentionItem]) -> tuple[str, str]:
     """(action, reason) for a company card."""
     live = [i for i in items if i.materiality in ("MATERIAL", "WATCH")]
-    if any(i.event_type == "RISK" for i in live):
-        return "REVIEW", "a risk signal was detected"
+    if any(i.event_type == "RISK" and i.relation == "SELF" for i in live):
+        return "REVIEW", "a risk signal about the company was detected"
     comp = next((i for i in live if i.relation == "COMPETITOR" and i.subtype in COMPETITIVE_SUBTYPES), None)
     if comp:
-        return "UPDATE_COMPETITIVE_MAP", f"a direct competitor ({comp.subject_name}) announced a " \
-                                         f"{comp.subtype.replace('_', ' ')}"
+        what = comp.subtype.replace("_", " ")
+        return "UPDATE_COMPETITIVE_MAP", (f"a direct competitor ({comp.subject_name}) announced "
+                                          f"{'an' if what[0] in 'aeiou' else 'a'} {what}")
     perf = next((i for i in live if i.relation == "SELF" and (i.subtype in PERF_SUBTYPES or i.performance_claim
                                                               or i.diligence_claim)), None)
     if perf:
@@ -140,6 +141,13 @@ QUESTIONS: dict[str, str] = {
     "executive_join": "What will the new leader own, and what gap does the role fill?",
     "executive_departure": "Who takes over the departing leader's responsibilities?",
     "benchmark_claim": "Can the performance claim be reproduced independently, and against which baseline?",
+    "performance_claim": "Can the performance claim be reproduced independently, and against which baseline?",
+    "proposed_award": "What must happen for the proposed award to be finalized, and on what timeline?",
+    "marketplace_security": "What is the company's exposure to the third-party security issue, and what changed?",
+    "product_beta": "Who is in the beta, and what decides general availability?",
+    "product_sunset": "Why is the product being retired, and what happens to its users?",
+    "integration": "Does the integration open a new distribution channel, and who maintains it?",
+    "capability_announcement": "Is the new capability in production use, and by whom?",
     "research_paper": "Does the paper describe what is in the product today, or future work?",
     "open_source_release": "Why open-source this now, and how does it relate to the commercial product?",
     "repository_release": "What changed in the release that matters to users?",

@@ -44,6 +44,10 @@ from radar.providers.roles import GENERIC_CLASSES, GTM_CLASS
 AMOUNT_RE = re.compile(r"\$\s?(\d+(?:[.,]\d+)?)\s?(k|m|b|mm|bn|million|billion|thousand)?\b", re.IGNORECASE)
 PERF_RE = re.compile(r"\b(benchmarks?|\d+(?:\.\d+)?\s?[x×]\s(?:faster|cheaper|more efficient|speedup)|"
                      r"state[- ]of[- ]the[- ]art|sota|outperform\w*|record[- ]breaking|fastest)\b", re.IGNORECASE)
+# "NVIDIA Vera CPUs double throughput for Modal Sandboxes", "3x the throughput", "halves latency"
+SPEEDUP_RE = re.compile(r"\b(doubles?|doubling|triples?|tripling|halves|\d+(?:\.\d+)?\s?[x×])\b[^.]{0,40}?"
+                        r"\b(throughput|performance|speed|latency|faster|cheaper|efficiency|tokens per second)\b",
+                        re.IGNORECASE)
 AGENCY_RE = re.compile(r"\b(DoD|Department of (?:Defense|Energy|the \w+)|Air Force|AFWERX|Army|Navy|Marine Corps|"
                        r"Space Force|NASA|DARPA|DIU|SBIR|STTR|DOE|federal|government|NATO|Pentagon|Missile Defense)\b",
                        re.IGNORECASE)
@@ -66,7 +70,10 @@ def _rx(p: str) -> re.Pattern[str]:
 
 TITLE_RULES: tuple[TitleRule, ...] = (
     TitleRule("N1", "RISK", "security_incident",
-              _rx(r"\b(breach|security incident|vulnerabilit(y|ies)|cve-\d{4}|compromised|exploit(ed)?)\b")),
+              _rx(r"\b(breach(ed)?|security incident|security notice|security advisory|cve-\d{4}-\d+|compromised|"
+                  r"exploited|backdoor(ed)?|malware|malicious (package|extension|code)|supply[- ]chain attack|"
+                  r"ransomware|vulnerabilit(y|ies) (in|found in|affecting|discovered in|disclosed)|"
+                  r"(disclos\w+|patch\w*|fix\w*) (a |the )?(critical )?vulnerabilit(y|ies) in)\b")),
     TitleRule("N1", "RISK", "outage", _rx(r"\b(outage|downtime|service disruption|post-?mortem|incident report)\b")),
     TitleRule("N1", "RISK", "lawsuit", _rx(r"\b(lawsuit|sued|sues|litigation|settlement|class action)\b")),
     TitleRule("N1", "RISK", "recall", _rx(r"\b(recall|recalls|recalled)\b")),
@@ -86,33 +93,38 @@ TITLE_RULES: tuple[TitleRule, ...] = (
     TitleRule("N7", "COMMERCIAL", "partnership", _rx(r"\b(partners? with|partnership|partnering|collaborat\w+|"
                                                      r"teams up)\b")),
     TitleRule("N8", "COMMERCIAL", "customer_announcement",
-              _rx(r"\b(deploys|deployed (at|with|by)|deployment (at|with)|selects|chooses|customer)\b")),
+              _rx(r"\b(deploys|deployed (at|with|by)|deployment (at|with)|selects|chooses|adopts|customer)\b")),
     TitleRule("N9", "TALENT", "executive_departure",
               _rx(r"\b(steps down|stepping down|departs|departure|leaves|leaving|resigns)\b"), LEADER_TITLE_RE),
     TitleRule("N9", "TALENT", "executive_join",
-              _rx(r"\b(joins|joined|appoints|appointed|names|welcomes|hires|hired|promotes|new)\b"), LEADER_TITLE_RE),
+              _rx(r"\b(joins|joined|appoints|appointed|names|named|welcomes|hires|hired|promotes|promoted|new)\b"),
+              LEADER_TITLE_RE),
+    TitleRule("N14", "PRODUCT", "integration", _rx(r"\b(integrat(es|ed|ion|ions|ing)|native integration)\b")),
     TitleRule("N11", "PRODUCT", "product_launch",
               _rx(r"\b(launch(es|ed|ing)?|introducing|introduces|announcing|announces|unveil\w*|now available|"
                   r"generally available|general availability|GA)\b")),
     TitleRule("N10", "TECHNICAL", "benchmark_claim", PERF_RE),
+    TitleRule("N10", "TECHNICAL", "performance_claim", SPEEDUP_RE),
     TitleRule("N12", "TECHNICAL", "research_paper",
               _rx(r"\b(paper|technical report|tech report|we present|arxiv|preprint|research)\b")),
     TitleRule("N13", "TECHNICAL", "open_source_release", _rx(r"\b(open[- ]sourc\w+)\b")),
-    TitleRule("N14", "PRODUCT", "new_feature",
-              _rx(r"\b(new feature|now supports?|adds? support|support for|integration with|integrates with)\b")),
-    TitleRule("N15", "PRODUCT", "pricing_change", _rx(r"\b(pricing|price change|new prices?|free tier)\b")),
+    TitleRule("N14", "PRODUCT", "new_feature", _rx(r"\b(new feature|now supports?|adds? support|support for)\b")),
+    TitleRule("N15", "PRODUCT", "pricing_change",
+              _rx(r"\b(new pricing|pricing (update|change)s?|(price|pricing) (cut|increase|change|drop|reduction)s?|"
+                  r"now costs|lower prices?|reduced prices?|free tier)\b")),
     TitleRule("N16", "STRATEGIC", "market_entry",
               _rx(r"\b(expands? (to|into)|expansion|enters|new office|opens (in|an?)|now in)\b")),
 )
 
 NOISE_SUBTYPES = frozenset({"generic_post", "minor_copy_update", "routine_docs", "routine_release", "minor_repo",
                             "hiring_state", "activity_metric", "low_engagement_discussion", "single_postings",
-                            "other"})
+                            "other", "catalog_addition", "customer_story", "guide"})
 # The stored event type of a NOISE candidate (its materiality is NOISE; the type only says which area it touched).
 NOISE_EVENT_TYPE = {"generic_post": "STRATEGIC", "minor_copy_update": "STRATEGIC", "low_engagement_discussion":
                     "STRATEGIC", "other": "STRATEGIC", "routine_docs": "TECHNICAL", "routine_release": "TECHNICAL",
                     "minor_repo": "TECHNICAL", "activity_metric": "TECHNICAL", "hiring_state": "TALENT",
-                    "single_postings": "TALENT"}
+                    "single_postings": "TALENT", "catalog_addition": "PRODUCT", "customer_story": "COMMERCIAL",
+                    "guide": "STRATEGIC"}
 HN_TYPES = frozenset({"hn_launch", "hn_show", "hn_discussion"})
 HN_ENGAGED_POINTS = 50  # below this, an unmatched HN discussion is low-engagement social noise
 SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?(?:[-+.]?([0-9A-Za-z.-]+))?$")
@@ -146,6 +158,83 @@ def match_title(title: str) -> TitleRule | None:
     return None
 
 
+# ── context rules (title + url + description + the company's name), applied before TITLE_RULES ──────────────────
+
+MARKETPLACE_RE = _rx(r"\b(marketplace|extension|plugin|add-?on|third[- ]party|package|npm|pypi)\b")
+CUSTOMER_STORY_URL_RE = _rx(r"(case[-_]?stud(y|ies)|/customers?/|customer[-_]stor(y|ies)|/success[-_]stor)")
+GUIDE_RE = _rx(r"\b(guide|what is|what are|how to|explained|explainer|what it costs|examples|use cases|tutorial|"
+               r"best practices|cheat ?sheet|faq|glossary|101|primer|vs\.?|comparison|top \d+)\b")
+CATALOG_RE = _rx(r"^(?P<thing>.+?)\s+(?:is|are)\s+(?:now\s+)?(?:available|live|launching|in\s+(?:limited\s+|public\s+|"
+                 r"private\s+)?(?:preview|beta))\b.*?\b(?:on|in|via|through|with)\s+(?P<where>.+)$")
+PROPOSED_RE = _rx(r"\b(proposed|letter of intent|preliminary memorandum|memorandum of terms|selected for (award )?"
+                  r"negotiations?|would help|would receive|plans to award|intends to award|preliminary terms|"
+                  r"conditional commitment)\b")
+AWARD_WORD_RE = _rx(r"\b(award|awards|incentives?|contract|funding|grant|CHIPS|loan)\b")
+SUNSET_RE = _rx(r"\b(sunset\w*|deprecat\w*|discontinu\w*|shutting down|shut down|end[- ]of[- ]life|winding down)\b")
+BETA_RE = _rx(r"\b(beta|preview|early access|waitlist|research preview)\b")
+DEPLOY_VERB_RE = _rx(r"\b(deploys|deployed|selects|chooses|adopts|standardi[sz]es on)\b")
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _mentions(text: str, name: str | None) -> bool:
+    n = _norm(name or "")
+    return bool(n) and f" {n} " in f" {_norm(text)} "
+
+
+def is_customer_story(title: str, url: str | None = None, company_name: str | None = None) -> bool:
+    """A customer case study / story published by the company about a customer (not a product launch)."""
+    if url and CUSTOMER_STORY_URL_RE.search(url):
+        return True
+    t = title or ""
+    if company_name:
+        n = re.escape(company_name.strip())
+        if re.search(rf"^how\b.+\b(with|using|on|chose|built on|runs on)\s+{n}\b", t, re.IGNORECASE):
+            return True
+        if re.search(rf"\b(cuts|reduces|saves|scales|builds|boosts|improves|achieves|powers|accelerates|transforms|"
+                     rf"automates|ships|handles|serves)\b.+\b(with|using)\s+{n}\b", t, re.IGNORECASE):
+            return True
+    return False
+
+
+def classify_title(title: str, *, url: str | None = None, description: str | None = None,
+                   company_name: str | None = None) -> tuple[str, str, str] | None:
+    """(event_type, subtype, rule) from the context rules, else from TITLE_RULES; None when nothing matches."""
+    t = title or ""
+    sec = TITLE_RULES[0]
+    if sec.pattern.search(t) and MARKETPLACE_RE.search(t):
+        return "RISK", "marketplace_security", "N1m"
+    if is_customer_story(t, url, company_name):
+        return NOISE_TYPE, "customer_story", "N8s"
+    blob = f"{t} {description or ''}"
+    rule = match_title(t)
+    if PROPOSED_RE.search(blob) and AWARD_WORD_RE.search(blob) and (
+            PROPOSED_RE.search(t) or (rule is not None and rule.event_type in ("COMMERCIAL", "FINANCING"))):
+        return "COMMERCIAL", "proposed_award", "N6p"
+    if rule is not None and rule.event_type == "RISK":
+        return rule.event_type, rule.subtype, rule.id
+    if GUIDE_RE.search(t) and not (rule is not None and rule.event_type in ("FINANCING", "COMMERCIAL")):
+        return NOISE_TYPE, "guide", "N0g"
+    m = CATALOG_RE.match(t.strip())
+    if m and not _mentions(m.group("thing"), company_name):
+        return NOISE_TYPE, "catalog_addition", "N11c"
+    if SUNSET_RE.search(t):
+        return "PRODUCT", "product_sunset", "N17"
+    if BETA_RE.search(t) and (rule is None or rule.event_type in ("PRODUCT", "STRATEGIC", "TECHNICAL")):
+        return "PRODUCT", "product_beta", "N11b"
+    if rule is not None and rule.subtype == "customer_announcement" and company_name and DEPLOY_VERB_RE.search(t):
+        verb = DEPLOY_VERB_RE.search(t)
+        before = t[: verb.start()]
+        after = t[verb.end():]
+        if _mentions(before, company_name) and not _mentions(after, company_name):
+            return "PRODUCT", "capability_announcement", "N8o"  # '<Company> deploys <thing>': its own capability
+    if rule is None:
+        return None
+    return rule.event_type, rule.subtype, rule.id
+
+
 def semver_level(tag: str) -> str | None:
     """major (X.0.0, X >= 1) | minor (X.Y.0) | patch | prerelease | None (not semver)."""
     m = SEMVER_RE.search((tag or "").strip())
@@ -169,7 +258,7 @@ def _cand(r: RawChange, event_type: str, subtype: str, rule: str, **kw) -> Candi
     flags = detect_injection(f"{r.title}\n{r.description or ''}")
     if flags:
         meta["injection_flags"] = flags[:3]
-    if PERF_RE.search(r.title or ""):
+    if PERF_RE.search(r.title or "") or SPEEDUP_RE.search(r.title or ""):
         meta["performance_claim"] = True
     meta.update(kw.pop("meta", {}))
     return Candidate(company_id=r.company_id, event_type=event_type, subtype=subtype, title=r.title.strip()[:500],
@@ -179,15 +268,18 @@ def _cand(r: RawChange, event_type: str, subtype: str, rule: str, **kw) -> Candi
 
 
 def _by_title(r: RawChange, *, noise_subtype: str = "generic_post") -> Candidate:
-    rule = match_title(r.title)
-    if rule is None:
+    url = r.source.url if r.source.source_type != "hackernews" else str(r.meta.get("link") or "")
+    typed = classify_title(r.title, url=url, description=r.description,
+                           company_name=r.meta.get("company_name"))
+    if typed is None:
         return _cand(r, NOISE_TYPE, noise_subtype, "N0")
+    event_type, subtype, rule_id = typed
     meta = {}
-    if rule.event_type in ("FINANCING", "COMMERCIAL"):
-        amt = amount_usd(r.title)
+    if event_type in ("FINANCING", "COMMERCIAL"):
+        amt = amount_usd(r.title) or (amount_usd(r.description or "") if subtype == "proposed_award" else None)
         if amt is not None:
             meta["amount"] = amt
-    return _cand(r, rule.event_type, rule.subtype, rule.id, meta=meta)
+    return _cand(r, event_type, subtype, rule_id, meta=meta)
 
 
 def normalize_one(r: RawChange) -> Candidate | None:
@@ -202,8 +294,14 @@ def normalize_one(r: RawChange) -> Candidate | None:
         return _cand(r, "COMMERCIAL", "government_contract", "N6",
                      meta={"amount": float(amt) if amt is not None else None, "agency": r.meta.get("agency")})
     if st in HN_TYPES:
-        c = _by_title(r)
         points = int(r.meta.get("points") or r.raw_value or 0)
+        if st in ("hn_launch", "hn_show") and r.meta.get("link_source", "url") != "url":
+            # A Show/Launch HN is the company's own only when the story itself points at the company's site or
+            # org. One that merely mentions the company (its hardware, its API) is third-party discussion.
+            if points < HN_ENGAGED_POINTS:
+                return _cand(r, NOISE_TYPE, "low_engagement_discussion", "NH3")
+            return _cand(r, "STRATEGIC", "public_attention", "NH3")
+        c = _by_title(r)
         if c.event_type == NOISE_TYPE:
             if st in ("hn_launch", "hn_show"):
                 return _cand(r, "PRODUCT", "product_launch", "N11", confidence=min(r.confidence, 0.8))
@@ -219,7 +317,7 @@ def normalize_one(r: RawChange) -> Candidate | None:
             level = level or "first"
         if level is None:
             return _cand(r, NOISE_TYPE, "routine_release", "NR", meta={"semver": None})
-        return _cand(r, "TECHNICAL", "repository_release", "NR", meta={"semver": level})
+        return _release(r, level)
     if st == "repo_created":
         stars = int(r.meta.get("repo_stars") or r.raw_value or 0)
         if stars >= OSS_TRACTION_STARS:
@@ -244,6 +342,35 @@ def normalize_one(r: RawChange) -> Candidate | None:
     if st == "open_roles_jump":
         return _cand(r, "TALENT", "hiring_acceleration", "NJ", epistemic="INFERENCE")
     return _cand(r, NOISE_TYPE, "other", "N0")
+
+
+SDK_REPO_RE = re.compile(r"(sdk|client|cli|ctl|cookbook|examples?|demos?|tutorials?|starter|templates?|bindings|"
+                         r"[-_.](python|py|js|javascript|ts|typescript|node|go|golang|ruby|rb|java|kotlin|swift|rust|"
+                         r"dotnet|csharp|php|dart|flutter)$|^(python|py|js|node|go|ruby|java|swift|rust)[-_])",
+                         re.IGNORECASE)
+MAJOR_RELEASE_STARS = 200
+FLAGSHIP_MINOR_STARS = 1_000
+
+
+def _release(r: RawChange, level: str) -> Candidate:
+    """Release cadence is routine; only notable releases are events:
+
+    * a MAJOR (x.0.0) or first release of a repository with >= 200 stars;
+    * a MINOR release of the organisation's flagship (most-starred) repository with >= 1,000 stars, unless the
+      repository is a client SDK / CLI / cookbook / examples (their minor releases track the API).
+    Everything else (patches, pre-releases, SDK minors, small repositories) is NOISE."""
+    repo = str(r.meta.get("repo") or "")
+    name = repo.split("/")[-1]
+    stars = int(r.meta.get("repo_stars") or 0)
+    sdk = bool(SDK_REPO_RE.search(name))
+    meta = {"semver": level, "repo_stars": stars, "sdk_like": sdk, "flagship": bool(r.meta.get("repo_flagship"))}
+    if level in ("major", "first"):
+        if stars >= MAJOR_RELEASE_STARS:
+            return _cand(r, "TECHNICAL", "repository_release", "NR", meta=meta)
+        return _cand(r, NOISE_TYPE, "routine_release", "NR", meta=meta)
+    if r.meta.get("repo_flagship") and stars >= FLAGSHIP_MINOR_STARS and not sdk:
+        return _cand(r, "TECHNICAL", "repository_release", "NR", meta=meta)
+    return _cand(r, NOISE_TYPE, "routine_release", "NR", meta=meta)
 
 
 def _affiliation(r: RawChange) -> Candidate:

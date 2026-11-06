@@ -17,6 +17,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from selectolax.lexbor import LexborHTMLParser
@@ -345,14 +346,18 @@ class WebsiteProvider:
 
     def crawl(self, url: str, *, company_name: str | None = None, max_pages: int = 6,
               ats_board: tuple[str, str] | None = None, priority: tuple[str, ...] | None = None,
-              newsroom: bool = False, extra_pages: dict[str, str] | None = None) -> ProviderBatch:
+              newsroom: bool = False, extra_pages: dict[str, str] | None = None,
+              entity: EntityRef | None = None) -> ProviderBatch:
         """Crawl a company site. Raises UnsafeURLError for URLs that fail the SSRF guard.
 
         ``priority`` overrides the page-kind fetch order (FETCH_PRIORITY). ``ats_board`` (ats, slug) is a job board
         verified by hand (portfolio config): it is used instead of the boards detected on the pages. ``newsroom``
         adds dated ``company_post`` items from fetched blog / news / changelog pages and the same-domain RSS/Atom
         feeds they declare (``providers/newsroom.py``). ``extra_pages`` ({kind: url}) adds configured pages (e.g. a
-        newsroom URL the homepage does not link) ahead of the discovered page of the same kind."""
+        newsroom URL the homepage does not link) ahead of the discovered page of the same kind. ``entity`` is the
+        company's verified identity (portfolio config): every record is keyed to it, and the domain the site
+        redirected to becomes an alternate key, so a redirect (cognition.ai -> cognition.com) never creates a second
+        company."""
         batch = ProviderBatch(provider=self.name)
         start = sanitize_url(url)
         assert_public_host(start)
@@ -374,7 +379,7 @@ class WebsiteProvider:
             batch.errors.append(f"bot-challenge page at {final_url} ({home.title!r}); not parsed")
             return batch
 
-        ref = domain_ref(domain)
+        ref = entity or domain_ref(domain)
         name = company_name or company_name_from(home, domain)
         anchors = [domain.split(".")[0], name]
         pages: list[tuple[str, ExtractedPage]] = [("home", home)]
@@ -412,8 +417,9 @@ class WebsiteProvider:
             })
 
         alt_refs: list[EntityRef] = []
-        if start_domain != domain:
-            alt_refs.append(domain_ref(start_domain))
+        for d in dict.fromkeys((domain, start_domain)):
+            if domain_ref(d).key != ref.key:
+                alt_refs.append(domain_ref(d))
         gh_org = github_org_from_links(home.links, anchors)
         x_handle = x_handle_from_links(home.links, anchors)
         if gh_org:
@@ -441,12 +447,13 @@ class WebsiteProvider:
         return batch
 
     # ── newsroom / blog / changelog items ──
-    def _fetch_feed(self, url: str, batch: ProviderBatch) -> str | None:
+    def _fetch_feed(self, url: str, batch: ProviderBatch,
+                    content_types: tuple[str, ...] = newsroom_mod.FEED_CONTENT_TYPES) -> str | None:
         if not self.robots.allowed(url):
             batch.errors.append(f"robots.txt disallows {url}")
             return None
         try:
-            resp = self.client.get(url, headers={"Accept": ", ".join(newsroom_mod.FEED_CONTENT_TYPES)},
+            resp = self.client.get(url, headers={"Accept": ", ".join(content_types)},
                                    max_bytes=newsroom_mod.MAX_FEED_BYTES)
         except UnsafeURLError as e:
             batch.errors.append(f"blocked unsafe URL {url}: {e}")
@@ -461,7 +468,7 @@ class WebsiteProvider:
             batch.errors.append(f"feed {url} exceeds the size cap; not parsed")
             return None
         ctype = resp.headers.get("content-type", "").lower().split(";")[0].strip()
-        if ctype and ctype not in newsroom_mod.FEED_CONTENT_TYPES:
+        if ctype and ctype not in content_types:
             batch.errors.append(f"non-feed content ({ctype}) at {url}")
             return None
         if registrable_domain(str(resp.request.url)) != registrable_domain(url):
@@ -470,6 +477,7 @@ class WebsiteProvider:
         return resp.text
 
     def _newsroom(self, batch: ProviderBatch, ref: EntityRef, pages: list[tuple[str, ExtractedPage]]) -> None:
+        discovered: set[str] = set()
         for kind, page in pages:
             if kind not in newsroom_mod.NEWSROOM_PAGE_KINDS or not page.html:
                 continue
@@ -482,9 +490,52 @@ class WebsiteProvider:
                         batch.errors.append(f"feed {feed_url}: no dated same-site items (or rejected)")
                     groups.append(items)
             items = newsroom_mod.merge_items(*groups, limit=newsroom_mod.MAX_ITEMS)
+            if len(items) < newsroom_mod.DISCOVER_BELOW and page.url not in discovered:
+                discovered.add(page.url)
+                found = self._discover_posts(batch, page, {i.url.rstrip("/") for i in items})
+                items = newsroom_mod.merge_items(items, found, limit=newsroom_mod.MAX_ITEMS)
             signals, sources = newsroom_mod.item_signals(items, ref, page_kind=kind, page_url=page.url)
             batch.signals.extend(signals)
             batch.sources.extend(sources)
+
+    def _discover_posts(self, batch: ProviderBatch, page: ExtractedPage, known: set[str]) -> list:
+        """JS-rendered newsrooms: post URLs from the site's sitemaps (robots.txt ``Sitemap:`` lines, else
+        /sitemap.xml) under the newsroom section, plus post links on the page; each post page (at most
+        ``MAX_POST_PAGES``, newest sitemap entries first) is fetched for its title and publication date."""
+        lastmod: dict[str, Any] = {}
+        sitemaps = self.robots.sitemaps(page.url) or [f"{urlparse(page.url).scheme}://{urlparse(page.url).netloc}"
+                                                      "/sitemap.xml"]
+        queue = [u for u in sitemaps if registrable_domain(u) == registrable_domain(page.url)][:3]
+        seen_maps: set[str] = set()
+        while queue and len(seen_maps) < newsroom_mod.MAX_SITEMAPS:
+            sm = queue.pop(0)
+            if sm in seen_maps:
+                continue
+            seen_maps.add(sm)
+            text = self._fetch_feed(sm, batch, content_types=newsroom_mod.SITEMAP_CONTENT_TYPES)
+            if not text:
+                continue
+            urls, children = newsroom_mod.parse_sitemap(text, sm)
+            preferred = [c for c in children if re.search(r"post|blog|news|article|press|update", c, re.I)]
+            queue += preferred + [c for c in children if c not in preferred]
+            for u, lm in urls:
+                if newsroom_mod.is_post_url(u, page.url):
+                    lastmod[u] = lm
+        from_map = sorted(lastmod, key=lambda u: (-(lastmod[u].timestamp() if lastmod[u] else 0), u))
+        candidates = [u for u in dict.fromkeys(from_map + newsroom_mod.post_links(page.html, page.url))
+                      if u.rstrip("/") not in known][:newsroom_mod.MAX_POST_PAGES]
+        out = []
+        for u in candidates:
+            got = self._fetch(u, batch)
+            if not got:
+                continue
+            final, html = got
+            if registrable_domain(final) != registrable_domain(page.url):
+                continue
+            item = newsroom_mod.post_page_item(html, u, lastmod=lastmod.get(u))
+            if item is not None:
+                out.append(item)
+        return out
 
     # ── jobs / hiring ──
     def _jobs(self, batch: ProviderBatch, ref: EntityRef, domain: str, anchors: list[str],

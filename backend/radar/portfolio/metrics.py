@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from radar.models import Company, Job, MetricSnapshot, Repository, ResearchPaper, Signal
-from radar.portfolio.normalize import semver_level, technical
+from radar.portfolio.normalize import is_customer_story, semver_level, technical
 
 PROXY_SOURCE = "derived"
 LABELS: dict[str, str] = {
@@ -38,6 +38,8 @@ LABELS: dict[str, str] = {
     "proxy_federal_awards_24m": "Public record: federal awards started in the last 24 months (count, not revenue)",
     "proxy_federal_award_amount_24m": "Public record: federal award obligations in the last 24 months, USD "
                                       "(not revenue)",
+    "proxy_customer_stories_30d": "Public customer stories published on the company's site, last 30 days "
+                                  "(not revenue, not a customer count)",
 }
 PAIRS: tuple[tuple[str, str, str, str], ...] = (
     ("new_technical_roles", "proxy_new_technical_roles_14d", "proxy_new_technical_roles_prior_14d", "14 days"),
@@ -134,6 +136,16 @@ def company_proxies(session: Session, company: Company, day: date) -> tuple[list
     out += [Proxy("proxy_hn_points_30d", cur, "https://news.ycombinator.com/", 0.9,
                   "stories that link to the company's domain or GitHub org"),
             Proxy("proxy_hn_points_prior_30d", prior, "https://news.ycombinator.com/", 0.9)]
+
+    posts = session.execute(select(Signal.title, Signal.source_url).where(
+        Signal.entity_id == company.id, Signal.signal_type == "company_post", Signal.event_at <= end,
+        Signal.event_at >= end - timedelta(days=30))).all()
+    if posts or (company.attrs or {}).get("pages"):
+        stories = [u for t, u in posts if is_customer_story(t, u, company.name)]
+        out.append(Proxy("proxy_customer_stories_30d", float(len(stories)), stories[0] if stories else None, 0.8,
+                         "case studies / customer stories on the company's own newsroom or blog"))
+    else:
+        missing["customer_stories"] = "no newsroom or blog observed"
 
     awards = session.execute(select(Signal.raw_value, Signal.source_url).where(
         Signal.entity_id == company.id, Signal.signal_type == "federal_award", Signal.event_at <= end,

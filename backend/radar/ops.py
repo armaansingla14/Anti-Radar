@@ -1113,13 +1113,18 @@ def portfolio_hn_terms(name: str, domain: str | None, github_org: str | None) ->
     return list(dict.fromkeys(terms))
 
 
-def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
+PORTFOLIO_SOURCES = ("website", "jobs", "github", "hackernews", "arxiv", "usaspending")
+
+
+def capture_portfolio(targets: list[Any], only: tuple[str, ...] | None = None) -> list[tuple[Any, Any]]:
     """Collect public data for portfolio companies and comps (``portfolio.sync.CaptureTarget``), each source
     recorded through ``run_provider`` (and into the snapshot when a writer is active):
 
     website (news / blog / changelog first, dated newsroom items and same-site feeds, careers) with the verified
     ATS board; the ATS board alone when the site could not be crawled; the GitHub org; Hacker News stories that link
-    to the domain or org; arXiv papers whose code points into the org; USAspending awards by exact recipient name."""
+    to the domain or org; arXiv papers whose code points into the org; USAspending awards by exact recipient name.
+    ``only`` restricts the sources (``PORTFOLIO_SOURCES``), e.g. ('website',) for a newsroom re-capture."""
+    want = set(only or PORTFOLIO_SOURCES)
     from radar.providers.arxiv import ArxivProvider
     from radar.providers.base import CompanyRecord, Relation, gh_org_ref
     from radar.providers.base import ProviderBatch as _PB
@@ -1133,7 +1138,7 @@ def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
     for t in targets:
         crawled_jobs = False
         final_domain = t.domain
-        if company_domain(t.website):
+        if "website" in want and company_domain(t.website):
             extra = {"news": t.newsroom_url} if t.newsroom_url else None
             try:
                 holder: dict[str, Any] = {}
@@ -1141,7 +1146,7 @@ def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
                 def crawl(t=t, extra=extra, holder=holder) -> ProviderBatch:
                     holder["b"] = web.crawl(t.website, company_name=t.name, max_pages=PORTFOLIO_MAX_PAGES,
                                             ats_board=t.ats, priority=PORTFOLIO_PAGE_PRIORITY, newsroom=True,
-                                            extra_pages=extra)
+                                            extra_pages=extra, entity=t.ref)
                     return holder["b"]
 
                 runs.append(_run("website", crawl, {"url": t.website, "portfolio": t.role}, web.client.stats))
@@ -1151,7 +1156,7 @@ def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
                     final_domain = comps[0].ref.key.split(":", 1)[1]  # where the site redirected (cognition.com)
             except Exception as e:  # noqa: BLE001 — unsafe URL etc.; keep collecting
                 log.warning("portfolio crawl failed for %s: %s", t.website, e)
-        if t.ats and not crawled_jobs:
+        if "jobs" in want and t.ats and not crawled_jobs:
             def board(t=t) -> ProviderBatch:
                 b = _PB(provider="jobs")
                 web._jobs(b, t.ref, t.domain or "", [t.name], [], forced_board=t.ats)
@@ -1162,7 +1167,7 @@ def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
                                  web.client.stats))
             except Exception as e:  # noqa: BLE001
                 log.warning("portfolio ATS board failed for %s: %s", t.name, e)
-        if t.github_org:
+        if "github" in want and t.github_org:
             try:
                 runs.append(ingest_github(org=t.github_org))
             except Exception as e:  # noqa: BLE001
@@ -1170,13 +1175,13 @@ def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
         terms = portfolio_hn_terms(t.name, final_domain, t.github_org)
         if final_domain != t.domain:
             terms = list(dict.fromkeys([*terms, *portfolio_hn_terms("", t.domain, None)]))
-        if terms:
+        if "hackernews" in want and terms:
             hn = HackerNewsProvider()
             dom = None if (final_domain and is_platform_domain(final_domain)) else final_domain
             runs.append(_run("hackernews", lambda t=t, terms=terms, dom=dom, hn=hn: hn.org_attention(
                 t.ref, terms, github_owner=t.github_org, domain=dom, days=PORTFOLIO_HN_DAYS),
                 {"portfolio": t.role, "terms": terms}, hn.client.stats))
-        if t.github_org:
+        if "arxiv" in want and t.github_org:
             ax = ArxivProvider()
 
             def papers(t=t, ax=ax) -> ProviderBatch:
@@ -1188,7 +1193,7 @@ def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
                 return b
 
             runs.append(_run("arxiv", papers, {"portfolio": t.role, "org": t.github_org}, ax.client.stats))
-        if t.usaspending_recipient:
+        if "usaspending" in want and t.usaspending_recipient:
             us = USAspendingProvider()
 
             def awards(t=t, us=us) -> ProviderBatch:

@@ -1,0 +1,25 @@
+id: portfolio-third-party-show-hn-001
+title: A Show HN that only mentions the company is not the company's product launch
+agent: portfolio
+task: portfolio_noise
+failure_category: ATTRIBUTION_ERROR
+regression_for: "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #1"
+input:
+  company: {name: NVIDIA Research Projects}
+  changes:
+    - label: third-party Show HN mentioning the company's hardware
+      signal_type: hn_show
+      source_type: hackernews
+      publisher: third_party
+      title: "Show HN: Pi-Loop (Prototype) – A CLI for Reference Intake loop on DGX Spark"
+      meta: {points: 1, link_source: story_text, link: "https://www.nvidia.com/en-us/products/workstations/dgx-spark/"}
+      expect: {materiality: NOISE, subtype: low_engagement_discussion}
+    - label: control — a Launch HN pointing at the company's own site is its launch
+      signal_type: hn_launch
+      source_type: hackernews
+      publisher: third_party
+      title: "Launch HN: Acme (YC F25) – tactile grippers"
+      meta: {points: 120, link_source: url, link: "https://acme-robotics.com/"}
+      expect: {subtype: product_launch}
+expected:
+  all_checks_pass: true

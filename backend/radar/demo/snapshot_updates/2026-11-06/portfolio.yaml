@@ -1,0 +1,531 @@
+# Publicly disclosed Anti Fund portfolio companies monitored by Portfolio Pulse (public mode).
+#
+# Honesty rules (enforced by radar/portfolio/config.py):
+# - Only companies that Anti Fund itself lists publicly, at the source below. Stage and year are copied exactly as
+#   that page states them; anything the page does not state stays unknown. Nothing private is stored here: no
+#   ownership, cost basis, marks, reserves, board or internal fields (the loader rejects them).
+# - Identifiers are included only when verified by hand on 2026-11-06:
+#     website loads; GitHub org is linked from the company's site or points back to its domain;
+#     careers board is linked from the site, or every posting names the company.
+#   Unverified look-alikes are deliberately left out (noted in comments) so another organisation is never monitored
+#   under a portfolio company's name.
+# - usaspending_recipient is the exact recipient name of awards that clearly belong to the company; name-only
+#   matches are never fuzzy.
+# - Comps are judgement (epistemic INFERENCE). Each has a type, a one-line reason grounded in what the comp says it
+#   does, and the public page that shows the overlap.
+#
+# Selection: the technical companies (AI, robotics, defense, energy, semiconductors, space, frontier infrastructure)
+# with enough public footprint to monitor. Consumer, fintech and acquired positions are not monitored in this
+# public demo (off-thesis for technical monitoring, or no longer independent); the full list is on the source page.
+
+source:
+  url: https://antifund.com/
+  checked_at: 2026-11-06
+  note: Anti Fund's own website lists its portfolio with a stage label and year per company.
+
+companies:
+  - name: Physical Intelligence
+    slug: physical-intelligence
+    website: https://www.physicalintelligence.company
+    github_org: Physical-Intelligence      # linked from the company blog (openpi)
+    ats: {provider: ashby, slug: physicalintelligence}
+    newsroom_url: https://www.pi.website/blog
+    public_stage: Seed
+    public_year: 2024
+    sector: General-purpose AI for the physical world.
+    thesis_tags: [ai, robotics]
+    status: active
+    comps:
+      - name: Skild AI
+        website: https://www.skild.ai
+        type: DIRECT
+        why_comparable: Builds one robot foundation model to control any embodiment, the same general-purpose robot-brain thesis.
+        source_url: https://www.skild.ai/
+        confidence: HIGH
+      - name: Generalist AI
+        website: https://generalistai.com
+        ats: {provider: ashby, slug: generalist}
+        type: DIRECT
+        why_comparable: Trains generalist embodied foundation models for physical-world robots.
+        source_url: https://generalistai.com/
+        confidence: HIGH
+      - name: Figure AI
+        website: https://www.figure.ai
+        type: ADJACENT
+        why_comparable: General-purpose humanoid with its own robot AI, competing for the same general robot-intelligence market.
+        source_url: https://www.figure.ai/
+        confidence: MEDIUM
+      - name: Hugging Face
+        website: https://huggingface.co
+        type: OPEN_SOURCE
+        why_comparable: LeRobot is an open-source end-to-end robot-learning stack, the open alternative to proprietary robot foundation models.
+        source_url: https://github.com/huggingface/lerobot
+        confidence: HIGH
+
+  - name: Etched
+    website: https://www.etched.com
+    github_org: etched-ai
+    ats: {provider: ashby, slug: Etched}
+    newsroom_url: https://www.etched.com/progress
+    public_stage: Series B
+    public_year: 2025
+    sector: Purpose-built chips for transformer inference.
+    thesis_tags: [semiconductors, ai]
+    status: active
+    comps:
+      - name: Groq
+        website: https://groq.com
+        github_org: groq
+        type: DIRECT
+        why_comparable: Custom inference silicon (LPU) competing with GPUs for LLM serving.
+        source_url: https://groq.com/
+        confidence: HIGH
+      - name: Cerebras
+        website: https://www.cerebras.ai
+        github_org: Cerebras
+        ats: {provider: ashby, slug: cerebras}
+        type: DIRECT
+        why_comparable: Non-GPU AI inference hardware sold on throughput and latency.
+        source_url: https://www.cerebras.ai/
+        confidence: HIGH
+      - name: MatX
+        website: https://matx.com
+        ats: {provider: ashby, slug: matx}
+        type: DIRECT
+        why_comparable: High-throughput chips specialised for LLMs, the closest architectural peer.
+        source_url: https://matx.com/
+        confidence: HIGH
+      - name: NVIDIA
+        website: https://www.nvidia.com
+        type: INCUMBENT
+        why_comparable: The GPU incumbent for data-centre inference that transformer-specific chips aim to displace.
+        source_url: https://www.nvidia.com/en-us/data-center/
+        confidence: HIGH
+
+  - name: Modal
+    website: https://modal.com
+    github_org: modal-labs
+    ats: {provider: ashby, slug: modal}
+    newsroom_url: https://modal.com/blog
+    public_stage: Series B-C
+    public_year: 2025
+    sector: Cloud infrastructure for AI and data workloads.
+    thesis_tags: [frontier_infrastructure, ai]
+    status: active
+    comps:
+      - name: Baseten
+        website: https://www.baseten.co
+        github_org: basetenlabs
+        ats: {provider: ashby, slug: baseten}
+        type: DIRECT
+        why_comparable: Serverless AI inference and training platform for developers.
+        source_url: https://www.baseten.co/
+        confidence: HIGH
+      - name: RunPod
+        website: https://www.runpod.io
+        github_org: runpod
+        ats: {provider: ashby, slug: runpod}
+        type: DIRECT
+        why_comparable: On-demand GPUs and serverless compute for training, inference and batch workloads.
+        source_url: https://www.runpod.io/
+        confidence: HIGH
+      - name: Together AI
+        website: https://www.together.ai
+        ats: {provider: greenhouse, slug: togetherai}
+        type: ADJACENT
+        why_comparable: AI cloud for inference, fine-tuning and GPU clusters, overlapping serverless inference.
+        source_url: https://www.together.ai/
+        confidence: HIGH
+      - name: fal
+        website: https://fal.ai
+        github_org: fal-ai
+        type: ADJACENT
+        why_comparable: Serverless GPU hosting for custom models, focused on generative media.
+        source_url: https://fal.ai/
+        confidence: MEDIUM
+
+  - name: Cognition
+    website: https://cognition.ai
+    github_org: CognitionAI                # not 'Cognition-ai' (a different Cognition Ltd.)
+    ats: {provider: ashby, slug: cognition}
+    newsroom_url: https://cognition.com/blog
+    public_stage: Series B-D
+    public_year: 2024
+    sector: Applied AI systems and end-to-end software agents.
+    thesis_tags: [ai, software]
+    status: active
+    comps:
+      - name: Cursor
+        website: https://cursor.com
+        github_org: cursor
+        ats: {provider: ashby, slug: cursor}
+        type: DIRECT
+        why_comparable: AI coding agent and editor competing for the same engineering teams.
+        source_url: https://cursor.com/
+        confidence: HIGH
+      - name: Factory
+        website: https://factory.ai
+        alias_domains: [factory.com]       # factory.ai redirects here
+        github_org: Factory-AI
+        ats: {provider: ashby, slug: factory}
+        type: DIRECT
+        why_comparable: Agent-native software development platform with autonomous coding agents.
+        source_url: https://factory.com/
+        confidence: HIGH
+      - name: OpenHands
+        website: https://www.openhands.dev
+        github_org: OpenHands
+        type: OPEN_SOURCE
+        why_comparable: Open-source AI coding agent platform, the open alternative to autonomous software engineers.
+        source_url: https://www.openhands.dev/
+        confidence: HIGH
+
+  - name: Saronic
+    website: https://www.saronic.com
+    github_org: saronic-technologies       # not 'saronic' (a personal account)
+    ats: {provider: ashby, slug: saronic}
+    newsroom_url: https://www.saronic.com/newsroom
+    usaspending_recipient: SARONIC TECHNOLOGIES, INC
+    public_stage: Series D
+    public_year: 2026
+    sector: Autonomous surface vessels for maritime defense.
+    thesis_tags: [defense, robotics]
+    status: active
+    comps:
+      - name: HavocAI
+        website: https://www.havocai.com
+        github_org: HavocAI
+        ats: {provider: ashby, slug: havocai}
+        type: DIRECT
+        why_comparable: Autonomous maritime and multi-domain vessels for defense.
+        source_url: https://www.havocai.com/
+        confidence: HIGH
+      - name: Blue Water Autonomy
+        website: https://www.blw.ai
+        type: DIRECT
+        why_comparable: Builds autonomous naval unmanned surface vessels.
+        source_url: https://www.blw.ai/
+        confidence: HIGH
+      - name: Saildrone
+        website: https://www.saildrone.com
+        github_org: Saildrone
+        ats: {provider: greenhouse, slug: saildroneinc}
+        type: ADJACENT
+        why_comparable: Maritime defense company building autonomous surface systems, focused on persistent sensing.
+        source_url: https://www.saildrone.com/
+        confidence: HIGH
+
+  - name: Helion
+    website: https://www.helionenergy.com
+    ats: {provider: ashby, slug: helion}
+    newsroom_url: https://www.helionenergy.com/newsroom
+    usaspending_recipient: HELION ENERGY INC
+    public_stage: Series G
+    public_year: 2026
+    sector: Commercial fusion energy.
+    thesis_tags: [energy]
+    status: active
+    comps:
+      - name: Commonwealth Fusion Systems
+        website: https://cfs.energy
+        github_org: cfs-energy
+        ats: {provider: lever, slug: cfsenergy}
+        type: DIRECT
+        why_comparable: Privately funded commercial fusion power developer.
+        source_url: https://cfs.energy/
+        confidence: HIGH
+      - name: TAE Technologies
+        website: https://tae.com
+        type: DIRECT
+        why_comparable: Developing commercial fusion energy.
+        source_url: https://tae.com/
+        confidence: HIGH
+      - name: Zap Energy
+        website: https://zapenergy.com
+        type: DIRECT
+        why_comparable: Compact fusion (and fission/hybrid) power developer.
+        source_url: https://zapenergy.com/
+        confidence: HIGH
+
+  - name: General Matter
+    website: https://generalmatter.com
+    ats: {provider: greenhouse, slug: generalmatter}
+    newsroom_url: https://generalmatter.com/news
+    usaspending_recipient: GENERAL MATTER, INC.
+    public_stage: Growth
+    public_year: 2026
+    sector: Nuclear fuel infrastructure.
+    thesis_tags: [energy]
+    status: active
+    comps:
+      - name: Centrus Energy
+        website: https://www.centrusenergy.com
+        type: DIRECT
+        why_comparable: US supplier of nuclear fuel and enrichment services, including LEU and HALEU.
+        source_url: https://www.centrusenergy.com/
+        confidence: HIGH
+      - name: Urenco
+        website: https://www.urenco.com
+        type: INCUMBENT
+        why_comparable: Incumbent supplier of enriched uranium to the nuclear industry, including a US plant.
+        source_url: https://www.urenco.com/
+        confidence: HIGH
+      - name: Global Laser Enrichment
+        website: https://www.gle-us.com
+        type: DIRECT
+        why_comparable: New US uranium-enrichment entrant licensing the SILEX laser enrichment process.
+        source_url: https://www.gle-us.com/
+        confidence: HIGH
+
+  - name: General Galactic
+    website: https://www.gengalactic.com
+    github_org: gengalactic
+    ats: {provider: greenhouse, slug: generalgalactic}
+    newsroom_url: https://gengalactic.com/updates
+    public_stage: Seed
+    public_year: 2026
+    sector: Spacecraft and propulsion for orbital logistics.
+    thesis_tags: [frontier_infrastructure, manufacturing]
+    status: active
+    comps:
+      - name: Impulse Space
+        website: https://www.impulsespace.com
+        type: DIRECT
+        why_comparable: In-space mobility moving payloads from low Earth orbit to other destinations.
+        source_url: https://www.impulsespace.com/
+        confidence: HIGH
+      - name: Starfish Space
+        website: https://www.starfishspace.com
+        ats: {provider: ashby, slug: starfish-space-inc}
+        type: ADJACENT
+        why_comparable: Autonomous satellite servicing vehicle for life extension and disposal.
+        source_url: https://www.starfishspace.com/
+        confidence: MEDIUM
+      - name: Orbit Fab
+        website: https://www.orbitfab.com
+        type: ADJACENT
+        why_comparable: In-space refueling services, related to orbital propellant logistics.
+        source_url: https://www.orbitfab.com/
+        confidence: MEDIUM
+
+  - name: Westmag
+    website: https://www.westmag.com
+    ats: {provider: ashby, slug: westmag}  # no newsroom page; GitHub 'WestMag' unverified (no link), omitted
+    public_stage: Seed
+    public_year: 2025
+    sector: American-made motors and actuators for drones and robots.
+    thesis_tags: [manufacturing, robotics, defense]
+    status: active
+    comps:
+      - name: KDE Direct
+        website: https://www.kdedirect.com
+        type: DIRECT
+        why_comparable: US maker of brushless motors and components for unmanned aircraft.
+        source_url: https://www.kdedirect.com/
+        confidence: HIGH
+      - name: Vertiq
+        website: https://www.vertiq.co
+        type: DIRECT
+        why_comparable: Integrated motor and controller propulsion modules for mission-critical drones.
+        source_url: https://www.vertiq.co/
+        confidence: MEDIUM
+      - name: T-MOTOR
+        website: https://uav-en.tmotor.com
+        type: INCUMBENT
+        why_comparable: Dominant drone propulsion supplier (motors, ESCs, propellers) that American-made motors compete with.
+        source_url: https://uav-en.tmotor.com/
+        confidence: HIGH
+
+  - name: Trajectory
+    website: https://trajectory.ai
+    ats: {provider: ashby, slug: trajectory}  # GitHub 'trajectory-ai' and 'trajectoryai' belong to other organisations
+    newsroom_url: https://www.trajectory.ai/field-notes
+    public_stage: Seed
+    public_year: 2025
+    sector: Continual-learning infrastructure for production AI.
+    thesis_tags: [ai, frontier_infrastructure]
+    status: active
+    comps:
+      - name: Applied Compute
+        website: https://www.appliedcompute.com
+        github_org: Applied-Compute
+        type: DIRECT
+        why_comparable: Trains and continuously improves models for enterprises.
+        source_url: https://www.appliedcompute.com/
+        confidence: MEDIUM
+      - name: Thinking Machines Lab
+        website: https://thinkingmachines.ai
+        github_org: thinking-machines-lab
+        ats: {provider: ashby, slug: ThinkingMachines}
+        type: ADJACENT
+        why_comparable: Tinker is training infrastructure for customising models, overlapping a continual-learning platform.
+        source_url: https://thinkingmachines.ai/tinker/
+        confidence: MEDIUM
+
+  - name: Efference
+    website: https://efference.ai          # careers are self-hosted; the Ashby board exists but is empty
+    newsroom_url: https://efference.ai/blog/
+    public_stage: First Investor
+    public_year: 2025
+    sector: Perception and compute infrastructure for robotics.
+    thesis_tags: [robotics, ai]
+    status: active
+    comps:                                  # no well-sourced direct comp: adjacent camera makers only
+      - name: Luxonis
+        website: https://www.luxonis.com
+        github_org: luxonis
+        type: ADJACENT
+        why_comparable: AI depth cameras for robotics, with the opposite (on-device) inference model.
+        source_url: https://www.luxonis.com/
+        confidence: MEDIUM
+      - name: Stereolabs
+        website: https://www.stereolabs.com
+        github_org: stereolabs
+        type: ADJACENT
+        why_comparable: Stereo AI cameras for robot perception and autonomy.
+        source_url: https://www.stereolabs.com/
+        confidence: MEDIUM
+
+  - name: Enigma
+    slug: enigma-inc
+    website: https://enigma.inc
+    github_org: Enigma-Incorporated        # linked from the homepage; the existing 'enigma' entity is unrelated
+    newsroom_url: https://www.enigma.inc/posts
+    public_stage: Seed
+    public_year: 2026
+    sector: AI models and interfaces for intuitive human-robot interaction.
+    thesis_tags: [robotics, ai]
+    status: active
+    comps:
+      - name: Skild AI
+        website: https://www.skild.ai
+        type: DIRECT
+        why_comparable: A robot foundation model meant to work on any form factor, the same cross-embodiment pitch.
+        source_url: https://www.skild.ai/
+        confidence: HIGH
+      - name: Generalist AI
+        website: https://generalistai.com
+        ats: {provider: ashby, slug: generalist}
+        type: DIRECT
+        why_comparable: Generalist embodied foundation models for robots.
+        source_url: https://generalistai.com/
+        confidence: MEDIUM
+
+  - name: ElevenLabs
+    website: https://elevenlabs.io
+    github_org: elevenlabs
+    ats: {provider: ashby, slug: elevenlabs}
+    newsroom_url: https://elevenlabs.io/blog
+    public_stage: Series D
+    public_year: 2026
+    sector: AI voice research and products.
+    thesis_tags: [ai]
+    status: active
+    comps:
+      - name: Cartesia
+        website: https://cartesia.ai
+        github_org: cartesia-ai
+        ats: {provider: ashby, slug: cartesia}
+        type: DIRECT
+        why_comparable: Realtime text-to-speech, speech-to-text and voice agents, the same product surface.
+        source_url: https://cartesia.ai/
+        confidence: HIGH
+      - name: Deepgram
+        website: https://deepgram.com
+        github_org: deepgram
+        ats: {provider: ashby, slug: deepgram}
+        type: DIRECT
+        why_comparable: Speech-to-text, text-to-speech and voice-agent APIs for developers.
+        source_url: https://deepgram.com/
+        confidence: HIGH
+      - name: Hume AI
+        website: https://www.hume.ai
+        github_org: HumeAI
+        ats: {provider: greenhouse, slug: humeai}
+        type: ADJACENT
+        why_comparable: Voice AI company now leading with voice-AI evaluation rather than synthesis.
+        source_url: https://www.hume.ai/
+        confidence: MEDIUM
+
+  - name: Anduril
+    website: https://www.anduril.com
+    github_org: anduril
+    ats: {provider: greenhouse, slug: andurilindustries}
+    newsroom_url: https://www.anduril.com/newsroom
+    usaspending_recipient: ANDURIL INDUSTRIES, INC.   # not 'ANDURIL LLC' (unrelated)
+    public_stage: Series E
+    public_year: 2022
+    sector: Autonomous defense systems and manufacturing.
+    thesis_tags: [defense, robotics, manufacturing]
+    status: active
+    comps:
+      - name: Shield AI
+        website: https://shield.ai
+        github_org: shield-ai
+        ats: {provider: lever, slug: shieldai}
+        type: DIRECT
+        why_comparable: Defense-tech company building AI pilots and autonomous aircraft.
+        source_url: https://shield.ai/
+        confidence: HIGH
+      - name: Palantir
+        website: https://www.palantir.com
+        type: ADJACENT
+        why_comparable: Defense data, decision and operations software overlapping command-and-control platforms.
+        source_url: https://www.palantir.com/
+        confidence: MEDIUM
+      - name: Epirus
+        website: https://www.epirusinc.com
+        ats: {provider: greenhouse, slug: epirus}
+        type: ADJACENT
+        why_comparable: Counter-drone point defense (high-power microwave), a market Anduril also serves.
+        source_url: https://www.epirusinc.com/
+        confidence: HIGH
+
+  - name: Kela Systems
+    website: https://kelasys.com            # careers on Comeet (no supported board API); no newsroom page
+    alias_domains: [kela.io]               # kelasys.com redirects here
+    public_stage: Series A
+    public_year: 2024
+    sector: Defense systems for modern military operations.
+    thesis_tags: [defense]
+    status: active
+    comps:
+      - name: Picogrid
+        website: https://picogrid.com
+        github_org: picogrid
+        ats: {provider: ashby, slug: picogrid}
+        type: DIRECT
+        why_comparable: Integrates sensors, platforms and operators across domains, the same integration-platform thesis.
+        source_url: https://picogrid.com/
+        confidence: HIGH
+      - name: Palantir
+        website: https://www.palantir.com
+        type: ADJACENT
+        why_comparable: Data and operations integration software for defense.
+        source_url: https://www.palantir.com/
+        confidence: MEDIUM
+
+  - name: Aeon
+    website: https://www.aeonindustrial.com # Lever 'aeon' matches on content but is not linked from the site: omitted
+    newsroom_url: https://www.aeonindustrial.com/news
+    usaspending_recipient: AEON INDUSTRIAL INC.   # not 'AEONYX, INC.' (unrelated)
+    public_stage: Seed
+    public_year: 2026
+    sector: Autonomous tactical systems for U.S. and allied defense.
+    thesis_tags: [defense]
+    status: active
+    comps:
+      - name: Mach Industries
+        website: https://machindustries.com
+        ats: {provider: greenhouse, slug: machindustries}
+        type: ADJACENT
+        why_comparable: Asymmetric aerospace and defense systems manufactured at scale.
+        source_url: https://machindustries.com/
+        confidence: MEDIUM
+      - name: Castelion
+        website: https://www.castelion.com
+        ats: {provider: greenhouse, slug: castelioncorporation}
+        type: ADJACENT
+        why_comparable: Next-generation military systems manufactured rapidly and at scale (affordable munitions).
+        source_url: https://www.castelion.com/
+        confidence: MEDIUM

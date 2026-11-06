@@ -102,4 +102,4 @@ def test_cli_default_run_evaluates_and_seeds(db):
 
     r = CliRunner().invoke(app, ["eval", "--agent", "resolution", "--seed-failures", "--json"])
     assert r.exit_code == 0, r.output
-    assert "20 created" in r.output and '"bot-accounts-001"' in r.output
+    assert "34 created" in r.output and '"bot-accounts-001"' in r.output

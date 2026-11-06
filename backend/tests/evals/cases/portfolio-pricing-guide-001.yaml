@@ -1,0 +1,15 @@
+id: portfolio-pricing-guide-001
+title: A pricing guide is not a pricing change
+agent: portfolio
+task: portfolio_noise
+failure_category: RANKING_ERROR
+regression_for: "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #4"
+input:
+  company: {name: ElevenLabs}
+  changes:
+    - {label: explainer, signal_type: company_post, title: "AI voice agent pricing: What it costs for your business",
+       expect: {materiality: NOISE, subtype: guide}}
+    - {label: control — an actual price change, signal_type: company_post, title: "Price cut: Conversational AI now costs less",
+       expect: {materiality: WATCH, subtype: pricing_change}}
+expected:
+  all_checks_pass: true

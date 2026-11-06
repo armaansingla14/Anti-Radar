@@ -74,7 +74,8 @@ def task_noise(_s: Any, case: EvalCase, provider: Any) -> CaseOutcome:
         raw = RawChange(company_id=SUBJECT, kind=str(spec.get("kind") or "signal"),
                         signal_type=str(spec["signal_type"]), title=str(spec.get("title") or ""),
                         event_at=T0 - timedelta(days=float(spec.get("days_ago") or 0)), source=src,
-                        raw_value=spec.get("raw_value"), meta=dict(spec.get("meta") or {}))
+                        raw_value=spec.get("raw_value"), description=spec.get("description"),
+                        meta={"company_name": ctx.name, **dict(spec.get("meta") or {})})
         cand = normalize.normalize_one(raw)
         if cand is None:
             failures.append(f"{spec.get('label')}: not normalised")
@@ -87,6 +88,10 @@ def task_noise(_s: Any, case: EvalCase, provider: Any) -> CaseOutcome:
                             f"({cand.event_type}.{cand.subtype}, {rule}: {reason})")
         if exp.get("subtype") and exp["subtype"] != cand.subtype:
             failures.append(f"{spec.get('label')}: expected subtype {exp['subtype']}, got {cand.subtype}")
+        if exp.get("rule") and exp["rule"] != rule:
+            failures.append(f"{spec.get('label')}: expected rule {exp['rule']}, got {rule} ({reason})")
+        if exp.get("event_type") and exp["event_type"] != cand.event_type:
+            failures.append(f"{spec.get('label')}: expected type {exp['event_type']}, got {cand.event_type}")
         if exp.get("not_materiality") and exp["not_materiality"] == level:
             failures.append(f"{spec.get('label')}: must not be {level} ({cand.event_type}.{cand.subtype})")
     return _outcome(case, provider, failures, {"changes": n})
@@ -123,6 +128,29 @@ def task_competitor_impact(_s: Any, case: EvalCase, provider: Any) -> CaseOutcom
     return _outcome(case, provider, failures, {"checks": len(case.input.get("checks") or [])})
 
 
+def task_newsroom(_s: Any, case: EvalCase, provider: Any) -> CaseOutcome:
+    """Dated items extracted from newsroom HTML (inline in the case): exactly the expected (url, title, date)."""
+    from radar.providers.newsroom import extract_items, post_page_item
+
+    now = datetime(2026, 11, 6, 18, tzinfo=UTC)
+    failures: list[str] = []
+    n = 0
+    for spec in case.input.get("pages") or []:
+        label = spec.get("label")
+        if spec.get("post_page"):
+            item = post_page_item(str(spec["html"]), str(spec["url"]), now=now)
+            got = {(item.url, item.title, item.published_at.date().isoformat())} if item else set()
+        else:
+            got = {(i.url, i.title, i.published_at.date().isoformat())
+                   for i in extract_items(str(spec["html"]), str(spec["url"]), now=now)}
+        want = {(e["url"], e["title"], str(e["date"])) for e in spec.get("expect") or []}
+        n += len(got)
+        if got != want:
+            failures.append(f"{label}: missing {sorted(want - got)}; unexpected {sorted(got - want)}")
+    return _outcome(case, provider, failures, {"items": n})
+
+
 register_task("portfolio_materiality", task_materiality)
+register_task("portfolio_newsroom", task_newsroom)
 register_task("portfolio_noise", task_noise)
 register_task("portfolio_competitor_impact", task_competitor_impact)

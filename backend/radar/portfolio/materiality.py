@@ -7,15 +7,18 @@ the code cannot disagree.
 
 =====  ========================================================================================================
 M1     RISK events (security incident, outage, lawsuit, recall) from the company or a registry → MATERIAL
-       ("risk signal"; a third-party-only story is capped by M9).
+       ("risk signal"; a third-party-only story is capped by M9). A security issue in a third-party item on the
+       company's marketplace or ecosystem (extension, plugin, package) → WATCH.
 M2     FINANCING (new round, acquisition, strategic investment) announced by the company or a primary source
        → MATERIAL.
-M3     COMMERCIAL: a government contract of >= $1M → MATERIAL; a smaller or unpriced award → WATCH. A partnership
+M3     COMMERCIAL: a government contract of >= $1M → MATERIAL; a smaller or unpriced award → WATCH; a PROPOSED award
+       (letter of intent, proposed terms, "would receive") → WATCH until awarded. A partnership
        or customer announced by the company naming a tracked company or a government agency → MATERIAL; other
        partnerships / customers / deployments → WATCH.
 M4     PRODUCT launch or major release announced by the company → MATERIAL when novel (no launch of the company
        in the previous 90 days), else WATCH. New features and pricing changes → WATCH.
-M5     TALENT: a founder / executive joining or leaving, from a verified (FACT) source → MATERIAL; otherwise WATCH.
+M5     TALENT: a founder / C-level executive / president / board member joining or leaving, from a verified (FACT)
+       source → MATERIAL; a VP / head-of hire or an unverified change → WATCH.
 M6     TALENT hiring: >= 10 new postings of one specialised role class in 14 days, or a specialised class never
        posted before → MATERIAL; >= 5 → WATCH; hiring acceleration or role closures → WATCH. Always INFERENCE.
 M7     TECHNICAL (paper, open-source release, benchmark claim, repository release, repo traction) → WATCH;
@@ -48,6 +51,8 @@ LOW_CONFIDENCE = 0.5
 HIGH_TRACTION_STARS = 1_000
 DILIGENCE_OVERLAP = 2  # distinctive shared tokens between an event title and a diligence claim
 LAUNCH_SUBTYPES = frozenset({"product_launch", "major_release"})
+C_LEVEL_RE = re.compile(r"\b(CEO|CTO|COO|CFO|CPO|CSO|Chief \w+ Officer|President|co-?founder|founder|"
+                        r"board of directors|chair(man|woman|person)?)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -145,6 +150,9 @@ def _base(ev: Candidate, ctx: CompanyContext, history: list[Candidate]) -> tuple
     if t == NOISE_TYPE:
         return "NOISE", "M10", f"routine change ({st.replace('_', ' ')}): counted, not surfaced"
     if t == "RISK":
+        if st == "marketplace_security":
+            return "WATCH", "M1", ("risk signal about a third-party item on the company's marketplace or ecosystem, "
+                                   "not a flaw reported in the company's own product")
         if _official(ev):
             return "MATERIAL", "M1", f"risk signal ({st.replace('_', ' ')}) from a primary source"
         return "MATERIAL", "M1", f"risk signal ({st.replace('_', ' ')}) reported by a third party"
@@ -153,6 +161,9 @@ def _base(ev: Candidate, ctx: CompanyContext, history: list[Candidate]) -> tuple
             if _official(ev) else "reported by a third party"
         return "MATERIAL", "M2", f"{st.replace('_', ' ')} {who}"
     if t == "COMMERCIAL":
+        if st == "proposed_award":
+            return "WATCH", "M3", "proposed, not finalized (letter of intent / proposed terms): never MATERIAL " \
+                                  "until awarded"
         if st == "government_contract":
             amt = ev.meta.get("amount")
             if isinstance(amt, int | float) and amt >= CONTRACT_MATERIAL_USD:
@@ -175,6 +186,8 @@ def _base(ev: Candidate, ctx: CompanyContext, history: list[Candidate]) -> tuple
         return "WATCH", "M4", f"{st.replace('_', ' ')}"
     if t == "TALENT":
         if st in ("executive_join", "executive_departure"):
+            if not C_LEVEL_RE.search(ev.title):
+                return "WATCH", "M5", "senior hire or departure below founder / C-level"
             if ev.epistemic == "FACT" and (_official(ev) or ev.meta.get("signal_type") == "affiliation_changed"):
                 return "MATERIAL", "M5", f"leadership change ({st.replace('_', ' ')}) from a verified source"
             return "WATCH", "M5", "leadership change from an unverified source"

@@ -86,7 +86,8 @@ def test_semver(tag, level):
 def test_release_and_repo_noise():
     patch = normalize.normalize_one(raw("release_published", "x: Released v1.2.3", st="github", meta={"tag": "v1.2.3"}))
     assert patch.event_type == "NOISE" and patch.subtype == "routine_release"
-    major = normalize.normalize_one(raw("release_published", "x: Released v2.0.0", st="github", meta={"tag": "v2.0.0"}))
+    major = normalize.normalize_one(raw("release_published", "x: Released v2.0.0", st="github",
+                                        meta={"tag": "v2.0.0", "repo": "acme/engine", "repo_stars": 300}))
     assert (major.subtype, major.meta["semver"]) == ("repository_release", "major")
     small = normalize.normalize_one(raw("repo_created", "Repository a/b created", st="github", meta={"repo_stars": 3}))
     assert small.subtype == "minor_repo"
@@ -189,8 +190,8 @@ def test_m4_novelty():
 
 
 def test_m5_leadership():
-    assert materiality.classify(cand("TALENT", "executive_join"), CTX)[:2] == ("MATERIAL", "M5")
-    assert materiality.classify(cand("TALENT", "executive_join", epi="INFERENCE"), CTX)[:2] == ("WATCH", "M5")
+    assert materiality.classify(cand("TALENT", "executive_join", "Jane Doe joins as CTO"), CTX)[:2] == ("MATERIAL", "M5")
+    assert materiality.classify(cand("TALENT", "executive_join", "Jane Doe joins as CTO", epi="INFERENCE"), CTX)[:2] == ("WATCH", "M5")
 
 
 def test_m6_hiring_thresholds():
@@ -263,6 +264,8 @@ def test_attention_priorities_and_order():
 
 @pytest.mark.parametrize("items,action", [
     ([item("a", "WATCH", et="RISK", st="outage"), item("a", "MATERIAL", rel="COMPETITOR")], "REVIEW"),
+    ([item("a", "WATCH", rel="COMPETITOR", et="RISK", st="marketplace_security"),
+      item("a", "WATCH", rel="COMPETITOR", et="FINANCING", st="acquisition")], "UPDATE_COMPETITIVE_MAP"),
     ([item("a", "MATERIAL", rel="COMPETITOR"), item("a", "MATERIAL", et="TECHNICAL", st="benchmark_claim")],
      "UPDATE_COMPETITIVE_MAP"),
     ([item("a", "MATERIAL", et="TECHNICAL", st="benchmark_claim")], "RUN_DILIGENCE"),

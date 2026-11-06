@@ -21,10 +21,9 @@ from sqlalchemy.orm import Session
 from radar import clock
 from radar.models import Company, CompRelationship, PortfolioPosition
 from radar.pipeline.resolve import Resolver
-from radar.portfolio.config import CompanyConfig, CompConfig, PortfolioConfig, config_domain
+from radar.portfolio.config import CompanyConfig, CompConfig, PortfolioConfig, config_domain, own_domains
 from radar.portfolio.decisions import log_system
 from radar.providers.base import CompanyRecord, EntityRef, domain_ref, gh_org_ref
-from radar.providers.domains import registrable_domain
 
 PROVIDER = "portfolio"
 
@@ -67,6 +66,9 @@ def match_company(session: Session, resolver: Resolver, cfg: CompanyConfig | Com
                 c.github_org = cfg.github_org
             if not c.website:
                 c.website = cfg.website
+            doms = own_domains(cfg)
+            if (c.attrs or {}).get("portfolio_domains") != doms:
+                c.attrs = {**(c.attrs or {}), "portfolio_domains": doms}
             return Matched(c, False, "slug")
     ref, rec = _record(cfg, source_url)
     res = resolver.resolve(ref, rec)
@@ -77,8 +79,15 @@ def match_company(session: Session, resolver: Resolver, cfg: CompanyConfig | Com
         c.first_seen_at = clock.now()
         c.is_demo = False
         c.kind = "company"
+        # A configured slug names a company that does not exist yet: create it under that slug when free
+        # (e.g. 'enigma-inc' while an unrelated 'enigma' exists), instead of an auto-numbered one.
+        if slug and c.slug != slug and session.scalar(select(Company.id).where(Company.slug == slug)) is None:
+            c.slug = slug
     if not c.website:
         c.website = cfg.website
+    doms = own_domains(cfg)
+    if (c.attrs or {}).get("portfolio_domains") != doms:
+        c.attrs = {**(c.attrs or {}), "portfolio_domains": doms}
     return Matched(c, res.created, res.via)
 
 
@@ -93,9 +102,6 @@ def sync_portfolio(session: Session, cfg: PortfolioConfig) -> dict[str, Any]:
         m = match_company(session, resolver, cc, src)
         company = m.company
         (out["created"] if m.created else out["matched"]).append(company.slug)
-        own = sorted({d for d in (config_domain(cc.website), registrable_domain(cc.newsroom_url)) if d})
-        if (company.attrs or {}).get("portfolio_domains") != own:
-            company.attrs = {**(company.attrs or {}), "portfolio_domains": own}
         pos = session.scalar(select(PortfolioPosition).where(PortfolioPosition.company_id == company.id,
                                                              PortfolioPosition.portfolio_name == cfg.portfolio_name))
         if pos is None:

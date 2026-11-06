@@ -1,0 +1,22 @@
+<html><body>
+<header><a href="/">Home</a><span>October 1, 2026</span></header>
+<main>
+ <!-- pattern: date and title side by side inside one link (Next.js app router, no structured data) -->
+ <a href="/blog/api-beta"><div><div title="Frontier Models for Every Robot">Frontier Models for Every Robot</div></div>
+   <div class="text-xs">October 13, 2026</div></a>
+ <!-- pattern: category + date paragraph, heading below (Sanity / Tailwind) -->
+ <div class="card"><a href="/progress/from-zero-to-one"><p><span>News</span><span>August 18, 2026</span></p>
+   <h2>From Zero to One</h2></a></div>
+ <!-- pattern: a card's own <footer> holds the date (not page chrome); label heading is skipped -->
+ <article class="post"><h2 class="label">featured</h2><a href="/posts/servo-hacking"><h3>The $15 Servo Rabbit Hole</h3></a>
+   <footer><p>Research</p><p>September 16, 2026</p><p>16 min read</p></footer></article>
+ <!-- pattern: definition list "Published" -->
+ <li><a href="/field-notes/continual-grading"><h3>Continual Grading</h3>
+   <dl><dt>Published</dt><dd>2 November 2026</dd></dl></a></li>
+ <!-- ambiguous: one container, two links -->
+ <div><span>Oct 5, 2026</span><a href="/blog/a">A</a><a href="/blog/b">B</a></div>
+ <!-- off-site press coverage is not a company post -->
+ <li><a href="https://press.example.org/acme-story"><h3>Press story</h3><span>Oct 3, 2026</span></a></li>
+</main>
+<footer><a href="/privacy">Privacy</a><span>November 1, 2026</span></footer>
+</body></html>

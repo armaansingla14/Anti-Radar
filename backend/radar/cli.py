@@ -430,6 +430,10 @@ def demo_capture(
     portfolio: bool = typer.Option(False, "--portfolio", help="with --update: capture only the public portfolio "
                                    "(config/anti_fund_portfolio.yaml) and its comps, added to today's update"),
     portfolio_config: Annotated[Path | None, typer.Option("--portfolio-config", help="portfolio config path")] = None,
+    only: Annotated[str | None, typer.Option("--only", help="with --portfolio: comma-separated sources "
+                                             "(website,jobs,github,hackernews,arxiv,usaspending)")] = None,
+    companies: Annotated[str | None, typer.Option("--companies", help="with --portfolio: comma-separated company "
+                                                  "slugs or config names to capture")] = None,
 ) -> None:
     """Capture a fresh real-data snapshot from live public APIs (GitHub, arXiv, HN, websites).
 
@@ -449,7 +453,7 @@ def demo_capture(
     if portfolio:
         if not update:
             raise typer.BadParameter("--portfolio needs --update (portfolio data is a dated update)")
-        _capture_portfolio(target, tmp, portfolio_config)
+        _capture_portfolio(target, tmp, portfolio_config, only=only, companies=companies)
         return
     _banner("Capturing VERIFIED real-data snapshot" + (f" update {target.name}" if update else " (base)"))
     from radar.thesis.loader import get_thesis
@@ -500,7 +504,8 @@ def demo_capture(
     console.print(f"  Snapshot written to {target} ({size:.1f} MB)")
 
 
-def _capture_portfolio(target: Path, tmp: Path, config_path: Path | None) -> None:
+def _capture_portfolio(target: Path, tmp: Path, config_path: Path | None, *, only: str | None = None,
+                       companies: str | None = None) -> None:
     """Portfolio capture into today's dated update: keeps batches already captured today, then appends one batch per
     portfolio source. The validated config is copied next to the batches (portfolio.yaml) so ``seed-demo`` syncs the
     same positions and comps before replaying them."""
@@ -519,14 +524,24 @@ def _capture_portfolio(target: Path, tmp: Path, config_path: Path | None) -> Non
     else:
         tmp.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(cfg_path, tmp / "portfolio.yaml")
+    sources = tuple(x.strip() for x in only.split(",") if x.strip()) if only else None
+    bad = [x for x in sources or () if x not in ops.PORTFOLIO_SOURCES]
+    if bad:
+        raise typer.BadParameter(f"unknown source(s) {', '.join(bad)}; expected {', '.join(ops.PORTFOLIO_SOURCES)}")
     with session_scope() as s:
         synced = sync_portfolio(s, cfg)
         targets = capture_targets(s, cfg)
+        if companies:
+            from radar.models import Company
+
+            want = {x.strip().lower() for x in companies.split(",") if x.strip()}
+            slugs = {c.id: c.slug for c in s.query(Company).filter(Company.id.in_([t.company_id for t in targets]))}
+            targets = [t for t in targets if t.name.lower() in want or slugs.get(t.company_id) in want]
     console.print(f"  [dim]synced {synced['companies']} positions, {synced['comps']} comps; "
                   f"created {len(synced['created']) + len(synced['comp_companies_created'])} companies[/dim]")
     started = datetime.now(timezone.utc)
     with ops.capturing(tmp):
-        for r in ops.capture_portfolio(targets):
+        for r in ops.capture_portfolio(targets, only=sources):
             _report(r)
     prior = {}
     if (target / "MANIFEST.json").exists():
@@ -544,7 +559,10 @@ def _capture_portfolio(target: Path, tmp: Path, config_path: Path | None) -> Non
         "files": len(files),
         "portfolio": {"config": "portfolio.yaml", "companies": len(cfg.companies), "targets": len(targets),
                       "source": cfg.source.url, "checked_at": cfg.source.checked_at.isoformat(),
-                      "captured_at": datetime.now(timezone.utc).isoformat()},
+                      "captured_at": datetime.now(timezone.utc).isoformat(),
+                      "passes": [*((prior.get("portfolio") or {}).get("passes") or []),
+                                 {"at": datetime.now(timezone.utc).isoformat(), "targets": len(targets),
+                                  "sources": list(sources or ops.PORTFOLIO_SOURCES)}]},
         "note": prior.get("note") or (
             "Real public data collected by ANTI RADAR from official public APIs and websites. Every record keeps its "
             "source URL and observation time; metrics are exactly as observed. No synthetic events. Derived scores "

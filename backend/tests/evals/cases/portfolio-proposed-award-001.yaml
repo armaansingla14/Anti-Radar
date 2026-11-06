@@ -1,0 +1,24 @@
+id: portfolio-proposed-award-001
+title: A proposed award (letter of intent) is WATCH, never a MATERIAL contract
+agent: portfolio
+task: portfolio_noise
+failure_category: OVERCONFIDENT_INFERENCE
+regression_for: "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #7"
+input:
+  company: {name: Commonwealth Fusion Systems}
+  changes:
+    - label: letter of intent described in the post text
+      signal_type: company_post
+      title: "How an $85M federal award would help CFS, fusion energy, and U.S. chip industry"
+      description: "The Department of Commerce and CFS have signed a letter of intent for $85 million in proposed federal incentives."
+      expect: {materiality: WATCH, subtype: proposed_award, rule: M3}
+    - label: letter of intent in the title
+      signal_type: company_post
+      title: "Helion Signs Letter of Intent For $175 Million CHIPS Award to Advance U.S. High Voltage Semiconductor R&D"
+      expect: {materiality: WATCH, subtype: proposed_award}
+    - label: control — an awarded contract
+      signal_type: company_post
+      title: "CFS awarded $2M Department of Energy contract"
+      expect: {materiality: MATERIAL, subtype: government_contract}
+expected:
+  all_checks_pass: true

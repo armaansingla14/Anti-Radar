@@ -1,0 +1,21 @@
+id: portfolio-catalog-addition-001
+title: Third-party models added to a platform's catalog are not the platform's launches
+agent: portfolio
+task: portfolio_noise
+failure_category: RANKING_ERROR
+regression_for: "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #2"
+input:
+  company: {name: Modal}
+  changes:
+    - {label: model on shared endpoints, signal_type: company_post,
+       title: "DeepSeek V4.1 Flash 1017 is now available on Shared Endpoints",
+       expect: {materiality: NOISE, subtype: catalog_addition}}
+    - {label: model on Modal, signal_type: company_post, title: "NVIDIA Nemotron 3.5 Super VL is now available on Modal",
+       expect: {materiality: NOISE, subtype: catalog_addition}}
+    - {label: limited preview on GroqCloud, signal_type: company_post,
+       title: "Meta's Muse Spark open-weight release Is Now in Limited Preview on GroqCloud",
+       expect: {materiality: NOISE, subtype: catalog_addition}}
+    - {label: control — the company's own product, signal_type: company_post, title: "Introducing our Training API",
+       expect: {not_materiality: NOISE, subtype: product_launch}}
+expected:
+  all_checks_pass: true

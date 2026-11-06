@@ -32,7 +32,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, type_coerce
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -434,7 +435,13 @@ class Resolver:
         if ref.type == "company":
             col = {"domain": Company.domain, "github_org": Company.github_org, "x": Company.x_handle}.get(kind)
             if col is not None:
-                return self._unique(select(Company).where(func.lower(col) == v.lstrip("@")))
+                hit = self._unique(select(Company).where(func.lower(col) == v.lstrip("@")))
+                if hit is None and kind == "domain":
+                    # A domain verified by hand in the public portfolio config (e.g. the site a company website
+                    # redirects to) is an exact key of that company, never a guess.
+                    hit = self._unique(select(Company).where(
+                        type_coerce(Company.attrs, JSONB)["portfolio_domains"].contains([v])))
+                return hit
             if kind == "name":
                 norm = normalize_company_name(value)
                 ids = [cid for cid, n in self._company_name_index().items() if n == norm]
