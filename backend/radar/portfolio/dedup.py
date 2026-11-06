@@ -126,6 +126,7 @@ def combine(group: list[Candidate]) -> Candidate:
             if k not in seen:
                 seen.add(k)
                 sources.append(s)
+    sources.sort(key=lambda s: PUBLISHER_RANK.get(s.publisher, 3))  # the company's own source first, then registry, then third party
     meta = {}
     for c in sorted(group, key=_primary_key, reverse=True):
         meta.update(c.meta)

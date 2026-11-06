@@ -252,3 +252,22 @@ def test_an_organisation_joining_the_company_is_a_strategic_event_not_noise():
     # the company joining something else is not this rule
     other = normalize.classify_title("Cognition is joining the Agentic AI Foundation", company_name="Cognition")
     assert other is None or other[1] != "company_joining"
+
+
+def test_merged_event_lists_the_company_source_first():
+    """'Factory Acquires HumanLayer' merged an HN story with factory.com/news/humanlayer but listed HN first."""
+    from radar.portfolio.dedup import combine
+    from radar.portfolio.types import Candidate
+
+    cid = uuid.uuid4()
+    at = datetime(2026, 11, 4, tzinfo=UTC)
+    hn = SourceRef(url="https://news.ycombinator.com/item?id=1", title="Factory Acquires HumanLayer",
+                   source_type="hackernews", family="community", publisher="third_party")
+    own = SourceRef(url="https://factory.com/news/humanlayer", title="Factory Acquires HumanLayer",
+                    source_type="website", family="web", publisher="company")
+    a = Candidate(company_id=cid, event_type="FINANCING", subtype="acquisition", title="Factory Acquires HumanLayer",
+                  event_at=at, sources=[hn], epistemic="FACT")
+    b = Candidate(company_id=cid, event_type="FINANCING", subtype="acquisition", title="Factory Acquires HumanLayer",
+                  event_at=at, sources=[own], epistemic="FACT")
+    merged = combine([a, b])
+    assert merged.sources[0].url == "https://factory.com/news/humanlayer"
