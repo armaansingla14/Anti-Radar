@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 10
     thesis_path: Path = ROOT / "config" / "anti_fund_thesis.yaml"
+    # Public portfolio config (V4). None: config/anti_fund_portfolio.yaml at the repo root, else next to the thesis.
+    portfolio_path: Path | None = None
 
     # Sources
     # GitHub Actions forbids secrets named GITHUB_*, so RADAR_GITHUB_TOKEN is accepted too (and wins).

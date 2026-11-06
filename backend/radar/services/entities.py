@@ -1069,7 +1069,8 @@ def report_filename(session: Session, r: ResearchReport) -> str:
 
     slug = _report_slug(session, r) or "radar"
     slug = re.sub(r"[^a-z0-9\-]+", "-", slug.lower()).strip("-") or "radar"
-    kinds = {"memo": "memo", "brief": "brief", "morning_brief": "morning-brief", "diligence": "diligence"}
+    kinds = {"memo": "memo", "brief": "brief", "morning_brief": "morning-brief", "diligence": "diligence",
+             "portfolio_review": "portfolio-review", "portfolio_brief": "portfolio-brief"}
     kind = kinds.get(r.kind, "report")
     day = (r.created_at or clock.now()).date().isoformat()
     return f"anti-{kind}-{slug}-{day}.md"

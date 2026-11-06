@@ -1,0 +1,48 @@
+# Test fixture: fictional companies on reserved-looking domains (never real portfolio data).
+source:
+  url: https://portfolio.example.com/
+  checked_at: 2026-10-05
+  note: Fixture for tests.
+
+companies:
+  - name: Acme Robotics
+    website: https://acme-robotics.com
+    github_org: acme-robotics
+    ats: {provider: ashby, slug: acme}
+    newsroom_url: https://acme-robotics.com/news
+    public_stage: Seed
+    public_year: 2025
+    sector: Tactile robotics
+    thesis_tags: [robotics]
+    status: active
+    comps:
+      - name: Orbitform
+        website: https://orbitform.ai
+        github_org: orbitform
+        type: DIRECT
+        why_comparable: Builds dexterous robot hands for the same factory buyers.
+        source_url: https://orbitform.ai/product
+        confidence: HIGH
+      - name: Gripworks
+        website: https://gripworks.io
+        type: ADJACENT
+        why_comparable: Sells grippers to the same integrators, without tactile sensing.
+        source_url: https://gripworks.io/
+        confidence: MEDIUM
+
+  - name: Halcyon Fusion
+    website: https://halcyonfusion.com
+    usaspending_recipient: HALCYON FUSION, INC.
+    public_stage: null
+    public_year: 2026
+    sector: Fusion energy
+    thesis_tags: [energy]
+    status: active
+    comps:
+      - name: Orbitform
+        website: https://orbitform.ai
+        github_org: orbitform
+        type: INFRASTRUCTURE
+        why_comparable: Supplies actuators used in reactor maintenance robots.
+        source_url: https://orbitform.ai/industries
+        confidence: LOW

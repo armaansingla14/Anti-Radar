@@ -11,8 +11,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 DiligenceState = Literal["NOT_RUN", "IN_PROGRESS", "COMPLETE", "NEEDS_REVIEW"]
-ReviewTarget = Literal["claim", "underwriting", "report", "failure"]
-ReviewDecisionValue = Literal["ACCEPT", "QUESTION", "REJECT", "NEEDS_VERIFICATION"]
+ReviewTarget = Literal["claim", "underwriting", "report", "failure", "portfolio_company", "material_event"]
+ReviewDecisionValue = Literal["ACCEPT", "QUESTION", "REJECT", "NEEDS_VERIFICATION",
+                              "MARK_REVIEWED", "NEEDS_FOLLOW_UP", "MONITOR", "NO_ACTION"]
 
 
 class DiligenceCompany(BaseModel):

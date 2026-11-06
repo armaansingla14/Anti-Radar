@@ -1,0 +1,88 @@
+id: portfolio-materiality-001
+title: Materiality rules M1-M7 and the M9 cap are applied as documented
+agent: portfolio
+task: portfolio_materiality
+failure_category: RANKING_ERROR
+regression_for: "docs/PORTFOLIO_METHODOLOGY.md §Materiality rules"
+input:
+  company:
+    name: Acme Robotics
+    tracked_names: [Acme Robotics, Orbitform]
+    diligence_claims:
+      - {id: c1, text: "Gelgrip inference runs 3x faster than the PyTorch baseline on Jetson Orin", claim_type: PERFORMANCE}
+  events:
+    - label: company-announced round
+      event_type: FINANCING
+      subtype: new_round
+      title: Acme Robotics raises $40M Series B
+      sources: [{publisher: company, source_type: website}]
+      expect: {materiality: MATERIAL, rule: M2}
+    - label: financing only on Hacker News (uncorroborated)
+      event_type: FINANCING
+      subtype: new_round
+      title: Acme Robotics reportedly raising
+      sources: [{publisher: third_party, source_type: hackernews}]
+      expect: {materiality: WATCH, rule: M9}
+    - label: large government contract
+      event_type: COMMERCIAL
+      subtype: government_contract
+      title: "Department of the Air Force: autonomous inspection prototype"
+      sources: [{publisher: registry, source_type: usaspending}]
+      meta: {amount: 2400000}
+      expect: {materiality: MATERIAL, rule: M3}
+    - label: small government award
+      event_type: COMMERCIAL
+      subtype: government_contract
+      title: "NASA: SBIR phase I"
+      sources: [{publisher: registry, source_type: usaspending}]
+      meta: {amount: 150000}
+      expect: {materiality: WATCH, rule: M3}
+    - label: first launch in 90 days
+      event_type: PRODUCT
+      subtype: product_launch
+      title: Introducing Gelgrip 2
+      sources: [{publisher: company, source_type: website}]
+      expect: {materiality: MATERIAL, rule: M4}
+    - label: hiring cluster of 6
+      event_type: TALENT
+      subtype: specialized_hiring_cluster
+      title: 6 new robotics controls roles posted in 14 days
+      epistemic: INFERENCE
+      sources: [{publisher: company, source_type: jobs}]
+      meta: {count: 6, role_class: robotics_controls}
+      expect: {materiality: WATCH, rule: M6}
+    - label: hiring cluster of 12
+      event_type: TALENT
+      subtype: specialized_hiring_cluster
+      title: 12 new ml research roles posted in 14 days
+      epistemic: INFERENCE
+      sources: [{publisher: company, source_type: jobs}]
+      meta: {count: 12, role_class: ml_research}
+      expect: {materiality: MATERIAL, rule: M6}
+    - label: benchmark that bears on a diligence claim
+      event_type: TECHNICAL
+      subtype: benchmark_claim
+      title: Gelgrip inference now 4x faster than the PyTorch baseline on Jetson Orin
+      sources: [{publisher: company, source_type: website}]
+      expect: {materiality: MATERIAL, rule: M7}
+    - label: ordinary paper
+      event_type: TECHNICAL
+      subtype: research_paper
+      title: Tactile sensing for deformable objects
+      sources: [{publisher: registry, source_type: arxiv}]
+      expect: {materiality: WATCH, rule: M7}
+    - label: risk signal from the company
+      event_type: RISK
+      subtype: outage
+      title: Incident report for the fleet API outage
+      sources: [{publisher: company, source_type: website}]
+      expect: {materiality: MATERIAL, rule: M1}
+    - label: low-confidence material event is capped
+      event_type: FINANCING
+      subtype: acquisition
+      title: Acme Robotics acquires Gripworks
+      confidence: 0.4
+      sources: [{publisher: company, source_type: website}]
+      expect: {materiality: WATCH, rule: M9}
+expected:
+  all_checks_pass: true

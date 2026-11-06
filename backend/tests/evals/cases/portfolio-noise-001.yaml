@@ -1,0 +1,47 @@
+id: portfolio-noise-001
+title: Copy edits, docs and routine releases are filtered as noise; announcements are not
+agent: portfolio
+task: portfolio_noise
+failure_category: SOURCE_QUALITY
+regression_for: "docs/PORTFOLIO_METHODOLOGY.md §Noise filtering"
+input:
+  company: {name: Acme Robotics}
+  changes:
+    - label: homepage copy edit (same title)
+      signal_type: website_changed
+      title: "Acme Robotics: Website home page changed"
+      meta: {page_kind: home, url: "https://acme-robotics.com/", old_title: "Acme Robotics | Grippers", new_title: "Acme Robotics | Grippers"}
+      expect: {materiality: NOISE, subtype: minor_copy_update}
+    - label: docs page edit
+      signal_type: website_changed
+      title: "Acme Robotics: Website docs page changed"
+      meta: {page_kind: docs, url: "https://docs.acme-robotics.com/"}
+      expect: {materiality: NOISE, subtype: routine_docs}
+    - label: patch release
+      signal_type: release_published
+      source_type: github
+      title: "acme/gelgrip: Released v1.4.2"
+      meta: {tag: v1.4.2}
+      expect: {materiality: NOISE, subtype: routine_release}
+    - label: generic blog post
+      signal_type: company_post
+      title: What we learned at our team offsite
+      expect: {materiality: NOISE, subtype: generic_post}
+    - label: low-engagement HN discussion
+      signal_type: hn_discussion
+      source_type: hackernews
+      publisher: third_party
+      title: Thoughts on tactile grippers
+      meta: {points: 4}
+      expect: {materiality: NOISE, subtype: low_engagement_discussion}
+    - label: control — a company launch post is not noise
+      signal_type: company_post
+      title: Introducing Gelgrip 2, our next-generation tactile gripper
+      expect: {not_materiality: NOISE, subtype: product_launch}
+    - label: control — homepage repositioning is not noise
+      signal_type: website_changed
+      title: "Acme Robotics: Website home page changed"
+      meta: {page_kind: home, url: "https://acme-robotics.com/", old_title: "Acme | Grippers for labs", new_title: "Acme | Humanoid hands for factories"}
+      expect: {materiality: WATCH, subtype: repositioning}
+expected:
+  all_checks_pass: true

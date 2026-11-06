@@ -563,8 +563,8 @@ def check_report(session: Any, report: Any) -> CheckResult:
     kind = getattr(report, "kind", None)
     body = getattr(report, "body", None) or {}
     trace = getattr(report, "trace", None) or []
-    if kind == "diligence" or (kind not in ("brief", "memo", "meeting_brief", "morning_brief")
-                               and _is_diligence_body(body)):
+    if kind == "diligence" or (kind not in ("brief", "memo", "meeting_brief", "morning_brief", "portfolio_review",
+                                            "portfolio_brief") and _is_diligence_body(body)):
         res = check_diligence(body)
         res.flags += check_trace(trace, {}, None, kind=kind)
         return res

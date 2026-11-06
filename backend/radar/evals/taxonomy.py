@@ -80,6 +80,11 @@ class Agent:
     purposes: tuple[str, ...]  # LLMCall.purpose values
     description: str
     deterministic: bool = False
+    extra_kinds: tuple[str, ...] = ()  # further ResearchReport kinds written by the same agent
+
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        return ((self.kind,) if self.kind else ()) + self.extra_kinds
 
 
 AGENTS: tuple[Agent, ...] = (
@@ -93,6 +98,9 @@ AGENTS: tuple[Agent, ...] = (
           "The daily brief: what changed, founders and companies to know."),
     Agent("diligence", "DILIGENCE ANALYST", "diligence", ("diligence.extract",),
           "Extracts a company's material claims and checks them against public evidence."),
+    Agent("portfolio", "PORTFOLIO ANALYST", "portfolio_review", (),
+          "Portfolio Pulse: per-company change memos and the daily Portfolio Brief from typed, rule-classified "
+          "material events (deterministic templates).", True, ("portfolio_brief",)),
     Agent("narratives", "NARRATIVES", None,
           ("narrative.why_now", "narrative.why_anti", "narrative.risks", "narrative.paper"),
           "Short generated narratives on entity pages (why now, why Anti Fund, risks, paper summaries)."),
@@ -117,6 +125,7 @@ _ALIASES = {
     "morning_brief": "MORNING BRIEF", "narratives": "NARRATIVES", "search": "SEARCH PARSER",
     "thesis": "THESIS CLASSIFIER", "formation": "FORMATION SCORER", "meet": "MEET RANKER",
     "resolution": "ENTITY RESOLUTION", "presenters": "PRESENTERS", "guard": "INJECTION GUARD",
+    "portfolio": "PORTFOLIO ANALYST", "portfolio_review": "PORTFOLIO ANALYST", "portfolio_brief": "PORTFOLIO ANALYST",
 }
 
 
@@ -129,7 +138,7 @@ def agent_by_name(name: str) -> Agent | None:
 
 
 def agent_for_kind(kind: str | None) -> Agent | None:
-    return next((a for a in AGENTS if kind and a.kind == kind), None)
+    return next((a for a in AGENTS if kind and kind in a.kinds), None)
 
 
 def agent_for_purpose(purpose: str | None) -> Agent | None:

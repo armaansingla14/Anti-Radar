@@ -152,7 +152,7 @@ def test_validate_or_exit_prints_clean_error(capsys):
 
 def test_registry_descriptors():
     keys = [d.key for d in registry.descriptors()]
-    assert keys == ["github", "hackernews", "arxiv", "website", "jobs", "x"]
+    assert keys == ["github", "hackernews", "arxiv", "website", "jobs", "x", "usaspending"]
     assert "demo" not in keys and "snapshot" not in keys
 
 

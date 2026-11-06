@@ -48,6 +48,18 @@ def _refuse_on_snapshot() -> None:
         raise HTTPException(403, detail="snapshot_read_only")
 
 
+def _log_portfolio_handoff(session: Session, company_id) -> None:
+    """A person asked for diligence on a portfolio company: the V4 decision log records the handoff."""
+    from sqlalchemy import select
+
+    from radar.models import PortfolioPosition
+    from radar.portfolio.decisions import log_human
+
+    if session.scalar(select(PortfolioPosition.id).where(PortfolioPosition.company_id == company_id).limit(1)):
+        log_human(session, company_id=company_id, kind="diligence_requested", actor="analyst",
+                  note="RUN DILIGENCE requested (V3 diligence workspace)")
+
+
 @router.get("/diligence", response_model=DiligenceIndexOut)
 def diligence_index(session: SessionDep, include_demo: bool = False) -> dict:
     return ws.index(session, include_demo=include_demo)
@@ -82,6 +94,7 @@ def diligence_run(company_ref: CompanyRef, req: Annotated[DiligenceRunRequest | 
         if diligence_status(s, company.id)["status"] == "IN_PROGRESS":
             raise HTTPException(409, detail="diligence_in_progress")
         company_id = company.id
+        _log_portfolio_handoff(s, company_id)
     budget = (req or DiligenceRunRequest()).budget_s
     with session_scope() as s:
         run = run_diligence(s, company_id, live=True, budget_s=budget, commit_progress=True)
@@ -108,7 +121,7 @@ def create_review(session: SessionDep, req: ReviewIn) -> dict:
 @router.get("/reviews", response_model=list[ReviewOut])
 def list_reviews(
     session: SessionDep,
-    target_type: Annotated[str | None, Query(pattern=r"^(claim|underwriting|report|failure)$")] = None,
+    target_type: Annotated[str | None, Query(pattern=r"^(claim|underwriting|report|failure|portfolio_company|material_event)$")] = None,
     target_id: Annotated[str | None, Query(max_length=120)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict]:

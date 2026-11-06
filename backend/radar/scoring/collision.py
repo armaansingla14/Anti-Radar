@@ -30,6 +30,7 @@ FAMILY_OF_SOURCE: dict[str, str] = {
     "jobs": "hiring/web",
     "x": "x",
     "manual": "manual",
+    "usaspending": "commercial",
 }
 # Display names for source families (UI / sentences). "hiring/web" is one *independent* family
 # (a company's own website and its job board are not independent of each other); it is labeled by
@@ -41,6 +42,7 @@ FAMILY_LABEL: dict[str, str] = {
     "x": "Social",
     "manual": "Manual",
     "hiring/web": "Hiring",
+    "commercial": "Commercial",
 }
 SOURCE_LABEL: dict[str, str] = {
     "github": "GitHub",
@@ -51,6 +53,7 @@ SOURCE_LABEL: dict[str, str] = {
     "hackernews": "Community",
     "x": "Social",
     "manual": "Manual",
+    "usaspending": "Commercial",
 }
 STRENGTH_HIGH_FAMILIES, STRENGTH_HIGH_SCORE = 3, 0.7
 STRENGTH_MEDIUM_FAMILIES, STRENGTH_MEDIUM_SCORE = 2, 0.5

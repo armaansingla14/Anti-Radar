@@ -1,0 +1,16 @@
+{"limit": 100, "page_metadata": {"page": 1, "hasNext": false},
+ "results": [
+  {"internal_id": 1, "Award ID": "FA864926P0123", "Recipient Name": "ACME ROBOTICS, INC.",
+   "Start Date": "2026-08-03", "End Date": "2027-08-02", "Award Amount": 1850000.0,
+   "Awarding Agency": "Department of Defense", "Awarding Sub Agency": "Department of the Air Force",
+   "Description": "SBIR PHASE II: TACTILE GRASPING FOR DEPOT LOGISTICS", "generated_internal_id": "CONT_AWD_FA864926P0123_9700_-NONE-_-NONE-",
+   "Last Modified Date": "2026-08-05 10:11:12"},
+  {"internal_id": 2, "Award ID": "W911NF26C0001", "Recipient Name": "ACME ROBOTICS SOLUTIONS LLC",
+   "Start Date": "2026-07-01", "End Date": "2027-01-01", "Award Amount": 9000000.0,
+   "Awarding Agency": "Department of Defense", "Awarding Sub Agency": "Department of the Army",
+   "Description": "UNRELATED WAREHOUSE SERVICES", "generated_internal_id": "CONT_AWD_W911NF26C0001_9700_-NONE-_-NONE-",
+   "Last Modified Date": "2026-07-02 00:00:00"},
+  {"internal_id": 3, "Award ID": "N0001426P1", "Recipient Name": "ACME ROBOTIC",
+   "Start Date": "2026-06-01", "Award Amount": 50000.0, "Awarding Agency": "Department of Defense",
+   "Description": "NEAR NAME", "generated_internal_id": "CONT_AWD_N0001426P1_9700_-NONE-_-NONE-"}
+ ]}

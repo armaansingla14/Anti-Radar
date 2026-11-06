@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Acme changelog</title>
+  <entry>
+    <title>grip-sim v2.0.0: GPU contact solver</title>
+    <link rel="alternate" href="https://docs.acme-robotics.com/changelog/v2"/>
+    <published>2026-09-15T12:00:00Z</published>
+    <summary>Major release with a new GPU contact solver.</summary>
+  </entry>
+  <entry>
+    <title>grip-sim v1.9.3</title>
+    <link href="/changelog/v1-9-3"/>
+    <updated>2026-08-30T08:00:00Z</updated>
+  </entry>
+  <entry>
+    <title>No date entry</title>
+    <link href="https://acme-robotics.com/changelog/nodate"/>
+  </entry>
+</feed>

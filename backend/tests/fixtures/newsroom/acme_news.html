@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head>
+<title>News | Acme Robotics</title>
+<link rel="alternate" type="application/rss+xml" title="Acme news" href="/news/feed.xml">
+<link rel="alternate" type="application/atom+xml" href="https://feeds.example-cdn.com/acme.atom">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@graph": [
+  {"@type": "WebPage", "name": "News", "url": "https://acme-robotics.com/news"},
+  {"@type": "NewsArticle", "headline": "Acme Robotics raises $40M Series B", "datePublished": "2026-09-21",
+   "url": "https://acme-robotics.com/news/series-b", "description": "Led by Example Ventures."},
+  {"@type": "BlogPosting", "headline": "No date here", "url": "https://acme-robotics.com/news/undated"},
+  {"@type": "NewsArticle", "headline": "Syndicated elsewhere", "datePublished": "2026-09-20",
+   "url": "https://othersite.com/acme"}
+]}
+</script>
+</head><body>
+<nav><a href="/">Home</a> <time datetime="2026-09-30">Today</time> <a href="/careers">Careers</a></nav>
+<main>
+  <article>
+    <h2><a href="/news/series-b">Acme Robotics raises $40M Series B</a></h2>
+    <time datetime="2026-09-21T09:00:00-04:00">Sep 21, 2026</time>
+    <p>Acme raised a $40M Series B to scale grip-sim.</p>
+  </article>
+  <article>
+    <time datetime="2026-09-02">September 2, 2026</time>
+    <h3><a href="https://acme-robotics.com/news/introducing-gelgrip-2">Introducing GelGrip 2</a></h3>
+    <p>Our second-generation tactile gripper is now available.</p>
+  </article>
+  <article>
+    <h2><a href="/news/undated-article">An article without a date</a></h2>
+    <p>Undated items are dropped.</p>
+  </article>
+  <article>
+    <time datetime="2027-05-01">Upcoming</time>
+    <h2><a href="/news/future">Future event</a></h2>
+  </article>
+</main>
+<footer><a href="/privacy">Privacy</a></footer>
+</body></html>

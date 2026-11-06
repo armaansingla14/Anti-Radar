@@ -15,6 +15,7 @@ Two views:
   web        website signals; company web pages last fetched
   community  hackernews signals
   social     x signals
+  commercial usaspending signals (federal awards; companies only)
   ========== ==================================================================
 
   Signal observation time is ``detected_at`` (stamped on the data clock at ingest), never later
@@ -55,11 +56,12 @@ from radar.models import (
 from radar.schemas.api import DataAge
 from radar.settings import get_settings
 
-FAMILIES = ("github", "research", "hiring", "web", "community", "social")
-# Families that can describe a person: hiring (job postings) and web (company pages) are company-only.
+FAMILIES = ("github", "research", "hiring", "web", "community", "social", "commercial")
+# Families that can describe a person: hiring (job postings), web (company pages) and commercial (federal awards)
+# are company-only.
 PERSON_FAMILIES = ("github", "research", "community", "social")
 SOURCE_FAMILY = {"github": "github", "arxiv": "research", "jobs": "hiring", "website": "web",
-                 "hackernews": "community", "x": "social"}
+                 "hackernews": "community", "x": "social", "usaspending": "commercial"}
 # Provider runs that are not data sources: the snapshot loader and the fictional demo seeder.
 PSEUDO_PROVIDERS = frozenset({"snapshot", "demo"})
 

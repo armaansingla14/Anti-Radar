@@ -326,11 +326,15 @@ class HttpClient:
             self._last_req[host] = time.monotonic()
 
     # ── cassettes ──
-    def _cassette_path(self, method: str, url: str, params: dict | None, headers: dict | None) -> Path | None:
+    def _cassette_path(self, method: str, url: str, params: dict | None, headers: dict | None,
+                       json_body: Any = None) -> Path | None:
         if not self.cassette_dir:
             return None
         accept = (headers or {}).get("Accept", "")
-        basis = json.dumps([method, url, sorted((params or {}).items()), accept], default=str)
+        parts: list[Any] = [method, url, sorted((params or {}).items()), accept]
+        if json_body is not None:  # POST bodies are part of the request identity
+            parts.append(hashlib.sha256(json.dumps(json_body, sort_keys=True, default=str).encode()).hexdigest())
+        basis = json.dumps(parts, default=str)
         return self.cassette_dir / f"{hashlib.sha256(basis.encode()).hexdigest()[:24]}.json"
 
     def request(
@@ -342,8 +346,9 @@ class HttpClient:
         headers: dict[str, str] | None = None,
         max_redirects: int = 4,
         max_bytes: int | None = None,
+        json_body: Any = None,
     ) -> httpx.Response:
-        cpath = self._cassette_path(method, url, params, headers)
+        cpath = self._cassette_path(method, url, params, headers, json_body)
         if self.mode == "replay":
             if not cpath or not cpath.exists():
                 raise FileNotFoundError(f"no cassette for {method} {url} {params}")
@@ -369,11 +374,13 @@ class HttpClient:
             host = urlparse(current).netloc
             resp = self._send_with_retries(
                 method, current, params=params, headers=headers, host=host, max_bytes=max_bytes or MAX_BODY_BYTES,
-                strip_credentials=strip_credentials,
+                strip_credentials=strip_credentials, json_body=json_body,
             )
             if resp.is_redirect and "location" in resp.headers:
                 current = urljoin(current, resp.headers["location"])
                 params = None
+                if json_body is not None and resp.status_code in (301, 302, 303):
+                    method, json_body = "GET", None  # browsers/httpx semantics: the body is not re-sent
                 continue
             break
         assert resp is not None
@@ -384,8 +391,11 @@ class HttpClient:
             cpath.write_text(json.dumps({"status": resp.status_code, "headers": keep, "body": resp.text}))
         return resp
 
-    def _build(self, method, url, *, params, headers, strip_credentials) -> httpx.Request:
-        req = self._client.build_request(method, url, params=params, headers=headers)
+    def _build(self, method, url, *, params, headers, strip_credentials, json_body: Any = None) -> httpx.Request:
+        if json_body is not None:
+            req = self._client.build_request(method, url, params=params, headers=headers, json=json_body)
+        else:
+            req = self._client.build_request(method, url, params=params, headers=headers)
         if strip_credentials:
             for name in CREDENTIAL_HEADERS:
                 req.headers.pop(name, None)
@@ -397,7 +407,7 @@ class HttpClient:
         time.sleep(delay)
 
     def _send_with_retries(self, method, url, *, params, headers, host, max_bytes,
-                           strip_credentials: bool = False) -> httpx.Response:
+                           strip_credentials: bool = False, json_body: Any = None) -> httpx.Response:
         attempt = 0
         while True:
             self._check_job_deadline()
@@ -410,7 +420,8 @@ class HttpClient:
                 deadline = min(deadline, self._job_deadline)
             token = _attempt_deadline.set(deadline)
             try:
-                req = self._build(method, url, params=params, headers=headers, strip_credentials=strip_credentials)
+                req = self._build(method, url, params=params, headers=headers, strip_credentials=strip_credentials,
+                                  json_body=json_body)
                 r = self._client.send(req, stream=True)
                 try:
                     body = b""
@@ -466,6 +477,13 @@ class HttpClient:
 
     def get_json(self, url: str, **kw) -> Any:
         r = self.get(url, **kw)
+        r.raise_for_status()
+        return r.json()
+
+    def post_json(self, url: str, body: Any, **kw) -> Any:
+        """POST a JSON body and return the decoded JSON response (raises for HTTP errors)."""
+        headers = {"Accept": "application/json", **(kw.pop("headers", None) or {})}
+        r = self.request("POST", url, json_body=body, headers=headers, **kw)
         r.raise_for_status()
         return r.json()
 

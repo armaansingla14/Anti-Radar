@@ -576,3 +576,6 @@ register_task("why_anti_copy", task_why_anti_copy)
 register_task("meeting_brief_template", task_meeting_brief_template, needs_db=True, llm_capable=True)
 register_task("anti_brief_template", task_anti_brief_template, needs_db=True, llm_capable=True)
 register_task("injection", task_injection, needs_db=True, llm_capable=True)
+
+# PORTFOLIO ANALYST tasks live with the portfolio engine; importing registers them.
+from radar.portfolio import eval_tasks as _portfolio_eval_tasks  # noqa: E402,F401

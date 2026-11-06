@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Acme Robotics news</title>
+  <link>https://acme-robotics.com/news</link>
+  <item>
+    <title>Acme Robotics awarded Air Force SBIR contract</title>
+    <link>https://acme-robotics.com/news/sbir</link>
+    <pubDate>Thu, 10 Sep 2026 14:00:00 GMT</pubDate>
+    <description><![CDATA[<p>A <b>Phase II</b> award to test grasping in depots.</p>]]></description>
+  </item>
+  <item>
+    <title>Acme Robotics raises $40M Series B</title>
+    <link>https://acme-robotics.com/news/series-b</link>
+    <pubDate>Mon, 21 Sep 2026 13:00:00 GMT</pubDate>
+  </item>
+  <item>
+    <title>Undated feed item</title>
+    <link>https://acme-robotics.com/news/undated-feed</link>
+  </item>
+  <item>
+    <title>Off-domain feed item</title>
+    <link>https://elsewhere.com/acme-story</link>
+    <pubDate>Tue, 01 Sep 2026 10:00:00 GMT</pubDate>
+  </item>
+</channel></rss>

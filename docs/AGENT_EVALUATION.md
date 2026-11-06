@@ -16,6 +16,7 @@ Code: `backend/radar/evals/` · API: `/api/agents*` · CLI: `radar eval` · case
 | ANTI MEMO | `memo` | `analyst.memo` | report evaluator |
 | MORNING BRIEF | `morning_brief` | `narrative.morning_brief` | structure, trace and timing only (no source-cited claims) |
 | DILIGENCE ANALYST | `diligence` | `diligence.extract` | structural diligence rules |
+| PORTFOLIO ANALYST | `portfolio_review`, `portfolio_brief` | none (deterministic templates) | report evaluator + cases `portfolio-*` (materiality, noise, competitor impact); see docs/PORTFOLIO_METHODOLOGY.md |
 | NARRATIVES | none | `narrative.why_now/why_anti/risks/paper` | LLM telemetry only |
 | SEARCH PARSER | none | `search.parse` | LLM telemetry only |
 | THESIS CLASSIFIER | none | `topics.refine` | LLM telemetry only |

@@ -1,0 +1,22 @@
+id: portfolio-competitor-impact-001
+title: Competitor events reach portfolio companies by comp type (rule M8)
+agent: portfolio
+task: portfolio_competitor_impact
+failure_category: RANKING_ERROR
+regression_for: "docs/PORTFOLIO_METHODOLOGY.md §Competitor impact"
+input:
+  checks:
+    - {label: direct comp material event, comp_type: DIRECT, materiality: MATERIAL,
+       expect: {materiality: MATERIAL, relation: COMPETITOR, reason_contains: "builds the same product"}}
+    - {label: adjacent comp material event, comp_type: ADJACENT, materiality: MATERIAL,
+       expect: {materiality: WATCH, relation: ADJACENT}}
+    - {label: incumbent material event, comp_type: INCUMBENT, materiality: MATERIAL,
+       expect: {materiality: WATCH, relation: INCUMBENT}}
+    - {label: direct comp watch event, comp_type: DIRECT, materiality: WATCH, expect: {materiality: WATCH}}
+    - {label: infrastructure comp watch event is too far removed, comp_type: INFRASTRUCTURE, materiality: WATCH,
+       expect: null}
+    - {label: noise never propagates, comp_type: DIRECT, materiality: NOISE, expect: null}
+    - {label: a comp that is itself a portfolio company keeps its own SELF impact, comp_type: DIRECT,
+       materiality: MATERIAL, subject_is_portfolio: true, expect: {materiality: MATERIAL, relation: COMPETITOR}}
+expected:
+  all_checks_pass: true

@@ -23,6 +23,7 @@ from selectolax.lexbor import LexborHTMLParser
 
 from radar import clock
 from radar.providers import ats as ats_mod
+from radar.providers import newsroom as newsroom_mod
 from radar.providers.ats import IDENTITY_ENCODING
 from radar.providers.base import (
     CompanyRecord,
@@ -342,8 +343,16 @@ class WebsiteProvider:
             return None
         return final, resp.text
 
-    def crawl(self, url: str, *, company_name: str | None = None, max_pages: int = 6) -> ProviderBatch:
-        """Crawl a company site. Raises UnsafeURLError for URLs that fail the SSRF guard."""
+    def crawl(self, url: str, *, company_name: str | None = None, max_pages: int = 6,
+              ats_board: tuple[str, str] | None = None, priority: tuple[str, ...] | None = None,
+              newsroom: bool = False, extra_pages: dict[str, str] | None = None) -> ProviderBatch:
+        """Crawl a company site. Raises UnsafeURLError for URLs that fail the SSRF guard.
+
+        ``priority`` overrides the page-kind fetch order (FETCH_PRIORITY). ``ats_board`` (ats, slug) is a job board
+        verified by hand (portfolio config): it is used instead of the boards detected on the pages. ``newsroom``
+        adds dated ``company_post`` items from fetched blog / news / changelog pages and the same-domain RSS/Atom
+        feeds they declare (``providers/newsroom.py``). ``extra_pages`` ({kind: url}) adds configured pages (e.g. a
+        newsroom URL the homepage does not link) ahead of the discovered page of the same kind."""
         batch = ProviderBatch(provider=self.name)
         start = sanitize_url(url)
         assert_public_host(start)
@@ -370,7 +379,10 @@ class WebsiteProvider:
         anchors = [domain.split(".")[0], name]
         pages: list[tuple[str, ExtractedPage]] = [("home", home)]
         targets = discover_pages(home, domain)
-        for kind in FETCH_PRIORITY:
+        for kind, extra in (extra_pages or {}).items():
+            if kind in PAGE_KIND_SEGMENTS:
+                targets[kind] = sanitize_url(extra)
+        for kind in (priority or FETCH_PRIORITY):
             if len(pages) >= max_pages:
                 break
             if kind not in targets:
@@ -422,17 +434,68 @@ class WebsiteProvider:
             source_url=final_url,
         ))
 
-        self._jobs(batch, ref, domain, anchors, pages)
+        self._jobs(batch, ref, domain, anchors, pages, forced_board=ats_board)
         self._formation(batch, ref, pages)
+        if newsroom:
+            self._newsroom(batch, ref, pages)
         return batch
+
+    # ── newsroom / blog / changelog items ──
+    def _fetch_feed(self, url: str, batch: ProviderBatch) -> str | None:
+        if not self.robots.allowed(url):
+            batch.errors.append(f"robots.txt disallows {url}")
+            return None
+        try:
+            resp = self.client.get(url, headers={"Accept": ", ".join(newsroom_mod.FEED_CONTENT_TYPES)},
+                                   max_bytes=newsroom_mod.MAX_FEED_BYTES)
+        except UnsafeURLError as e:
+            batch.errors.append(f"blocked unsafe URL {url}: {e}")
+            return None
+        except Exception as e:  # noqa: BLE001 — network failures are reported, not fatal
+            batch.errors.append(f"fetch failed {url}: {type(e).__name__}")
+            return None
+        if resp.status_code != 200:
+            batch.errors.append(f"HTTP {resp.status_code} for {url}")
+            return None
+        if resp.headers.get("x-radar-truncated"):
+            batch.errors.append(f"feed {url} exceeds the size cap; not parsed")
+            return None
+        ctype = resp.headers.get("content-type", "").lower().split(";")[0].strip()
+        if ctype and ctype not in newsroom_mod.FEED_CONTENT_TYPES:
+            batch.errors.append(f"non-feed content ({ctype}) at {url}")
+            return None
+        if registrable_domain(str(resp.request.url)) != registrable_domain(url):
+            batch.errors.append(f"feed {url} redirected off-domain; not used")
+            return None
+        return resp.text
+
+    def _newsroom(self, batch: ProviderBatch, ref: EntityRef, pages: list[tuple[str, ExtractedPage]]) -> None:
+        for kind, page in pages:
+            if kind not in newsroom_mod.NEWSROOM_PAGE_KINDS or not page.html:
+                continue
+            groups = [newsroom_mod.extract_items(page.html, page.url)]
+            for feed_url in newsroom_mod.feed_links(page.html, page.url)[:2]:
+                text = self._fetch_feed(feed_url, batch)
+                if text:
+                    items = newsroom_mod.parse_feed(text, feed_url)
+                    if not items:
+                        batch.errors.append(f"feed {feed_url}: no dated same-site items (or rejected)")
+                    groups.append(items)
+            items = newsroom_mod.merge_items(*groups, limit=newsroom_mod.MAX_ITEMS)
+            signals, sources = newsroom_mod.item_signals(items, ref, page_kind=kind, page_url=page.url)
+            batch.signals.extend(signals)
+            batch.sources.extend(sources)
 
     # ── jobs / hiring ──
     def _jobs(self, batch: ProviderBatch, ref: EntityRef, domain: str, anchors: list[str],
-              pages: list[tuple[str, ExtractedPage]]) -> None:
-        detected = ats_mod.detect_ats([t for _, p in pages for t in (p.url, p.html)])
-        boards, problem = select_boards(detected, anchors)
-        if problem:
-            batch.errors.append(problem)
+              pages: list[tuple[str, ExtractedPage]], forced_board: tuple[str, str] | None = None) -> None:
+        if forced_board is not None:
+            boards = [forced_board]  # verified by hand; detection is not consulted
+        else:
+            detected = ats_mod.detect_ats([t for _, p in pages for t in (p.url, p.html)])
+            boards, problem = select_boards(detected, anchors)
+            if problem:
+                batch.errors.append(problem)
         jobs: list[JobRecord] = []
         job_source_url: str | None = None
         sourced = False

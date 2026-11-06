@@ -25,7 +25,8 @@ Availability = Literal["live", "degraded", "disabled"]
 class ProviderDescriptor:
     key: str
     label: str
-    family: str  # source family used by collision scoring (code, research, launch, web, hiring, social)
+    family: str  # source family used by collision scoring (code, research, launch, web, hiring, social,
+    # commercial)
     cadence_hours: float | None  # expected interval between successful runs (None: on demand)
     # IngestionRun.provider values whose runs count for this provider
     run_providers: tuple[str, ...]
@@ -57,6 +58,10 @@ PROVIDERS: tuple[ProviderDescriptor, ...] = (
                        note="Greenhouse / Lever / Ashby boards found on company careers pages"),
     ProviderDescriptor("x", "X (Twitter)", "social", 24, ("x",), credential_env="X_BEARER_TOKEN",
                        note="manual post ingest stays available without API access"),
+    ProviderDescriptor("usaspending", "USAspending.gov", "commercial", 24, ("usaspending",),
+                       rate_limit="public API, no key",
+                       note="Federal contract and grant awards; queried only for configured portfolio companies and "
+                            "comps by exact recipient name"),
 )
 
 BY_KEY = {p.key: p for p in PROVIDERS}

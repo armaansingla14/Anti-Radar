@@ -318,7 +318,7 @@ def test_why_surfaced_skips_evidence_of_zero_value_components():
 def test_details_carry_data_age(seeded, client):
     d = client.get("/api/companies/halcyon-dynamics").json()
     age = d["data_age"]
-    assert set(age["families"]) == {"github", "research", "hiring", "web", "community", "social"}
+    assert set(age["families"]) == {"github", "research", "hiring", "web", "community", "social", "commercial"}
     assert age["last_observed_at"] and age["updated_at"] and age["age_days"] is not None
     assert age["families"]["hiring"]  # Halcyon has job postings
     p = client.get("/api/founders/sana-qureshi").json()

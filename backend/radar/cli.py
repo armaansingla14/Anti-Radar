@@ -17,6 +17,8 @@
     radar status
     radar seed-demo [--reset] [--if-empty] [--fictional/--no-fictional]
     radar demo capture               # re-capture the real-data snapshot
+    radar demo capture --update --portfolio  # portfolio companies + comps into today's dated update
+    radar portfolio sync|run|show|brief      # Portfolio Pulse (V4)
     radar worker                     # scheduled ingestion loop
 """
 
@@ -46,9 +48,11 @@ app.add_typer(demo_app, name="demo")
 
 from radar.cli_diligence import diligence_app  # noqa: E402 — sub-apps live in their own modules
 from radar.cli_eval import eval_app  # noqa: E402
+from radar.cli_portfolio import portfolio_app  # noqa: E402
 
 app.add_typer(diligence_app, name="diligence")
 app.add_typer(eval_app, name="eval")
+app.add_typer(portfolio_app, name="portfolio")
 console = Console()
 
 ACCENT = "#9b2a30"
@@ -423,6 +427,9 @@ def demo_capture(
     websites: int = 20,
     update: bool = typer.Option(False, "--update", help="capture a dated update on top of the snapshots already "
                                 "replayed into this database (written to demo/snapshot_updates/<today>)"),
+    portfolio: bool = typer.Option(False, "--portfolio", help="with --update: capture only the public portfolio "
+                                   "(config/anti_fund_portfolio.yaml) and its comps, added to today's update"),
+    portfolio_config: Annotated[Path | None, typer.Option("--portfolio-config", help="portfolio config path")] = None,
 ) -> None:
     """Capture a fresh real-data snapshot from live public APIs (GitHub, arXiv, HN, websites).
 
@@ -439,6 +446,11 @@ def demo_capture(
     target = SNAPSHOT_UPDATES_DIR / clock.today().isoformat() if update else SNAPSHOT_DIR
     tmp = target.with_name(target.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
+    if portfolio:
+        if not update:
+            raise typer.BadParameter("--portfolio needs --update (portfolio data is a dated update)")
+        _capture_portfolio(target, tmp, portfolio_config)
+        return
     _banner("Capturing VERIFIED real-data snapshot" + (f" update {target.name}" if update else " (base)"))
     from radar.thesis.loader import get_thesis
 
@@ -486,6 +498,66 @@ def demo_capture(
     tmp.rename(target)
     size = sum(p.stat().st_size for p in target.glob("*")) / 1e6
     console.print(f"  Snapshot written to {target} ({size:.1f} MB)")
+
+
+def _capture_portfolio(target: Path, tmp: Path, config_path: Path | None) -> None:
+    """Portfolio capture into today's dated update: keeps batches already captured today, then appends one batch per
+    portfolio source. The validated config is copied next to the batches (portfolio.yaml) so ``seed-demo`` syncs the
+    same positions and comps before replaying them."""
+    from radar import clock, ops
+    from radar.db import session_scope
+    from radar.demo.seed import snapshot_chain_manifests
+    from radar.portfolio.config import default_path, load_config
+    from radar.portfolio.sync import capture_targets, sync_portfolio
+
+    cfg_path = config_path or default_path()
+    cfg = load_config(cfg_path)
+    _banner(f"Capturing portfolio ({len(cfg.companies)} companies) into update {target.name}")
+    if target.exists():
+        shutil.copytree(target, tmp)
+        (tmp / "MANIFEST.json").unlink(missing_ok=True)
+    else:
+        tmp.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(cfg_path, tmp / "portfolio.yaml")
+    with session_scope() as s:
+        synced = sync_portfolio(s, cfg)
+        targets = capture_targets(s, cfg)
+    console.print(f"  [dim]synced {synced['companies']} positions, {synced['comps']} comps; "
+                  f"created {len(synced['created']) + len(synced['comp_companies_created'])} companies[/dim]")
+    started = datetime.now(timezone.utc)
+    with ops.capturing(tmp):
+        for r in ops.capture_portfolio(targets):
+            _report(r)
+    prior = {}
+    if (target / "MANIFEST.json").exists():
+        prior = json.loads((target / "MANIFEST.json").read_text())
+    files = sorted(tmp.glob("*.json.gz"))
+    sources = sorted(set(prior.get("sources") or []) | {"website", "ats", "github", "hackernews", "arxiv",
+                                                        "usaspending"})
+    manifest = {
+        **prior,
+        "kind": "verified_snapshot",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "capture_started_at": prior.get("capture_started_at") or started.isoformat(),
+        "as_of": clock.today().isoformat(),
+        "sources": sources,
+        "files": len(files),
+        "portfolio": {"config": "portfolio.yaml", "companies": len(cfg.companies), "targets": len(targets),
+                      "source": cfg.source.url, "checked_at": cfg.source.checked_at.isoformat(),
+                      "captured_at": datetime.now(timezone.utc).isoformat()},
+        "note": prior.get("note") or (
+            "Real public data collected by ANTI RADAR from official public APIs and websites. Every record keeps its "
+            "source URL and observation time; metrics are exactly as observed. No synthetic events. Derived scores "
+            "are recomputed on load. Captured as an update on top of the earlier snapshots in the chain."),
+        "update_of": prior.get("update_of") or [m.get("as_of") for m in snapshot_chain_manifests()
+                                                 if m.get("as_of") != clock.today().isoformat()],
+    }
+    (tmp / "MANIFEST.json").write_text(json.dumps(manifest, indent=2))
+    shutil.rmtree(target, ignore_errors=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp.rename(target)
+    size = sum(p.stat().st_size for p in target.glob("*")) / 1e6
+    console.print(f"  Portfolio capture written to {target} ({size:.1f} MB, {len(files)} batches)")
 
 
 @demo_app.command("warm")

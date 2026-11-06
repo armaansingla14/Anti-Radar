@@ -1088,3 +1088,118 @@ def _talent_status(res: dict[str, Any]) -> dict[str, Any]:
     status = "ok" if not bad else ("error" if bad == len(runs) else "partial")
     return {"status": status, "signals": sum(r.signals_created for r in runs), "errors": bad,
             "result": {k: v for k, v in res.items() if k != "runs"}}
+
+
+# ── Portfolio Pulse capture (V4) ─────────────────────────────────────────────
+
+PORTFOLIO_PAGE_PRIORITY = ("news", "blog", "changelog", "careers", "about", "research")
+PORTFOLIO_MAX_PAGES = 8
+PORTFOLIO_HN_DAYS = 120
+_MIN_NAME_TERM = 8  # a single short company name is too ambiguous as an HN search term ("Merge", "Aeon")
+
+
+def portfolio_hn_terms(name: str, domain: str | None, github_org: str | None) -> list[str]:
+    """HN search terms for one company: the domain, the GitHub org and the name only when it is distinctive.
+    Stories become signals only when they link to the domain or the org (``org_attention``)."""
+    from radar.providers.domains import is_platform_domain
+
+    terms = []
+    if domain and not is_platform_domain(domain):
+        terms.append(domain)
+    if github_org and len(github_org) >= _MIN_LOGIN_TERM:
+        terms.append(github_org)
+    if name and (len(name.split()) >= 2 or len(name) >= _MIN_NAME_TERM):
+        terms.append(name)
+    return list(dict.fromkeys(terms))
+
+
+def capture_portfolio(targets: list[Any]) -> list[tuple[Any, Any]]:
+    """Collect public data for portfolio companies and comps (``portfolio.sync.CaptureTarget``), each source
+    recorded through ``run_provider`` (and into the snapshot when a writer is active):
+
+    website (news / blog / changelog first, dated newsroom items and same-site feeds, careers) with the verified
+    ATS board; the ATS board alone when the site could not be crawled; the GitHub org; Hacker News stories that link
+    to the domain or org; arXiv papers whose code points into the org; USAspending awards by exact recipient name."""
+    from radar.providers.arxiv import ArxivProvider
+    from radar.providers.base import CompanyRecord, Relation, gh_org_ref
+    from radar.providers.base import ProviderBatch as _PB
+    from radar.providers.domains import company_domain, is_platform_domain
+    from radar.providers.hackernews import HackerNewsProvider
+    from radar.providers.usaspending import USAspendingProvider
+    from radar.providers.website import WebsiteProvider
+
+    runs: list[tuple[Any, Any]] = []
+    web = WebsiteProvider()
+    for t in targets:
+        crawled_jobs = False
+        final_domain = t.domain
+        if company_domain(t.website):
+            extra = {"news": t.newsroom_url} if t.newsroom_url else None
+            try:
+                holder: dict[str, Any] = {}
+
+                def crawl(t=t, extra=extra, holder=holder) -> ProviderBatch:
+                    holder["b"] = web.crawl(t.website, company_name=t.name, max_pages=PORTFOLIO_MAX_PAGES,
+                                            ats_board=t.ats, priority=PORTFOLIO_PAGE_PRIORITY, newsroom=True,
+                                            extra_pages=extra)
+                    return holder["b"]
+
+                runs.append(_run("website", crawl, {"url": t.website, "portfolio": t.role}, web.client.stats))
+                crawled_jobs = bool(holder.get("b") and holder["b"].jobs)
+                comps = holder["b"].companies if holder.get("b") else []
+                if comps and comps[0].ref.key.startswith("domain:"):
+                    final_domain = comps[0].ref.key.split(":", 1)[1]  # where the site redirected (cognition.com)
+            except Exception as e:  # noqa: BLE001 — unsafe URL etc.; keep collecting
+                log.warning("portfolio crawl failed for %s: %s", t.website, e)
+        if t.ats and not crawled_jobs:
+            def board(t=t) -> ProviderBatch:
+                b = _PB(provider="jobs")
+                web._jobs(b, t.ref, t.domain or "", [t.name], [], forced_board=t.ats)
+                return b
+
+            try:
+                runs.append(_run("jobs", board, {"ats": t.ats[0], "slug": t.ats[1], "portfolio": t.role},
+                                 web.client.stats))
+            except Exception as e:  # noqa: BLE001
+                log.warning("portfolio ATS board failed for %s: %s", t.name, e)
+        if t.github_org:
+            try:
+                runs.append(ingest_github(org=t.github_org))
+            except Exception as e:  # noqa: BLE001
+                log.warning("portfolio GitHub org failed for %s: %s", t.github_org, e)
+        terms = portfolio_hn_terms(t.name, final_domain, t.github_org)
+        if final_domain != t.domain:
+            terms = list(dict.fromkeys([*terms, *portfolio_hn_terms("", t.domain, None)]))
+        if terms:
+            hn = HackerNewsProvider()
+            dom = None if (final_domain and is_platform_domain(final_domain)) else final_domain
+            runs.append(_run("hackernews", lambda t=t, terms=terms, dom=dom, hn=hn: hn.org_attention(
+                t.ref, terms, github_owner=t.github_org, domain=dom, days=PORTFOLIO_HN_DAYS),
+                {"portfolio": t.role, "terms": terms}, hn.client.stats))
+        if t.github_org:
+            ax = ArxivProvider()
+
+            def papers(t=t, ax=ax) -> ProviderBatch:
+                b = ax.search_code_for(t.github_org, [f"github.com/{t.github_org}"], days=PORTFOLIO_HN_DAYS)
+                for repo in b.repositories:
+                    if repo.owner.lower() == t.github_org.lower():
+                        b.relations.append(Relation(kind="owns", src=gh_org_ref(t.github_org), dst=repo.ref,
+                                                    source_url=f"https://github.com/{repo.full_name}"))
+                return b
+
+            runs.append(_run("arxiv", papers, {"portfolio": t.role, "org": t.github_org}, ax.client.stats))
+        if t.usaspending_recipient:
+            us = USAspendingProvider()
+
+            def awards(t=t, us=us) -> ProviderBatch:
+                b = us.fetch_awards(t.usaspending_recipient, t.ref)
+                if not b.errors:  # an outage is not "no awards": only a clean lookup records the check
+                    b.companies.append(CompanyRecord(
+                        ref=t.ref, name=t.name, kind="company", source_url="https://www.usaspending.gov/",
+                        attrs={"usaspending_checked_at": clock.today().isoformat(),
+                               "usaspending_recipient": t.usaspending_recipient}))
+                return b
+
+            runs.append(_run("usaspending", awards, {"portfolio": t.role, "recipient": t.usaspending_recipient},
+                             us.client.stats))
+    return runs

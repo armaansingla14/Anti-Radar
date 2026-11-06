@@ -45,6 +45,7 @@ SNAPSHOT_DIR = DEMO_DIR / "snapshot"
 # Later verified captures (`radar demo capture --update`), replayed in date order on top of the base snapshot.
 SNAPSHOT_UPDATES_DIR = DEMO_DIR / "snapshot_updates"
 LLM_CACHE_FILE = DEMO_DIR / "llm_cache.jsonl"
+PORTFOLIO_FILE = "portfolio.yaml"  # the portfolio config a capture used (radar demo capture --update --portfolio)
 
 
 def snapshot_manifest(directory: Path = SNAPSHOT_DIR) -> dict[str, Any] | None:
@@ -379,16 +380,62 @@ def derive_day(day: date, *, history: bool) -> dict[str, Any]:
     return out
 
 
+# ── Portfolio Pulse (V4) ─────────────────────────────────────────────────────
+
+
+def sync_portfolio_file(path: Path) -> dict[str, Any]:
+    from radar.portfolio.config import load_config
+    from radar.portfolio.sync import sync_portfolio
+
+    try:
+        cfg = load_config(path)
+        with session_scope() as s:
+            return sync_portfolio(s, cfg)
+    except Exception as e:  # noqa: BLE001 — a broken portfolio config never blocks the radar replay
+        log.exception("seed: portfolio sync failed")
+        return {"error": f"{type(e).__name__}: {e}"[:300]}
+
+
+def portfolio_config_in_chain(chain: Sequence[Path] | None = None) -> Path | None:
+    """The newest replayed link's captured portfolio config (never the live repo config: replay shows what was
+    captured, and fixtures without a portfolio stay without one)."""
+    replayed = set(replayed_points())
+    found = None
+    for d in chain if chain is not None else snapshot_chain():
+        day = _manifest_day(d)
+        if day in replayed and (d / PORTFOLIO_FILE).exists():
+            found = d / PORTFOLIO_FILE
+    return found
+
+
+def seed_portfolio(chain: Sequence[Path] | None = None) -> dict[str, Any]:
+    """Sync the newest captured portfolio config, then run the monitoring pass for the data clock's day."""
+    from radar.models import PortfolioPosition
+    from radar.portfolio.run import run_portfolio
+
+    path = portfolio_config_in_chain(chain)
+    out: dict[str, Any] = {}
+    if path is not None:
+        out["sync"] = sync_portfolio_file(path)
+    with session_scope() as s:
+        if s.scalar(select(func.count()).select_from(PortfolioPosition)) == 0:
+            return {**out, "skipped": "no portfolio positions in the replayed snapshots"}
+        out["run"] = run_portfolio(s, clock.today())
+    return out
+
+
 # ── Derived research layer (V3) ──────────────────────────────────────────────
 
 
-def post_seed_steps(out: dict[str, Any]) -> None:
+def post_seed_steps(out: dict[str, Any], chain: Sequence[Path] | None = None) -> None:
     """Last step of ``seed_demo`` (clock pinned to the newest replayed day, all links derived).
 
     Everything here is deterministic and offline, so a reseed reproduces it exactly:
     1. captured diligence runs (``demo/diligence/*.json.gz``) are re-analysed from their recorded artifacts;
-    2. template meeting briefs and Anti Briefs are generated from database facts (no LLM);
-    3. every stored report is evaluated, documented failures are seeded, and the regression cases run.
+    2. Portfolio Pulse: the captured portfolio config is synced and the monitoring pass runs (events, impacts,
+       questions, proxy metrics, PORTFOLIO ANALYST reviews and brief);
+    3. template meeting briefs and Anti Briefs are generated from database facts (no LLM);
+    4. every stored report is evaluated, documented failures are seeded, and the regression cases run.
     Each step is independent: a failure is recorded in ``out`` and never aborts the seed."""
     steps: list[tuple[str, Any]] = []
 
@@ -419,7 +466,11 @@ def post_seed_steps(out: dict[str, Any]) -> None:
             return {"reports_evaluated": evaluated, "documented_failures": seeded,
                     "cases": len(outcomes), "cases_passed": sum(1 for o in outcomes if o.passed)}
 
-    steps = [("diligence", diligence), ("template_reports", templates), ("evaluations", evaluations)]
+    def portfolio() -> Any:
+        return seed_portfolio(chain)
+
+    steps = [("diligence", diligence), ("portfolio", portfolio), ("template_reports", templates),
+             ("evaluations", evaluations)]
     for name, fn in steps:
         try:
             out[name] = fn()
@@ -464,6 +515,10 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
             continue
         base = not done  # the first link ever replayed into this database bootstraps it
         info["kind"] = "base" if base else "update"
+        if (directory / PORTFOLIO_FILE).exists():
+            # Positions and comps exactly as captured, synced before the link's batches (as during the capture).
+            clock.set_as_of(day)
+            info["portfolio_sync"] = sync_portfolio_file(directory / PORTFOLIO_FILE)
         info["load"] = load_snapshot(directory, link=i, kind=info["kind"])
         if base:
             backfill_first_seen()
@@ -501,5 +556,5 @@ def seed_demo(*, reset: bool = False, if_empty: bool = False, snapshot: bool = T
 
     out["reports"] = import_reports() if llm_outputs else 0
     clock.init_from_db()
-    post_seed_steps(out)
+    post_seed_steps(out, links if snapshot else [])
     return out

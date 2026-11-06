@@ -21,9 +21,11 @@ from radar.evals.checks import CheckResult, check_report, fallback_info
 from radar.evals.taxonomy import AGENTS, EVALUATOR_VERSION, ReviewStatus, agent_for_kind, agent_for_purpose
 from radar.models import AgentFailure, AgentRunEvaluation, LLMCall, ResearchReport
 from radar.schemas.api import MorningBrief
+from radar.schemas.portfolio import PortfolioBriefBody, PortfolioReviewBody
 
 SCHEMAS: dict[str, type[BaseModel]] = {"brief": AntiBrief, "memo": AntiMemo, "meeting_brief": MeetingBrief,
-                                       "morning_brief": MorningBrief}
+                                       "morning_brief": MorningBrief, "portfolio_review": PortfolioReviewBody,
+                                       "portfolio_brief": PortfolioBriefBody}
 TELEMETRY_ROWS = 20_000
 
 METHODOLOGY: dict[str, str] = {
@@ -190,7 +192,7 @@ def evaluate_report(session: Session, report: ResearchReport, *, version: str = 
 def evaluate_all(session: Session, *, agent: str | None = None, version: str = EVALUATOR_VERSION
                  ) -> list[AgentRunEvaluation]:
     """Evaluate every stored report of an evaluated kind (optionally one agent's, by name)."""
-    kinds = [a.kind for a in AGENTS if a.kind and (agent is None or a.name == agent)]
+    kinds = [k for a in AGENTS if agent is None or a.name == agent for k in a.kinds]
     if not kinds:
         return []
     reports = session.scalars(select(ResearchReport).where(ResearchReport.kind.in_(kinds))
@@ -252,7 +254,7 @@ def agent_metrics(session: Session, *, version: str = EVALUATOR_VERSION) -> list
             "human_review_pending": {"value": pending, "n": n, "reason": None},
         }
         out.append({
-            "key": a.key, "name": a.name, "kinds": [a.kind] if a.kind else [], "purposes": list(a.purposes),
+            "key": a.key, "name": a.name, "kinds": list(a.kinds), "purposes": list(a.purposes),
             "description": a.description, "runs": n, "metrics": metrics,
             "by_generator": dict(sorted(Counter(r.generator or "unknown" for r in rows).items())),
             "flags_by_category": dict(sorted(flags_by_cat.items())),

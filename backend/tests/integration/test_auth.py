@@ -97,7 +97,7 @@ def test_status_db_size_data_age_and_no_synthetic_provider(seeded, client, monke
     monkeypatch.setattr(get_settings(), "demo_synthetic", False)
     st = client.get("/api/status").json()
     keys = [p["provider"] for p in st["providers"]]
-    assert keys == ["github", "hackernews", "arxiv", "website", "jobs", "x"]
+    assert keys == ["github", "hackernews", "arxiv", "website", "jobs", "x", "usaspending"]
     assert st["database"]["size_bytes"] > 0 and st["database"]["size_pretty"]
     assert "data_as_of" in st["database"]
     assert st["database"]["synthetic"] is None and st["demo_mode"] is False

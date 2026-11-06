@@ -354,6 +354,11 @@ class MetricSnapshot(Base):
     value: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(40), default="observed")  # observed | backfill | demo
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+    # V4 public-proxy metrics (radar.portfolio.metrics): where the value comes from, how sure, and the label that
+    # keeps a proxy from being read as an internal metric ("public hiring signal", never "headcount").
+    source_url: Mapped[str | None] = mapped_column(String(2000))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    proxy_label: Mapped[str | None] = mapped_column(String(200))
 
 
 # Back-compat name used in the spec.
@@ -812,9 +817,11 @@ class ReviewDecision(Base):
     __tablename__ = "review_decisions"
     __table_args__ = (Index("ix_review_decisions_target", "target_type", "target_id"),)
     id: Mapped[uuid.UUID] = uuid_pk()
-    target_type: Mapped[str] = mapped_column(String(30))  # claim | underwriting | report | failure
+    # claim | underwriting | report | failure | portfolio_company | material_event (radar.review.TARGET_TYPES)
+    target_type: Mapped[str] = mapped_column(String(30))
     target_id: Mapped[str] = mapped_column(String(120))
-    decision: Mapped[str] = mapped_column(String(30))  # ACCEPT | QUESTION | REJECT | NEEDS_VERIFICATION
+    # ACCEPT | QUESTION | REJECT | NEEDS_VERIFICATION; portfolio: MARK_REVIEWED | NEEDS_FOLLOW_UP | MONITOR | NO_ACTION
+    decision: Mapped[str] = mapped_column(String(30))
     note: Mapped[str] = mapped_column(Text, default="")
     reviewer: Mapped[str] = mapped_column(String(120), default="analyst")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -902,3 +909,158 @@ class EvalCaseResult(Base):
     latency_ms: Mapped[float | None] = mapped_column(Float)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+# ── Portfolio Pulse (V4) ─────────────────────────────────────────────────────
+
+
+class PortfolioPosition(Base, TimestampMixin):
+    """A publicly disclosed portfolio position on an existing ``Company`` (never a parallel profile).
+
+    ``private_fields`` exists for a future firm mode (ownership, cost basis, marks, reserves…). In public mode it
+    MUST stay ``{}``: ``radar.portfolio.config`` refuses private keys and ``radar.portfolio.sync`` raises before
+    writing a non-empty value. No API schema serialises it."""
+
+    __tablename__ = "portfolio_positions"
+    __table_args__ = (UniqueConstraint("company_id", "portfolio_name", name="uq_portfolio_position"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    portfolio_name: Mapped[str] = mapped_column(String(120), default="Anti Fund", server_default="Anti Fund")
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | acquired | public | exited
+    publicly_disclosed: Mapped[bool] = mapped_column(Boolean, default=True)
+    source_url: Mapped[str | None] = mapped_column(String(2000))
+    source_checked_at: Mapped[date | None] = mapped_column(Date)
+    investment_stage: Mapped[str | None] = mapped_column(String(80))  # public label exactly as stated, or NULL
+    investment_year: Mapped[int | None] = mapped_column(Integer)
+    sector: Mapped[str | None] = mapped_column(String(200))
+    thesis_tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    private_fields: Mapped[dict] = mapped_column(JSONType, default=dict)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    meta: Mapped[dict] = mapped_column(JSONType, default=dict)
+
+
+class MaterialEvent(Base):
+    """One real-world happening about a company (portfolio company or comp), typed, deduplicated and classified
+    by the deterministic materiality rules (``radar.portfolio.materiality``). No LLM sets any field here."""
+
+    __tablename__ = "material_events"
+    __table_args__ = (
+        Index("ix_material_events_company_event", "company_id", "event_at"),
+        Index("ix_material_events_materiality", "materiality", "event_at"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    event_type: Mapped[str] = mapped_column(String(20))
+    # PRODUCT | TECHNICAL | TALENT | COMMERCIAL | FINANCING | COMPETITIVE | REGULATORY | RISK | STRATEGIC
+    event_subtype: Mapped[str] = mapped_column(String(60))
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    source_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    epistemic: Mapped[str] = mapped_column(String(20), default=Epistemic.FACT.value)  # FACT | INFERENCE
+    materiality: Mapped[str] = mapped_column(String(10))  # MATERIAL | WATCH | NOISE
+    materiality_rule: Mapped[str] = mapped_column(String(10))  # M1..M10
+    materiality_reason: Mapped[str] = mapped_column(Text, default="")
+    novelty: Mapped[str | None] = mapped_column(String(200))
+    impact_areas: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, server_default="{}")
+    why_it_matters: Mapped[str] = mapped_column(Text, default="")
+    suggested_review: Mapped[str] = mapped_column(String(40), default="NO_ACTION")
+    # REVIEW | MONITOR | UPDATE_COMPETITIVE_MAP | RUN_DILIGENCE | PREPARE_FOUNDER_QUESTIONS | NO_ACTION
+    status: Mapped[str] = mapped_column(String(20), default="NEW")  # NEW | REVIEWED | DISMISSED
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    is_public: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    dedup_key: Mapped[str] = mapped_column(String(64), unique=True)
+    raw_count: Mapped[int] = mapped_column(Integer, default=1)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    meta: Mapped[dict] = mapped_column(JSONType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EventImpact(Base):
+    """What one event means for one portfolio company: itself (SELF) or through a comp (COMPETITOR…)."""
+
+    __tablename__ = "event_impacts"
+    __table_args__ = (UniqueConstraint("event_id", "company_id", name="uq_event_impact"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("material_events.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    relation: Mapped[str] = mapped_column(String(20))
+    # SELF | COMPETITOR | ADJACENT | INFRASTRUCTURE | INCUMBENT | OPEN_SOURCE
+    impact_reason: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    materiality_for_company: Mapped[str] = mapped_column(String(10))  # MATERIAL | WATCH | NOISE
+
+
+class CompRelationship(Base, TimestampMixin):
+    """A portfolio company's comparable (an existing Company), typed and sourced. Always a judgement (INFERENCE)."""
+
+    __tablename__ = "comp_relationships"
+    __table_args__ = (UniqueConstraint("company_id", "comp_company_id", name="uq_comp_pair"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    comp_company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    comp_type: Mapped[str] = mapped_column(String(20))  # DIRECT | ADJACENT | INFRASTRUCTURE | INCUMBENT | OPEN_SOURCE
+    why_comparable: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str] = mapped_column(String(2000))
+    confidence: Mapped[str] = mapped_column(String(10), default="MEDIUM")  # HIGH | MEDIUM | LOW
+    epistemic: Mapped[str] = mapped_column(String(20), default=Epistemic.INFERENCE.value)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class PortfolioQuestion(Base):
+    """A persistent "what changed since we last looked" question, raised from an event."""
+
+    __tablename__ = "portfolio_questions"
+    __table_args__ = (UniqueConstraint("dedup_key", name="uq_portfolio_question"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_from_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("material_events.id", ondelete="SET NULL"))
+    source: Mapped[str | None] = mapped_column(String(200))  # e.g. "job postings", "company newsroom"
+    status: Mapped[str] = mapped_column(String(20), default="OPEN")  # OPEN | ANSWERED | DISMISSED
+    dedup_key: Mapped[str] = mapped_column(String(64))  # sha256(company_id | normalized question)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PortfolioDecision(Base):
+    """The decision log (EVENT → REVIEW → QUESTION → ACTION). The system logs only its own steps (actor 'system');
+    human steps are written only when a person acts (review, question status, diligence request)."""
+
+    __tablename__ = "portfolio_decisions"
+    __table_args__ = (
+        Index("ix_portfolio_decisions_company", "company_id", "created_at"),
+        UniqueConstraint("dedup_key", name="uq_portfolio_decision"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("material_events.id", ondelete="CASCADE"),
+                                                      index=True)
+    question_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("portfolio_questions.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(30))
+    # detected | classified | question_raised | reviewed | diligence_requested | comps_updated | monitoring_changed
+    actor: Mapped[str] = mapped_column(String(120), default="system")
+    note: Mapped[str] = mapped_column(Text, default="")
+    dedup_key: Mapped[str | None] = mapped_column(String(64))  # system steps only (idempotent re-runs)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortfolioRun(Base):
+    """One monitoring pass (``radar.portfolio.run``) for a day, with the real funnel counts."""
+
+    __tablename__ = "portfolio_runs"
+    __table_args__ = (Index("ix_portfolio_runs_day", "day"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    day: Mapped[date] = mapped_column(Date)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    counts: Mapped[dict] = mapped_column(JSONType, default=dict)
+    providers: Mapped[dict] = mapped_column(JSONType, default=dict)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

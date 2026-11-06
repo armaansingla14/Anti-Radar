@@ -16,13 +16,26 @@ from radar.diligence import METHOD_VERSION
 from radar.diligence.run import diligence_status, latest_run
 from radar.diligence.taxonomy import STATUS_LABELS, definitions
 from radar.diligence.types import parse_dt
-from radar.models import Company, DiligenceClaim, DiligenceRun, ResearchReport, ReviewDecision
+from radar.models import Company, DiligenceClaim, DiligenceRun, MaterialEvent, ResearchReport, ReviewDecision
 from radar.services.presenters import latest_scores, topic_tags
 
 MAX_EVIDENCE_OUT = 25
 MAX_CANDIDATES = 20
-TARGET_TYPES = ("claim", "underwriting", "report", "failure")
-DECISIONS = ("ACCEPT", "QUESTION", "REJECT", "NEEDS_VERIFICATION")
+V3_TARGET_TYPES = ("claim", "underwriting", "report", "failure")
+PORTFOLIO_TARGET_TYPES = ("portfolio_company", "material_event")  # V4 Portfolio Pulse
+TARGET_TYPES = V3_TARGET_TYPES + PORTFOLIO_TARGET_TYPES
+V3_DECISIONS = ("ACCEPT", "QUESTION", "REJECT", "NEEDS_VERIFICATION")
+PORTFOLIO_DECISIONS = ("MARK_REVIEWED", "NEEDS_FOLLOW_UP", "MONITOR", "NO_ACTION")
+DECISIONS = V3_DECISIONS + PORTFOLIO_DECISIONS
+
+
+def valid_review(target_type: str, decision: str) -> bool:
+    """Diligence targets take the V3 decisions; portfolio targets take the portfolio decisions."""
+    if target_type in V3_TARGET_TYPES:
+        return decision in V3_DECISIONS
+    if target_type in PORTFOLIO_TARGET_TYPES:
+        return decision in PORTFOLIO_DECISIONS
+    return False
 
 
 def _iso(d) -> str | None:
@@ -209,7 +222,7 @@ class ReviewError(ValueError):
 def create_review(session: Session, *, target_type: str, target_id: str, decision: str, note: str = "",
                   reviewer: str = "analyst") -> ReviewDecision:
     """Store a human decision. Claim / report / underwriting targets must exist."""
-    if target_type not in TARGET_TYPES or decision not in DECISIONS:
+    if not valid_review(target_type, decision):
         raise ReviewError("invalid target_type or decision")
     tid = target_id.strip()
     if target_type == "claim":
@@ -225,6 +238,12 @@ def create_review(session: Session, *, target_type: str, target_id: str, decisio
         rep = session.get(ResearchReport, run.report_id) if run and run.report_id else None
         if rep is None or key not in {u.get("key") for u in (rep.body or {}).get("underwriting") or []}:
             raise LookupError("underwriting category not found")
+    elif target_type == "portfolio_company":
+        if _uuid(tid) is None or session.get(Company, _uuid(tid)) is None:
+            raise LookupError("company not found")
+    elif target_type == "material_event":
+        if _uuid(tid) is None or session.get(MaterialEvent, _uuid(tid)) is None:
+            raise LookupError("event not found")
     r = ReviewDecision(target_type=target_type, target_id=tid[:120], decision=decision, note=(note or "")[:2000],
                        reviewer=(reviewer or "analyst")[:120])
     session.add(r)

@@ -1,0 +1,11 @@
+{"limit": 100, "page_metadata": {"page": 1, "hasNext": false},
+ "results": [
+  {"internal_id": 9, "Award ID": "2412345", "Recipient Name": "Acme Robotics Inc",
+   "Start Date": "2025-12-15", "End Date": "2026-12-14", "Award Amount": 275000,
+   "Awarding Agency": "National Science Foundation", "Awarding Sub Agency": "National Science Foundation",
+   "Description": "SBIR Phase I: Learned tactile models", "generated_internal_id": "ASST_NON_2412345_4900",
+   "Last Modified Date": "2025-12-20"},
+  {"internal_id": 10, "Award ID": "2499999", "Recipient Name": "ACME ROBOTICS INC",
+   "Award Amount": 100, "Awarding Agency": "National Science Foundation",
+   "Description": "No dates at all", "generated_internal_id": "ASST_NON_2499999_4900"}
+ ]}
