@@ -10,7 +10,7 @@ describe("proxy allow-list", () => {
   it("covers exactly the sections the browser needs", () => {
     assert.deepEqual([...PROXY_ALLOWED_SECTIONS].sort(), [
       "agents", "brief", "changes", "companies", "diligence", "feedback", "formation", "founders", "health", "home", "ingest",
-      "investigate", "meet", "meeting-brief", "memo", "reports", "reviews", "search", "watchlist",
+      "investigate", "meet", "meeting-brief", "memo", "portfolio", "reports", "reviews", "search", "watchlist",
     ]);
   });
 
@@ -49,5 +49,13 @@ describe("proxy allow-list", () => {
     assert.equal(proxyMethodAllowed(["agents", "failures"], "GET"), true);
     assert.equal(proxyMethodAllowed(["changes"], "GET"), true);
     assert.equal(proxyMethodAllowed(["changes"], "POST"), false);
+  });
+
+  it("portfolio: reviews and question status are writes; pulse reads are open for the /demo/portfolio tour", () => {
+    assert.equal(proxyMethodAllowed(["portfolio", "modal", "review"], "POST"), true);
+    assert.equal(proxyMethodAllowed(["portfolio", "questions", "2dfff54b-2e6f-4095-b543-fac4c8cf844e"], "POST"), true);
+    assert.equal(proxyMethodAllowed(["portfolio"], "GET"), true);
+    assert.equal(proxyMethodAllowed(["portfolio", "events"], "GET"), true);
+    assert.equal(proxyPathAllowed(["portfolio", "..", "admin"]), false);
   });
 });

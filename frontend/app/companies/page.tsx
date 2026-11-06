@@ -9,6 +9,7 @@ import { FilterNotice } from "@/components/entity/FilterNotice";
 import { ApiError, getCompanies, type QueryParams } from "@/lib/api";
 import { resolveFilter } from "@/lib/filters";
 import { getSession } from "@/lib/session";
+import { loadPortfolioIndex } from "@/components/entity/data";
 import type { CompanySummary } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Companies" };
@@ -23,6 +24,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 export default async function CompaniesPage({ searchParams }: PageProps<"/companies">) {
   const sp = await searchParams;
   const sessionP = getSession(); // in parallel with the list
+  const portfolioP = loadPortfolioIndex(); // PORTFOLIO badges: one fetch for every row
   const sort = SORTS.find((s) => s === one(sp.sort)) ?? "score";
   const stage = STAGES.find((s) => s === one(sp.stage));
   const kind = KINDS.find((s) => s === one(sp.kind));
@@ -135,7 +137,13 @@ export default async function CompaniesPage({ searchParams }: PageProps<"/compan
             : "Collectors have not produced any companies yet. Check provider status."}
         </EmptyState>
       ) : (
-        <CompanyResults key={JSON.stringify(query)} initial={companies} query={query} pageSize={PAGE} />
+        <CompanyResults
+          key={JSON.stringify(query)}
+          initial={companies}
+          query={query}
+          pageSize={PAGE}
+          portfolio={((await portfolioP) ?? []).map((i) => i.company.slug)}
+        />
       )}
     </div>
   );

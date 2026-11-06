@@ -4,13 +4,27 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { DemoBadge, NewBadge, VerificationBadge } from "@/components/Badges";
+import { PortfolioBadge } from "@/components/portfolio/Badges";
 import { CollisionStrip } from "@/components/CollisionStrip";
 import { FounderCard } from "@/components/FounderCard";
 import { SignalTimeline } from "@/components/SignalTimeline";
 import { ThesisTag } from "@/components/ThesisTag";
-import { latestBriefId, loadCompany, loadDiligence, loadDiligenceStatus, loadFormationFeed, loadGraph, loadStatus } from "@/components/entity/data";
+import {
+  latestBriefId,
+  loadCompany,
+  loadDiligence,
+  loadDiligenceStatus,
+  loadFormationFeed,
+  loadGraph,
+  loadPortfolioCompany,
+  loadPortfolioComps,
+  loadPortfolioIndex,
+  loadStatus,
+} from "@/components/entity/data";
 import { CompanyTabs, DiligenceStrip, DiligenceTab } from "@/components/diligence/CompanyDiligence";
-import { canWrite, parseTab, TAB_SECTIONS } from "@/components/diligence/logic";
+import { canWrite, effectiveTab, parseTab, TAB_SECTIONS, visibleTabs } from "@/components/diligence/logic";
+import { CompOfLine, CompsMapView, PortfolioStrip, PortfolioTab } from "@/components/portfolio/CompanyPortfolio";
+import { compCount, compIndex, compsHref, portfolioSlugs } from "@/components/portfolio/logic";
 import { dataSource } from "@/lib/dataSource";
 import { getSession } from "@/lib/session";
 import { EntityActions } from "@/components/entity/EntityActions";
@@ -57,15 +71,26 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
 
   const c = detail.summary;
   const score = detail.anti_score;
-  const tab = parseTab(sp.tab);
-  const [graph, status, formationFeed, dStatus, session, dWorkspace] = await Promise.all([
+  const requested = parseTab(sp.tab);
+  const [graph, status, formationFeed, dStatus, session, dWorkspace, pIndex, pMaps] = await Promise.all([
     loadGraph(c.id),
     loadStatus(),
     loadFormationFeed(),
     loadDiligenceStatus(c.slug),
     getSession(),
-    tab === "diligence" ? loadDiligence(c.slug).catch(() => null) : Promise.resolve(null),
+    requested === "diligence" ? loadDiligence(c.slug).catch(() => null) : Promise.resolve(null),
+    c.is_demo ? Promise.resolve(null) : loadPortfolioIndex(),
+    c.is_demo ? Promise.resolve(null) : loadPortfolioComps(),
   ]);
+  // PORTFOLIO / COMPS exist only for a publicly disclosed portfolio company (one index fetch, never per row).
+  const pItem = pIndex?.find((i) => i.company.slug === c.slug) ?? null;
+  const pMap = pMaps?.find((m) => m.company.slug === c.slug) ?? null;
+  const hasComps = Boolean(pMap && compCount(pMap) > 0);
+  const tabOpts = { portfolio: Boolean(pItem), comps: hasComps };
+  const tab = effectiveTab(requested, tabOpts);
+  const comps = compIndex(pMaps);
+  const compOf = pItem ? [] : (comps.get(c.slug) ?? []);
+  const pView = tab === "portfolio" && pItem ? await loadPortfolioCompany(c.slug).catch(() => null) : null;
   const writable = canWrite(session, dataSource() === "snapshot");
   const llmEnabled = typeof status?.llm?.enabled === "boolean" ? status.llm.enabled : null;
   const xMode = xModeFromStatus(status?.providers.find((p) => p.provider === "x"));
@@ -106,7 +131,11 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
     "why-anti", "risks", "reports", "duplicates", "sources",
   ];
   const numbers = sectionNumbers(
-    tab === "overview" ? order : tab === "diligence" ? [] : order.filter((id) => typeof id === "string" && TAB_SECTIONS[tab].includes(id)),
+    tab === "overview"
+      ? order
+      : tab === "diligence" || tab === "portfolio" || tab === "comps"
+        ? []
+        : order.filter((id) => typeof id === "string" && TAB_SECTIONS[tab].includes(id)),
   );
   const titles = new Map<string, string>();
   const sec = (id: string, title: string, children: ReactNode, right?: ReactNode, className?: string) => {
@@ -233,6 +262,7 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
               {isNew && <NewBadge />}
               {c.is_demo && <DemoBadge note={detail.data_note} />}
               {c.first_seen_at && <span className="label text-ink-3">First seen {fmtDate(c.first_seen_at)}</span>}
+              {pItem && <PortfolioBadge slug={c.slug} />}
             </>
           }
           name={c.name}
@@ -304,12 +334,14 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
         />
       </div>
 
+      {pItem && <PortfolioStrip item={pItem} />}
       <DiligenceStrip status={c.is_demo ? null : dStatus} slug={c.slug} writable={writable} />
-      <CompanyTabs slug={c.slug} active={tab} reports={detail.reports.length} />
+      {compOf.length > 0 && <CompOfLine links={compOf} />}
+      <CompanyTabs slug={c.slug} active={tab} reports={detail.reports.length} tabs={visibleTabs(tabOpts)} />
 
       {numbers.size > 0 && <Contents items={[...numbers.keys()].filter((id) => titles.has(id)).map((id) => ({ id, title: titles.get(id)! }))} />}
 
-      {tab === "why-now" && (
+      {tab === "radar" && (
         <div className="mt-12 space-y-16">
           {whyNow}
           {whatChanged}
@@ -320,6 +352,24 @@ export default async function CompanyPage({ params, searchParams }: PageProps<"/
       {tab === "diligence" && (
         <div className="mt-10">
           <DiligenceTab ws={dWorkspace} slug={c.slug} />
+        </div>
+      )}
+      {tab === "portfolio" && (
+        <div className="mt-10">
+          <PortfolioTab view={pView} writable={writable} portfolio={portfolioSlugs(pIndex)} comps={comps} />
+        </div>
+      )}
+      {tab === "comps" && pMap && (
+        <div className="mt-10 space-y-4">
+          <p className="flex flex-wrap items-baseline justify-between gap-3 border-t border-ink pt-3 text-[12.5px] text-ink-2">
+            <span>
+              Who {c.name} is compared with, and why. Every comp is a sourced judgement (inference) with a stated confidence; no financial multiples.
+            </span>
+            <Link href={compsHref(c.slug)} className="link font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink">
+              All competitive maps →
+            </Link>
+          </p>
+          <CompsMapView map={pMap} />
         </div>
       )}
       {tab === "relationships" && (

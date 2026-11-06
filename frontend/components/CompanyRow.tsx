@@ -4,18 +4,21 @@ import { fmtCompact, fmtDate, fmtNum, fmtSigned, hrefFor, humanize, pad2 } from 
 import type { CompanySummary } from "@/lib/types";
 import { DemoBadge } from "./Badges";
 import { Delta } from "./Delta";
+import { PortfolioBadge } from "./portfolio/Badges";
 
 export interface CompanyRowProps {
   company: CompanySummary;
   rank?: number;
   href?: string;
+  /** A publicly disclosed Anti Fund portfolio company (small PORTFOLIO badge). */
+  portfolio?: boolean;
 }
 
 const th = "label whitespace-nowrap px-2 py-2 text-left font-normal";
 const td = "px-2 py-2.5 align-top";
 
 /** Dense list row. Use inside <CompanyTable> (or a table with the same columns). */
-export function CompanyRow({ company: c, rank, href }: CompanyRowProps) {
+export function CompanyRow({ company: c, rank, href, portfolio }: CompanyRowProps) {
   const target = href ?? hrefFor("company", c.slug);
   return (
     <tr
@@ -36,6 +39,7 @@ export function CompanyRow({ company: c, rank, href }: CompanyRowProps) {
           </Link>
           {c.watched && <span className="text-[9px] text-accent" title="On your watchlist">●</span>}
           {c.is_demo && <DemoBadge />}
+          {portfolio && <PortfolioBadge slug={c.slug} />}
         </div>
         {c.one_liner && <p className="mt-0.5 line-clamp-1 max-w-[52ch] text-[12.5px] text-ink-2">{c.one_liner}</p>}
       </td>
@@ -68,10 +72,13 @@ export interface CompanyTableProps {
   start?: number;
   caption?: string;
   className?: string;
+  /** Slugs of portfolio companies (one index fetch per page, not per row). */
+  portfolio?: readonly string[];
 }
 
 /** Dense, keyboard-navigable company list. */
-export function CompanyTable({ companies, start = 0, caption, className }: CompanyTableProps) {
+export function CompanyTable({ companies, start = 0, caption, className, portfolio }: CompanyTableProps) {
+  const inPortfolio = new Set(portfolio ?? []);
   return (
     <div className={clsx("overflow-x-auto", className)}>
       <table className="w-full border-collapse border-t border-ink text-[13px]">
@@ -92,7 +99,7 @@ export function CompanyTable({ companies, start = 0, caption, className }: Compa
         </thead>
         <tbody>
           {companies.map((c, i) => (
-            <CompanyRow key={c.id} company={c} rank={start + i + 1} />
+            <CompanyRow key={c.id} company={c} rank={start + i + 1} portfolio={inPortfolio.has(c.slug)} />
           ))}
         </tbody>
       </table>

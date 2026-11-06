@@ -14,6 +14,8 @@ import { DiligenceReportView, WorkspaceLink } from "@/components/diligence/Repor
 import { loadDiligenceIndex } from "@/components/entity/data";
 import { diligenceHref, workspaceMap } from "@/components/diligence/logic";
 import type { DiligenceReportBody } from "@/lib/types-diligence";
+import { isPortfolioBrief, isPortfolioReview, PortfolioBriefReportView, PortfolioReviewView } from "@/components/portfolio/ReportView";
+import type { PortfolioBriefBody, PortfolioReviewBody } from "@/lib/types-portfolio";
 
 export async function generateMetadata({ params }: PageProps<"/reports/[id]">): Promise<Metadata> {
   const { id } = await params;
@@ -27,6 +29,8 @@ const KIND: Record<string, string> = {
   morning_brief: "Morning Brief",
   meeting_brief: "Meeting Brief",
   diligence: "Technical Diligence",
+  portfolio_review: "Portfolio Review",
+  portfolio_brief: "Portfolio Brief",
 };
 
 function str(v: unknown): string | null {
@@ -49,6 +53,9 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const meeting = isMeetingBrief(report.kind, body);
   const diligence = report.kind === "diligence" && typeof body.company === "object" && body.company !== null && Array.isArray(body.claims);
   const dBody = diligence ? (body as unknown as DiligenceReportBody) : null;
+  const pReview = isPortfolioReview(report.kind, body) ? (body as unknown as PortfolioReviewBody) : null;
+  const pBrief = isPortfolioBrief(report.kind, body) ? (body as unknown as PortfolioBriefBody) : null;
+  const portfolioBack = pReview ? `/portfolio/${pReview.company.slug}` : pBrief ? `/portfolio/brief/${pBrief.date}` : null;
   // Anti Brief about a company: "Open diligence →" when that company has a workspace (one index fetch).
   const workspaceSlug =
     !diligence && report.kind === "brief" && report.entity_type === "company" && report.entity_slug
@@ -58,9 +65,11 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
       : null;
   const subject =
     dBody?.company.name ??
+    pReview?.company.name ??
+    (pBrief ? `Portfolio Brief — ${fmtDate(pBrief.date)}` : null) ??
     str(body.company) ?? str(body.subject) ?? str(body.person) ?? str(body.name) ?? report.title.replace(/^(Anti (Brief|Memo)|Meeting Brief)\s+—\s+/, "");
   const oneLiner = str(body.one_liner);
-  const structured = meeting || diligence || isStructuredBody(body);
+  const structured = meeting || diligence || Boolean(pReview || pBrief) || isStructuredBody(body);
   const contents = meeting ? meetingSections(body) : structured ? sectionsFor(report.kind, body) : [];
   const briefDate = meeting ? str(body.date) : null;
   const cited = meeting ? citedSourceIds(body).length : null;
@@ -76,7 +85,9 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span className="label text-accent">{kind}</span>
             <span aria-hidden className="h-px w-5 bg-ink-3" />
-            <span className="label">{diligence ? "Anti Radar · Evidence assessment" : "Anti Radar · Research brief"}</span>
+            <span className="label">
+              {diligence ? "Anti Radar · Evidence assessment" : pReview || pBrief ? "Anti Radar · Portfolio Pulse" : "Anti Radar · Research brief"}
+            </span>
             {report.is_demo && <DemoBadge note="Report about a fictional demo entity" />}
           </div>
           <ReportActions id={report.id} filename={filename} />
@@ -99,6 +110,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         {dBody && (
           <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
             Technical diligence · {fmtDate(dBody.date)} · method {dBody.method_version} · not an investment recommendation
+          </p>
+        )}
+        {(pReview || pBrief) && (
+          <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2">
+            {pReview ? "Portfolio review" : "Portfolio brief"} · {fmtDate((pReview ?? pBrief)!.date)} · PORTFOLIO ANALYST · public sources only ·{" "}
+            <Link href={portfolioBack!} className="text-ink hover:text-accent">
+              {pReview ? "Open portfolio view →" : "Open the brief →"}
+            </Link>
           </p>
         )}
         {workspaceSlug && (
@@ -165,7 +184,13 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
 
       <div className="mt-10 grid gap-x-12 gap-y-12 lg:grid-cols-[minmax(0,1fr)_260px] print:block">
         <div className="min-w-0">
-          {dBody ? <DiligenceReportView body={dBody} /> : meeting ? <MeetingBriefView body={body} /> : <ReportBody kind={report.kind} body={body} markdown={report.markdown} />}
+          {dBody ? (
+            <DiligenceReportView body={dBody} />
+          ) : pReview ? (
+            <PortfolioReviewView body={pReview} />
+          ) : pBrief ? (
+            <PortfolioBriefReportView body={pBrief} />
+          ) : meeting ? <MeetingBriefView body={body} /> : <ReportBody kind={report.kind} body={body} markdown={report.markdown} />}
         </div>
         {structured && (
           <aside className="hidden lg:block print:hidden">

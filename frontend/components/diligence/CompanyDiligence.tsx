@@ -5,7 +5,7 @@ import { Quiet } from "@/components/entity/primitives";
 import { fmtDate } from "@/lib/format";
 import type { DiligenceStatus, DiligenceWorkspace } from "@/lib/types-diligence";
 import { ClaimStatusBadge, DiligenceStateBadge } from "./Badges";
-import { COMPANY_TABS, claimHref, claimLabel, countsLine, diligenceHref, pct, stateReason, tabHref, type CompanyTab } from "./logic";
+import { claimHref, claimLabel, countsLine, diligenceHref, pct, stateReason, tabHref, visibleTabs, type CompanyTab } from "./logic";
 import { RunDiligenceButton } from "./RunButton";
 import { ExecSummary } from "./Workspace";
 
@@ -39,11 +39,14 @@ const base = "font-mono text-[11px] uppercase tracking-[0.08em] transition-color
 const on = "text-ink underline decoration-accent decoration-[1.5px] underline-offset-[7px]";
 const off = "text-ink-2 hover:text-ink";
 
-/** OVERVIEW · WHY NOW · DILIGENCE · RELATIONSHIPS · REPORTS — plain links, so they work without JS. */
-export function CompanyTabs({ slug, active, reports }: { slug: string; active: CompanyTab; reports?: number }) {
+/**
+ * OVERVIEW · RADAR · DILIGENCE · PORTFOLIO · COMPS · RELATIONSHIPS · REPORTS — plain links, so they work without JS.
+ * Pass `tabs` (from `visibleTabs`) to hide PORTFOLIO / COMPS for companies without a portfolio position.
+ */
+export function CompanyTabs({ slug, active, reports, tabs = visibleTabs() }: { slug: string; active: CompanyTab; reports?: number; tabs?: { key: CompanyTab; label: string }[] }) {
   return (
     <nav aria-label="Company views" className="flex flex-wrap items-baseline gap-x-6 gap-y-3 border-b border-ink pb-3 pt-4">
-      {COMPANY_TABS.map((t) => (
+      {tabs.map((t) => (
         <Link key={t.key} href={tabHref(slug, t.key)} className={clsx(base, t.key === active ? on : off)} aria-current={t.key === active ? "page" : undefined} scroll={false}>
           {t.label}
           {t.key === "reports" && reports !== undefined && <span className="tnum ml-1.5 text-ink-3">{reports}</span>}

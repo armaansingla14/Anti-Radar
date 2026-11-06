@@ -129,12 +129,34 @@ export const DILIGENCE_SECTIONS: ReportSectionDef[] = [
   { key: "questions_for_founders", title: "Questions for the founders", numbered: true },
 ];
 
+/** PORTFOLIO ANALYST change memo (kind `portfolio_review`): rendered by components/portfolio/ReportView. */
+export const PORTFOLIO_REVIEW_SECTIONS: ReportSectionDef[] = [
+  { key: "summary", title: "Summary" },
+  { key: "suggested_review", title: "Suggested review" },
+  { key: "what_changed", title: "What changed" },
+  { key: "material_events", title: "Events by type" },
+  { key: "open_questions", title: "Open questions", numbered: true },
+  { key: "noise_filtered", title: "Noise filtered" },
+];
+
+/** PORTFOLIO ANALYST daily brief (kind `portfolio_brief`): rendered by components/portfolio/ReportView. */
+export const PORTFOLIO_BRIEF_SECTIONS: ReportSectionDef[] = [
+  { key: "five_things", title: "Things worth knowing", numbered: true },
+  { key: "needs_attention", title: "Needs attention" },
+  { key: "technical_changes", title: "Technical changes" },
+  { key: "competitive_moves", title: "Competitive moves" },
+  { key: "talent_changes", title: "Talent changes" },
+  { key: "noise_filtered", title: "Noise filtered" },
+];
+
 /** Keys that are header metadata rather than sections. */
 const META_KEYS = new Set(["date", "subject", "company", "person", "one_liner", "entity", "title", "generator", "model"]);
 
 /** Ordered sections present in a body (known ones first, then any extras). */
 export function sectionsFor(kind: string, body: JsonObject): ReportSectionDef[] {
   if (kind === "diligence") return DILIGENCE_SECTIONS.filter((s) => s.key in body);
+  if (kind === "portfolio_review") return PORTFOLIO_REVIEW_SECTIONS.filter((s) => s.key in body);
+  if (kind === "portfolio_brief") return PORTFOLIO_BRIEF_SECTIONS.filter((s) => s.key in body);
   const base = kind === "memo" ? MEMO_SECTIONS : BRIEF_SECTIONS;
   const known = new Set(base.map((s) => s.key));
   const extra = Object.keys(body)

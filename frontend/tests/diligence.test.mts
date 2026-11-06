@@ -181,11 +181,16 @@ describe("index and tabs", () => {
   it("parses ?tab= and builds plain links", () => {
     assert.equal(parseTab(undefined), "overview");
     assert.equal(parseTab("diligence"), "diligence");
-    assert.equal(parseTab("WHY_NOW"), "why-now");
+    assert.equal(parseTab("WHY_NOW"), "radar");
+    assert.equal(parseTab("why-now"), "radar");
+    assert.equal(parseTab("radar"), "radar");
+    assert.equal(parseTab("portfolio"), "portfolio");
+    assert.equal(parseTab("comps"), "comps");
     assert.equal(parseTab(["reports", "x"]), "reports");
     assert.equal(parseTab("nonsense"), "overview");
     assert.equal(tabHref("unsloth-ai", "overview"), "/companies/unsloth-ai");
     assert.equal(tabHref("unsloth-ai", "diligence"), "/companies/unsloth-ai?tab=diligence");
+    assert.equal(tabHref("modal", "radar"), "/companies/modal?tab=radar");
   });
   it("keeps unknown OSS values visible", () => {
     assert.equal(ossValue("commits_12w", null), "unknown");

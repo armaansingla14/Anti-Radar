@@ -10,7 +10,9 @@ import { ScoreNumeral } from "@/components/ScoreNumeral";
 import { SectionLabel } from "@/components/SectionLabel";
 import { describeApiError } from "@/components/insight/apiError";
 import { search } from "@/lib/api";
-import { loadDiligenceIndex } from "@/components/entity/data";
+import { loadDiligenceIndex, loadPortfolioIndex } from "@/components/entity/data";
+import { PortfolioBadge } from "@/components/portfolio/Badges";
+import { portfolioSlugs } from "@/components/portfolio/logic";
 import { workspaceMap } from "@/components/diligence/logic";
 import { hrefFor, humanize, pad2 } from "@/lib/format";
 import type { SearchFilters, SearchResponse, SearchResult } from "@/lib/types";
@@ -191,7 +193,7 @@ function Interpretation({ res }: { res: SearchResponse }) {
   );
 }
 
-function ResultRow({ r, n, diligence }: { r: SearchResult; n: number; diligence?: boolean }) {
+function ResultRow({ r, n, diligence, portfolio }: { r: SearchResult; n: number; diligence?: boolean; portfolio?: boolean }) {
   const href = hrefFor(r.entity_type, r.slug || r.id);
   return (
     <li
@@ -209,6 +211,7 @@ function ResultRow({ r, n, diligence }: { r: SearchResult; n: number; diligence?
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="label">{KIND_LABEL[r.entity_type] ?? humanize(r.entity_type)}</span>
           {r.is_demo && <DemoBadge />}
+          {portfolio && r.slug && <PortfolioBadge slug={r.slug} />}
           {diligence && r.slug && (
             <Link
               href={`/diligence/${encodeURIComponent(r.slug)}`}
@@ -248,6 +251,7 @@ function ResultRow({ r, n, diligence }: { r: SearchResult; n: number; diligence?
 async function Results({ q, limit }: { q: string; limit: number }) {
   let res: SearchResponse;
   const diligenceP = loadDiligenceIndex(); // one fetch for every result row
+  const portfolioP = loadPortfolioIndex(); // PORTFOLIO badges: one fetch for every result row
   try {
     res = await search(q, { limit });
   } catch (err) {
@@ -260,6 +264,7 @@ async function Results({ q, limit }: { q: string; limit: number }) {
   }
   const shown = res.results.length;
   const workspaces = workspaceMap(await diligenceP);
+  const portfolio = portfolioSlugs(await portfolioP);
   return (
     <>
       <Interpretation res={res} />
@@ -295,7 +300,13 @@ async function Results({ q, limit }: { q: string; limit: number }) {
       ) : (
         <ol className="border-t border-ink">
           {res.results.map((r, i) => (
-            <ResultRow key={`${r.entity_type}-${r.id}`} r={r} n={i + 1} diligence={r.entity_type === "company" && workspaces.has(r.slug)} />
+            <ResultRow
+              key={`${r.entity_type}-${r.id}`}
+              r={r}
+              n={i + 1}
+              diligence={r.entity_type === "company" && workspaces.has(r.slug)}
+              portfolio={r.entity_type === "company" && portfolio.has(r.slug)}
+            />
           ))}
         </ol>
       )}

@@ -7,6 +7,7 @@ import clsx from "clsx";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { DemoBadge } from "@/components/Badges";
+import { PortfolioBadge } from "@/components/portfolio/Badges";
 import { CollisionLine } from "@/components/CollisionStrip";
 import { Confidence } from "@/components/Confidence";
 import { Delta } from "@/components/Delta";
@@ -253,11 +254,14 @@ export function CompanyRows({
   cards,
   note,
   diligence,
+  portfolio,
 }: {
   cards: IntelCard[];
   note?: string | null;
   /** Slugs with a diligence workspace (one index fetch per page): those rows get an "Open diligence" link. */
   diligence?: ReadonlySet<string>;
+  /** Slugs of publicly disclosed portfolio companies (one index fetch per page): those rows get a PORTFOLIO badge. */
+  portfolio?: ReadonlySet<string>;
 }) {
   if (cards.length === 0) return <Empty>{note || "No company has a scored, explainable signal in this window."}</Empty>;
   return (
@@ -288,6 +292,7 @@ export function CompanyRows({
                   </Link>
                   <span className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-ink-3">{c.kind_label}</span>
                   {c.is_demo && <DemoBadge note={c.data_note} />}
+                  {c.entity_type === "company" && portfolio?.has(c.slug) && <PortfolioBadge slug={c.slug} />}
                   {c.entity_type === "company" && diligence?.has(c.slug) && (
                     <Link
                       href={`/diligence/${encodeURIComponent(c.slug)}`}

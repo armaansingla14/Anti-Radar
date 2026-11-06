@@ -54,6 +54,20 @@ import type {
   ReviewTargetType,
 } from "./types-diligence.ts";
 import type { AgentsOverview, CaseOut, EvaluationOut, FailureOut, FailureReviewRequest } from "./types-agents.ts";
+import type {
+  BriefArchiveItem,
+  CompsMap,
+  EventDetail,
+  EventList,
+  PortfolioBrief,
+  PortfolioCompany,
+  PortfolioIndexItem,
+  PortfolioReviewRequest,
+  PQuestion,
+  Pulse,
+  QuestionStatusRequest,
+  ReviewInfo,
+} from "./types-portfolio.ts";
 import { legacyFeedbackLabel } from "./labels.ts";
 import { serverFetch } from "./dataSource.ts";
 import { requestCookies, resolveBackend, rethrowNextInternal } from "./session.ts";
@@ -221,6 +235,31 @@ export const postDiligenceRun = (company: string) => post<DiligenceStatus>(`/dil
 /** Record a human review decision (admin-gated; refused on the verified snapshot). */
 export const postReview = (req: ReviewRequest) => post<Review>("/reviews", req);
 export const getReviews = (params?: { target_type?: ReviewTargetType; target_id?: string; limit?: number }) => get<Review[]>("/reviews", params);
+
+// ── Portfolio Pulse ──────────────────────────────────────────────────────────
+
+/** Needs Attention, material events, movers, since-last-review, the noise funnel and monitoring. */
+export const getPortfolio = () => get<Pulse>("/portfolio");
+/** Publicly disclosed portfolio companies (one fetch per page for PORTFOLIO badges). */
+export const getPortfolioCompanies = () => get<PortfolioIndexItem[]>("/portfolio/companies");
+export const getPortfolioCompany = (company: string) => get<PortfolioCompany>(`/portfolio/${enc(company)}`);
+export const getPortfolioEvents = (params?: {
+  type?: string;
+  materiality?: string;
+  company?: string;
+  relation?: string;
+  offset?: number;
+  limit?: number;
+}) => get<EventList>("/portfolio/events", params);
+export const getPortfolioEvent = (id: string) => get<EventDetail>(`/portfolio/events/${enc(id)}`);
+export const getPortfolioComps = () => get<CompsMap[]>("/portfolio/comps");
+export const getPortfolioCompsFor = (company: string) => get<CompsMap>(`/portfolio/comps/${enc(company)}`);
+export const getPortfolioBrief = (day?: string) => get<PortfolioBrief>(day ? `/portfolio/brief/day/${enc(day)}` : "/portfolio/brief");
+export const getPortfolioBriefArchive = () => get<BriefArchiveItem[]>("/portfolio/brief/archive");
+/** Human review of a portfolio company or one of its events (admin-gated; refused on the verified snapshot). */
+export const postPortfolioReview = (company: string, req: PortfolioReviewRequest) => post<ReviewInfo>(`/portfolio/${enc(company)}/review`, req);
+/** Open / answered / dismissed for a portfolio question (admin-gated; refused on the verified snapshot). */
+export const postPortfolioQuestion = (id: string, req: QuestionStatusRequest) => post<PQuestion>(`/portfolio/questions/${enc(id)}`, req);
 
 // ── Agent evaluation control plane ───────────────────────────────────────────
 

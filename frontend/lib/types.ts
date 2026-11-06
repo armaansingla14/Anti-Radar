@@ -154,7 +154,8 @@ export interface TimeSeries {
 
 // ── Entities ─────────────────────────────────────────────────────────────────
 
-/** Source families tracked for data age (community = Hacker News, social = X). */
+/** Source families tracked for data age (community = Hacker News, social = X). Portfolio payloads may also carry
+ * "commercial" (USAspending awards), labelled in lib/labels.ts DATA_AGE_FAMILIES. */
 export type SourceFamily = "github" | "research" | "hiring" | "web" | "community" | "social";
 
 /** How fresh an entity's data is. Cards carry `updated_at` only; details fill every field. */

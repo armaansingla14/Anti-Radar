@@ -17,6 +17,7 @@ export const PROXY_READ_SECTIONS: ReadonlySet<string> = new Set([
   "companies", // load-more, palette preview, /demo, /demo/diligence
   "diligence", // /demo/diligence pre-flight; diligence/{company}/run (write)
   "founders", // load-more, palette preview
+  "portfolio", // /demo/portfolio tour pre-flight (pulse, company, events); portfolio/{company}/review, portfolio/questions/{id} (writes)
   "formation", // score anatomy drawer, /demo
   "meet", // /demo; meet/refresh (write)
   "reports", // report viewer, markdown download, /demo
@@ -35,6 +36,7 @@ export const PROXY_WRITE_SECTIONS: ReadonlySet<string> = new Set([
   "ingest",
   "meet",
   "meeting-brief",
+  "portfolio", // portfolio/{company}/review, portfolio/questions/{id} (human portfolio reviews)
   "reviews", // human review decisions on diligence claims / underwriting / reports
   "watchlist",
 ]);

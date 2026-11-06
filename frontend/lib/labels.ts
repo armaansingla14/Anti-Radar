@@ -221,6 +221,8 @@ export const DATA_AGE_FAMILIES: { key: string; label: string }[] = [
   { key: "hiring", label: "Hiring" },
   { key: "web", label: "Web" },
   { key: "community", label: "HN" },
+  // Public federal awards (USAspending.gov), collected for portfolio companies and their comps only.
+  { key: "commercial", label: "USAspending" },
   { key: "social", label: "X" },
 ];
 

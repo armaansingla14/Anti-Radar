@@ -89,7 +89,7 @@ async function main() {
     fs.mkdirSync(RECORDING, { recursive: true });
   }
 
-  const [companies, people, formation, reports, archive, meet, diligence, agentFailures] = await Promise.all([
+  const [companies, people, formation, reports, archive, meet, diligence, agentFailures, portfolioIndex, portfolioEvents, portfolioBriefs, portfolioComps] = await Promise.all([
     all("/companies"),
     all("/founders"),
     api("/formation"),
@@ -98,6 +98,10 @@ async function main() {
     api("/meet?week=current"),
     api("/diligence").catch(() => ({ workspaces: [], candidates: [] })),
     api("/agents/failures").catch(() => []),
+    api("/portfolio/companies").catch(() => []),
+    all("/portfolio/events").catch(() => []), // every class: noise events are linked from the "include noise" filter
+    api("/portfolio/brief/archive").catch(() => []),
+    api("/portfolio/comps").catch(() => []),
   ]);
   // Technical diligence: every workspace, every claim page, and the company-page tabs — only for companies with a run
   // (the default company page, with its diligence status strip, is rendered for every company below).
@@ -105,7 +109,7 @@ async function main() {
   const claimCounts = await Promise.all(
     workspaces.map((w) => api(`/diligence/${encodeURIComponent(w.company.slug)}`).then((d) => (d.claims ?? []).map((c) => c.ordinal)).catch(() => [])),
   );
-  const COMPANY_TABS = ["why-now", "diligence", "relationships", "reports"];
+  const COMPANY_TABS = ["radar", "diligence", "relationships", "reports"]; // ?tab=why-now is an alias of radar
   const diligencePages = workspaces.flatMap((w, i) => [
     `/diligence/${w.company.slug}`,
     ...claimCounts[i].map((n) => `/diligence/${w.company.slug}/claims/${n}`),
@@ -121,9 +125,27 @@ async function main() {
     ...uniq(failureList.map((f) => f.agent)).map((a) => `/agents/failures?agent=${encodeURIComponent(a)}`),
     ...failureList.map((f) => `/agents/failures/${String(f.number).padStart(4, "0")}`),
   ];
+  // Portfolio Pulse: pulse, brief (+ archive), comps, events (+ every filter link the page renders), each portfolio
+  // company's view and its company-page tabs, every event page. Mirrors components/portfolio/logic.ts eventFilterLinks.
+  const pSlugs = (Array.isArray(portfolioIndex) ? portfolioIndex : []).map((i) => i.company.slug);
+  const pEvents = Array.isArray(portfolioEvents) ? portfolioEvents : [];
+  const EVENT_TYPES = ["PRODUCT", "TECHNICAL", "TALENT", "COMMERCIAL", "FINANCING", "REGULATORY", "RISK", "STRATEGIC"];
+  const portfolioPages = pSlugs.length
+    ? [
+        "/portfolio", "/portfolio/brief", "/portfolio/comps", "/portfolio/events",
+        ...["MATERIAL", "WATCH", "NOISE", "ALL"].map((m) => `/portfolio/events?materiality=${m}`),
+        ...EVENT_TYPES.map((t) => `/portfolio/events?type=${t}`),
+        ...["SELF", "COMPETITOR"].map((r) => `/portfolio/events?relation=${r}`),
+        ...pSlugs.map((s) => `/portfolio/events?company=${s}`),
+        ...(Array.isArray(portfolioBriefs) ? portfolioBriefs : []).map((b) => `/portfolio/brief/${b.date}`),
+        ...pSlugs.flatMap((s) => [`/portfolio/${s}`, ...["radar", "portfolio", "comps"].map((t) => `/companies/${s}?tab=${t}`)]),
+        ...pEvents.map((e) => `/portfolio/events/${e.id}`),
+      ]
+    : [];
   const candidates = ["high", "emerging", "early"].flatMap((t) => formation[t] ?? []);
   console.log(`  ${companies.length} companies, ${people.length} people, ${candidates.length} formation candidates, ${reports.length} reports`);
   console.log(`  ${workspaces.length} diligence workspaces (${diligencePages.length} pages), ${failureList.length} agent failures`);
+  console.log(`  ${pSlugs.length} portfolio companies, ${pEvents.length} portfolio events (${portfolioPages.length} pages)`);
 
   const pages = [
     "/", "/?new=today", "/?new=week", "/formation", "/meet", "/meet?week=current", "/founders", "/companies", "/thesis",
@@ -131,6 +153,7 @@ async function main() {
     "/changes", "/diligence", "/demo/diligence",
     ...diligencePages,
     ...agentPages,
+    ...portfolioPages,
     ...["high", "emerging", "early"].map((t) => `/formation?tier=${t}`),
     ...THEMES.map((t) => `/formation?theme=${t}`),
     ...COMPANY_SORTS.map((s) => `/companies?sort=${s}`),
@@ -159,6 +182,10 @@ async function main() {
     // /demo/diligence pre-flight (the most recent workspace, its company, where it shows in Radar, the agents' audit trail).
     "/diligence", "/changes", "/agents", "/agents/failures", "/agents/cases",
     ...workspaces.flatMap((w) => [`/diligence/${w.company.slug}`, `/companies/${w.company.slug}`]),
+    // /demo/portfolio tour pre-flight (Pulse, the portfolio index, material events, each portfolio view, the brief).
+    ...(pSlugs.length
+      ? ["/portfolio", "/portfolio/companies", "/portfolio/events?materiality=MATERIAL", "/portfolio/brief", "/portfolio/comps", ...pSlugs.map((s) => `/portfolio/${s}`)]
+      : []),
     ...Array.from({ length: Math.ceil(companies.length / COMPANY_PAGE) }, (_, i) => `/companies?limit=${COMPANY_PAGE}&offset=${(i + 1) * COMPANY_PAGE}`),
     ...Array.from({ length: Math.ceil(people.length / FOUNDER_PAGE) }, (_, i) => `/founders?limit=${FOUNDER_PAGE}&offset=${(i + 1) * FOUNDER_PAGE}`),
   ].map((p) => `/api/proxy${p}`);
@@ -223,7 +250,15 @@ async function main() {
       "(backend/radar/demo/snapshot plus the dated updates in snapshot_updates/). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
     counts: {
       companies: companies.length, people: people.length, formation_candidates: candidates.length, reports: reports.length,
-      diligence_workspaces: workspaces.length, agent_failures: failureList.length, responses: files,
+      diligence_workspaces: workspaces.length, agent_failures: failureList.length,
+      portfolio_companies: pSlugs.length,
+      portfolio_comps: new Set((Array.isArray(portfolioComps) ? portfolioComps : []).flatMap((m) => [...m.direct, ...m.emerging, ...m.adjacent].map((c) => c.company.slug))).size,
+      portfolio_events: pEvents.length,
+      portfolio_material: pEvents.filter((e) => e.materiality === "MATERIAL").length,
+      portfolio_watch: pEvents.filter((e) => e.materiality === "WATCH").length,
+      portfolio_noise: pEvents.filter((e) => e.materiality === "NOISE").length,
+      portfolio_briefs: Array.isArray(portfolioBriefs) ? portfolioBriefs.length : 0,
+      responses: files,
     },
   };
   fs.writeFileSync(path.join(OUT, "meta.json"), JSON.stringify(meta, null, 2) + "\n");

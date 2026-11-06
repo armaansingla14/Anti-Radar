@@ -57,7 +57,7 @@ describe("navigation", () => {
   it("orders the primary nav: discover, meet, diligence, agents, then indexes", () => {
     assert.deepEqual(
       NAV_PRIMARY.map((n) => n.label.toUpperCase()),
-      ["RADAR", "FORMATION", "MEET", "DILIGENCE", "AGENTS", "FOUNDERS", "COMPANIES", "THESIS", "WATCHLIST", "SEARCH"],
+      ["RADAR", "FORMATION", "MEET", "DILIGENCE", "PORTFOLIO", "AGENTS", "FOUNDERS", "COMPANIES", "THESIS", "WATCHLIST", "SEARCH"],
     );
   });
 

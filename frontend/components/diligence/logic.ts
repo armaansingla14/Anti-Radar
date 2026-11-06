@@ -306,19 +306,35 @@ export function workspaceMap(index: DiligenceIndex | null | undefined): Map<stri
 
 // ── Company-page tabs ────────────────────────────────────────────────────────
 
-export type CompanyTab = "overview" | "why-now" | "diligence" | "relationships" | "reports";
+export type CompanyTab = "overview" | "radar" | "diligence" | "portfolio" | "comps" | "relationships" | "reports";
 
 export const COMPANY_TABS: { key: CompanyTab; label: string }[] = [
   { key: "overview", label: "Overview" },
-  { key: "why-now", label: "Why now" },
+  { key: "radar", label: "Radar" },
   { key: "diligence", label: "Diligence" },
+  { key: "portfolio", label: "Portfolio" },
+  { key: "comps", label: "Comps" },
   { key: "relationships", label: "Relationships" },
   { key: "reports", label: "Reports" },
 ];
 
+/** Old tab names that still resolve (shared links): WHY NOW became RADAR. */
+const TAB_ALIASES: Record<string, CompanyTab> = { "why-now": "radar", whynow: "radar" };
+
 export function parseTab(v: string | string[] | undefined | null): CompanyTab {
-  const s = (Array.isArray(v) ? v[0] : v)?.toLowerCase().trim().replace(/_/g, "-");
+  const s = (Array.isArray(v) ? v[0] : v)?.toLowerCase().trim().replace(/_/g, "-") ?? "";
+  if (s in TAB_ALIASES) return TAB_ALIASES[s];
   return COMPANY_TABS.some((t) => t.key === s) ? (s as CompanyTab) : "overview";
+}
+
+/** PORTFOLIO and COMPS appear only for a company with a public portfolio position (or comps). */
+export function visibleTabs(opts: { portfolio?: boolean; comps?: boolean } = {}): { key: CompanyTab; label: string }[] {
+  return COMPANY_TABS.filter((t) => (t.key === "portfolio" ? opts.portfolio : t.key === "comps" ? opts.comps : true));
+}
+
+/** A requested tab the company does not have (PORTFOLIO on a non-portfolio company) falls back to OVERVIEW. */
+export function effectiveTab(tab: CompanyTab, opts: { portfolio?: boolean; comps?: boolean } = {}): CompanyTab {
+  return visibleTabs(opts).some((t) => t.key === tab) ? tab : "overview";
 }
 
 export function tabHref(slug: string, tab: CompanyTab): string {
@@ -327,8 +343,8 @@ export function tabHref(slug: string, tab: CompanyTab): string {
 }
 
 /** Section ids each company tab shows (OVERVIEW shows everything). */
-export const TAB_SECTIONS: Record<Exclude<CompanyTab, "overview" | "diligence">, string[]> = {
-  "why-now": ["why-now", "what-changed", "signals", "timeline"],
+export const TAB_SECTIONS: Record<Exclude<CompanyTab, "overview" | "diligence" | "portfolio" | "comps">, string[]> = {
+  radar: ["why-now", "what-changed", "signals", "timeline"],
   relationships: ["team", "team-graph", "repositories", "research"],
   reports: ["reports"],
 };

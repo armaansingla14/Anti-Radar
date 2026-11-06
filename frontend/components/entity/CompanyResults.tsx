@@ -6,14 +6,14 @@ import type { CompanySummary } from "@/lib/types";
 import { LoadMore } from "./LoadMore";
 
 /** Company table with offset pagination over GET /api/companies. */
-export function CompanyResults({ initial, query, pageSize }: { initial: CompanySummary[]; query: QueryParams; pageSize: number }) {
+export function CompanyResults({ initial, query, pageSize, portfolio }: { initial: CompanySummary[]; query: QueryParams; pageSize: number; portfolio?: string[] }) {
   return (
     <LoadMore
       initial={initial}
       query={query}
       pageSize={pageSize}
       fetchPage={(p) => getCompanies(p)}
-      render={(items) => <CompanyTable companies={items} caption="Companies on the radar" />}
+      render={(items) => <CompanyTable companies={items} caption="Companies on the radar" portfolio={portfolio} />}
       noun="companies"
     />
   );

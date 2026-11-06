@@ -7,7 +7,9 @@ import { composeHomeFallback, homeStatusLine, parseWindow } from "@/components/f
 import { longDate } from "@/components/feed/prose";
 import { HomeSince } from "@/components/changes/HomeSince";
 import { ApiError, getChanges, getFormation, getHome, getMeet, getRadar } from "@/lib/api";
-import { loadDiligenceIndex } from "@/components/entity/data";
+import Link from "next/link";
+import { loadDiligenceIndex, loadPortfolioIndex } from "@/components/entity/data";
+import { needsAttentionCount, portfolioSlugs } from "@/components/portfolio/logic";
 import { workspaceMap } from "@/components/diligence/logic";
 import type { HomeFeed, HomeWindow } from "@/lib/types";
 
@@ -33,8 +35,11 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   // Since-last-snapshot strip: optional context, never fails the page (absent on single-snapshot data).
   const changesP = getChanges().catch(() => null);
   const diligenceP = loadDiligenceIndex(); // "Open diligence" links: one fetch for every row
+  const portfolioP = loadPortfolioIndex(); // PORTFOLIO badges + the Portfolio Pulse link: one fetch
   const { home, composed } = await loadHome(w);
-  const [changes, diligenceIndex] = await Promise.all([changesP, diligenceP]);
+  const [changes, diligenceIndex, portfolioIndex] = await Promise.all([changesP, diligenceP, portfolioP]);
+  const portfolio = portfolioSlugs(portfolioIndex);
+  const attention = needsAttentionCount(portfolioIndex);
   const diligence = new Set(workspaceMap(diligenceIndex).keys());
   const s = home.summary;
   const now = displayNow();
@@ -65,6 +70,11 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
           {s.is_snapshot && <span aria-hidden className="mr-2 inline-block size-[6px] translate-y-[-1px] bg-accent" />}
           {status}
           {composed && <span className="ml-3 normal-case tracking-normal text-ink-3">· composed from radar, formation and meet feeds</span>}
+          {portfolioIndex && portfolioIndex.length > 0 && (
+            <Link href="/portfolio" className="ml-4 text-ink transition-colors hover:text-accent" data-demo="home-portfolio-link">
+              Portfolio Pulse{attention > 0 ? ` · ${attention} need attention` : ""} →
+            </Link>
+          )}
         </p>
       </header>
 
@@ -99,7 +109,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
           href={topRanked ? "/companies" : "/companies?sort=delta"}
           hrefLabel="All companies"
         >
-          <CompanyRows cards={home.companies} note={home.companies_note} diligence={diligence} />
+          <CompanyRows cards={home.companies} note={home.companies_note} diligence={diligence} portfolio={portfolio} />
         </HomeSection>
         <HomeSection id="formations" title="Possible formations" count={s.possible_formations} href="/formation" hrefLabel="Formation radar">
           <FormationRows cards={home.formations} stacked />

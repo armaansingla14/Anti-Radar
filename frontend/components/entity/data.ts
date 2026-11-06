@@ -1,6 +1,26 @@
 import "server-only";
 import { cache } from "react";
-import { getCompany, getDiligence, getDiligenceIndex, getDiligenceStatus, getFormation, getFounder, getGraph, getReport, getStatus, orNull } from "@/lib/api";
+import {
+  getCompany,
+  getDiligence,
+  getDiligenceIndex,
+  getDiligenceStatus,
+  getFormation,
+  getFounder,
+  getGraph,
+  getPortfolio,
+  getPortfolioBrief,
+  getPortfolioBriefArchive,
+  getPortfolioCompanies,
+  getPortfolioCompany,
+  getPortfolioComps,
+  getPortfolioCompsFor,
+  getPortfolioEvent,
+  getReport,
+  getStatus,
+  orNull,
+} from "@/lib/api";
+import type { BriefArchiveItem, CompsMap, PortfolioIndexItem } from "@/lib/types-portfolio";
 import type { DiligenceIndex, DiligenceStatus } from "@/lib/types-diligence";
 import type { FormationFeed, GraphOut, SystemStatus } from "@/lib/types";
 
@@ -67,6 +87,49 @@ export const loadDiligenceIndex = cache(async (): Promise<DiligenceIndex | null>
 export const loadDiligenceStatus = cache(async (slug: string): Promise<DiligenceStatus | null> => {
   try {
     return await getDiligenceStatus(slug);
+  } catch {
+    return null;
+  }
+});
+
+// ── Portfolio Pulse ──────────────────────────────────────────────────────────
+
+/** The Pulse page payload (throws: the page's error boundary explains an outage). */
+export const loadPortfolio = cache(() => getPortfolio());
+/** Portfolio view of one company (null when it is not a portfolio company). */
+export const loadPortfolioCompany = cache((slug: string) => orNull(getPortfolioCompany(slug)));
+/** One material event (null when unknown). */
+export const loadPortfolioEvent = cache((id: string) => orNull(getPortfolioEvent(id)));
+/** Competitive map for one portfolio company (null when unknown). */
+export const loadPortfolioCompsFor = cache((slug: string) => orNull(getPortfolioCompsFor(slug)));
+/** Stored portfolio brief: the latest, or one day's (null when none was stored). */
+export const loadPortfolioBrief = cache((day?: string) => orNull(getPortfolioBrief(day)));
+
+/**
+ * Portfolio companies — optional context for PORTFOLIO badges, company tabs and the home link: fetched once per
+ * request, never fails the page (null on an older backend or snapshot without portfolio data).
+ */
+export const loadPortfolioIndex = cache(async (): Promise<PortfolioIndexItem[] | null> => {
+  try {
+    return await getPortfolioCompanies();
+  } catch {
+    return null;
+  }
+});
+
+/** Every competitive map — optional context ("tracked as a comp of …", "via" lines); null when unavailable. */
+export const loadPortfolioComps = cache(async (): Promise<CompsMap[] | null> => {
+  try {
+    return await getPortfolioComps();
+  } catch {
+    return null;
+  }
+});
+
+/** Stored portfolio brief editions — optional context; null when unavailable. */
+export const loadPortfolioBriefArchive = cache(async (): Promise<BriefArchiveItem[] | null> => {
+  try {
+    return await getPortfolioBriefArchive();
   } catch {
     return null;
   }
