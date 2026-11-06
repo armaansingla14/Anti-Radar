@@ -527,6 +527,106 @@ DOCUMENTED: list[dict[str, Any]] = [
         "regression_case": None,
         "regression_test": 'tests/unit/test_portfolio_realdata_regressions.py::test_leadership_named_is_talent_not_integration',
     },
+    {
+        "source_ref": "Hand audit of the live diligence run on Modal (Nov 6, 2026) #1", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "ECONOMICS claims: 'GPU Tasks Nvidia B300 $ 0.001972 0 .', 'Nvidia RTX PRO 6000 $ 0.000842 0 .', "
+                      "'This job will cost $0.02365/day for the CPU…' and 'On Modal, a 3x multiplier is applied to the "
+                      "CPU and Memory list price…' (modal.com/pricing)",
+        "category": "SOURCE_QUALITY", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Four of twelve ledger slots went to price-list rows, a worked cost example and a billing "
+                            "rule. None is a claim needing evidence: the rows and the rule are published facts, the "
+                            "example is arithmetic.",
+        "resolution": "Table/price-list fragments (a third or more of the tokens carry no letters) and worked examples "
+                      "('will cost $', 'adding up to', 'n × $m') are not claims; ECONOMICS needs a value assertion "
+                      "(cheaper, save, less than, versus) when it states a billing rule; a pricing page yields at most "
+                      "one ECONOMICS claim, and its short plan bullets none.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_price_tables_worked_examples_and_pricing_policy_are_not_claims",
+    },
+    {
+        "source_ref": "Hand audit of the live diligence run on Modal (Nov 6, 2026) #2", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "TECHNICAL_CAPABILITY claims: 'This model is an updated checkpoint of DeepSeek V4.1 Flash…', "
+                      "'DeepSeek V4.1 Flash 1017 is now available on Shared Endpoints', 'NVIDIA Nemotron 3.5 Super VL "
+                      "is now available on Modal' (modal.com/changelog)",
+        "category": "ATTRIBUTION_ERROR", "severity": "HIGH", "status": "FIXED",
+        "evidence_summary": "Model-catalog entries describe other vendors' models (DeepSeek, NVIDIA). They were "
+                            "attributed to Modal as its own technical claims and two were PARTIALLY SUPPORTED by "
+                            "evidence about those models.",
+        "resolution": "Catalog lines ('X is now available on Y') are not claims; a sentence whose subject is a "
+                      "third-party model family, a vendor's possessive or a vendor product (no supports-verb), or "
+                      "model-card text (parameter counts, active per token, context window) is skipped unless the "
+                      "company, 'we' or 'our' appears in its first 8 words.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_third_party_model_catalog_entries_are_not_company_claims",
+    },
+    {
+        "source_ref": "Hand audit of the live diligence run on Modal (Nov 6, 2026) #3", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "'Modal Infrastructure Infrastructure rebuilt for AI, from the container runtime and storage to a "
+                      "multi-cloud capacity pool' typed TECHNICAL_CAPABILITY",
+        "category": "TOOL_FAILURE", "severity": "LOW", "status": "FIXED",
+        "evidence_summary": "A mega-menu card renders its title and description in one block, so the label was glued "
+                            "to the sentence; 'multi-cloud' then typed a description of the stack as a capability claim.",
+        "resolution": "A short Title-Case label whose last word is immediately repeated is cut off (the quote starts "
+                      "at the repeat, still verbatim); 'multi-cloud' without a supports-verb in a sentence describing "
+                      "the stack is ARCHITECTURE; architecture claims rank higher for each named component; "
+                      "Title-Case UI labels with no figure ('Audit Logs Action Actor Targets') are not claims.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_navigation_label_is_not_glued_to_the_sentence_and_the_claim_is_architecture",
+    },
+    {
+        "source_ref": "Hand audit of the live diligence run on Modal (Nov 6, 2026) #4", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "'Modal powers inference for the open-weight models that Snorkel is evaluating…' typed OPEN_SOURCE; "
+                      "'For example, when we wanted to train Qwen3.5-9B on long-horizon software tasks…' a MARKET claim",
+        "category": "SOURCE_QUALITY", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "'open-weight' (other people's models) made a customer reference an open-source claim, and "
+                            "a first-person illustration from a blog post took a ledger slot as a market claim.",
+        "resolution": "A named organisation using the product ('… that Snorkel is evaluating') is CUSTOMER_TRACTION; "
+                      "other people's open source ('open source frameworks like…', 'open-weight models', 'the "
+                      "open-source ecosystem') is not OPEN_SOURCE; first-person anecdotes are skipped; on blog, "
+                      "changelog, about and customer pages a claim must name the company or speak as 'we'.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_customer_reference_is_traction_and_blog_anecdotes_are_skipped",
+    },
+    {
+        "source_ref": "Hand audit of the live diligence run on Modal (Nov 6, 2026) #5", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "No PERFORMANCE claim for 'NVIDIA Vera CPUs double throughput for Modal Sandboxes', the "
+                      "post that made Portfolio Pulse suggest RUN DILIGENCE",
+        "category": "TOOL_FAILURE", "severity": "HIGH", "status": "FIXED",
+        "evidence_summary": "The crawl follows homepage links only (8 pages, ≤2 per kind); the homepage does not link "
+                            "the post and modal.com/blog renders its post list client-side (925 characters of text), so "
+                            "the page that triggered diligence was never fetched. 'double throughput' also matched no "
+                            "performance cue.",
+        "resolution": "Portfolio → diligence handoff: run_diligence(seed_urls=…, event_id=…), CLI --seed-url / "
+                      "--from-event, API body {event_id} fetch the event's own-domain source URLs under the same "
+                      "guards, record a handoff trace entry and log 'diligence_requested'. 'double/twice/triple' are "
+                      "figures (2×/3×) for cues, merging, testability and pass criteria; a plan takes the baseline "
+                      "from any quote of the claim and uses task workloads for general-compute claims.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_event_seed_page_is_collected_on_the_company_domain_only",
+        "related_tests": ["tests/unit/test_diligence_realdata_modal.py::test_event_performance_claim_is_extracted_with_a_compute_test_plan",
+                          "tests/integration/test_diligence_handoff.py::test_run_from_event_seeds_its_urls_traces_the_handoff_and_logs_the_decision",
+                          "tests/integration/test_diligence_handoff.py::test_run_endpoint_accepts_an_event_of_that_company"],
+    },
+    {
+        "source_ref": "Hand audit of the live diligence run on Modal (Nov 6, 2026) #6", "agent": "DILIGENCE ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "'Today we're releasing Spindle, an open-source, Tinker-compatible training server…' VERIFIED by "
+                      "the MIT licence of modal-labs/modal-examples",
+        "category": "CITATION_MISMATCH", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Found re-auditing the ledger after fixes #1–#4. Any public OSI-licensed repository of the "
+                            "organisation verified any open-source claim, so a claim about a specific project was "
+                            "VERIFIED by an unrelated repository (Spindle's repository was not collected).",
+        "resolution": "A claim naming a project other than the company counts only that project's repository; with "
+                      "none collected it gets a gap and stays UNVERIFIED (R6). Open-source claims naming the same "
+                      "project are one ledger entry.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_open_source_claim_about_a_named_project_needs_that_projects_repository",
+    },
 ]
 
 _SEED_FIELDS = ("agent", "entity_ref", "claim_text", "category", "severity", "evidence_summary", "resolution",

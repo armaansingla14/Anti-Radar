@@ -20,7 +20,7 @@ from collections.abc import Iterable
 from pydantic import BaseModel, ConfigDict, Field
 
 from radar.diligence.taxonomy import ClaimType, Publisher, Relation, Strength
-from radar.diligence.types import ArtifactDraft, ClaimDraft, evidence_item, norm, tokens
+from radar.diligence.types import ArtifactDraft, ClaimDraft, evidence_item, norm, proper_names, tokens
 from radar.diligence.vocab import find_terms
 from radar.llm.guard import SYSTEM_GUARD, detect_injection, wrap_source
 
@@ -33,6 +33,13 @@ DUPLICATE_JACCARD = 0.6
 SOURCE_KINDS = ("web_page", "readme", "doc", "hn_story")
 
 _N = r"\d+(?:[.,]\d+)?"
+# A named (capitalised) organisation doing something with the product: "… that Snorkel is evaluating".
+_CUSTOMER_REF = (r"\b(?:that|which|where|how)\s+(?-i:[A-Z])[\w&.-]+(?:\s+(?-i:[A-Z])[\w&.-]+)?\s+"
+                 r"(?:is\s+|are\s+|was\s+)?(?:evaluating|using|uses|runs|running|relies|builds|building|trains|training"
+                 r"|serves|serving|deploys|deploying|scaled|scales)\b")
+_CAP_VERB = (r"\b(?:supports?|supported|support for|compatible with|works with|runs? on|running on|integrates? with"
+             r"|deploy(?:s|ed)? (?:on|to)|available on|optimi[sz]ed for|native(?:ly)? (?:on|for)|out of the box)\b")
+_CAP_CLOUD = r"\bmulti[- ]cloud\b|\bany cloud\b|\bcloud[- ]agnostic\b"
 # Ordered: the first type whose cue matches wins.
 CUES: tuple[tuple[ClaimType, re.Pattern[str]], ...] = tuple(
     (t, re.compile(p, re.IGNORECASE)) for t, p in (
@@ -41,7 +48,15 @@ CUES: tuple[tuple[ClaimType, re.Pattern[str]], ...] = tuple(
          rf"|\b{_N}\s?%\s+(?:less|lower|faster|fewer|smaller|higher|more|reduction|improvement|cheaper|speed-?up)"
          r"|\bfaster than\b|\boutperform(?:s|ed|ing)?\b|\bstate[- ]of[- ]the[- ]art\b|\bSOTA\b"
          rf"|\b{_N}\s?(?:ms|tokens?/s(?:ec)?|tok/s|req(?:uests)?/s|QPS|GB of VRAM)\b"
-         rf"|\b(?:latency|throughput|tokens per second|time[- ]to[- ]first[- ]token|TTFT|VRAM|memory (?:usage|footprint))\b(?=.*\d)"),
+         rf"|\b(?:latency|throughput|tokens per second|time[- ]to[- ]first[- ]token|TTFT|VRAM|memory (?:usage|footprint))\b(?=.*\d)"
+         # "double(s) throughput", "up to double the task throughput", "a 2x increase on throughput", "faster (~10x …)"
+         r"|\b(?:doubles?|triples?|quadruples?|halves?)\s+(?:the\s+)?(?:\w+\s+)?(?:throughput|speed|performance|latency)\b"
+         r"|\bup to (?:double|twice|triple)\b"
+         rf"|\b{_N}\s?(?:x|×)\s+(?:increase|improvement|gain|boost|reduction|speed-?up)\b"
+         rf"|\bfaster\b[^.]{{0,60}}?~?{_N}\s?(?:x|×)(?![A-Za-z0-9])"),
+        # A named organisation using the product ("… that Snorkel is evaluating") is a customer reference, whatever
+        # else the sentence mentions (open-weight models, secure sandboxes).
+        (ClaimType.CUSTOMER_TRACTION, _CUSTOMER_REF),
         (ClaimType.SECURITY,
          r"\bSOC ?2\b|\bHIPAA\b|\bGDPR\b|\bISO ?27001\b|\bencrypt(?:ed|ion|s)?\b|\bzero[- ]trust\b|\bair[- ]gapped\b"
          r"|\bdata never leaves\b|\bon[- ]prem(?:ise|ises)?\b|\bself[- ]host(?:ed|able)?\b|\bSSO\b|\bRBAC\b"
@@ -60,12 +75,10 @@ CUES: tuple[tuple[ClaimType, re.Pattern[str]], ...] = tuple(
          r"|\bsav(?:e|es|ings)\b(?=[^.]{0,40}(?:\$|%|\bcosts?\b|\bmoney\b|\bspend|\bhours?\b|\btime\b))"
          r"|\bfree tier\b"),
         (ClaimType.SCALABILITY,
-         r"\bscal(?:e|es|able|ability|ing)\b|\bdistributed\b|\bmulti[- ]?(?:GPU|node)s?\b|\bthousands of\b"
+         r"\bconcurren(?:t|tly|cy)\b(?=.*(?:\d|\bmillions?\b))|\b(?:a|one) (?:million|billion)\b"
+         r"|\bscal(?:e|es|able|ability|ing)\b|\bdistributed\b|\bmulti[- ]?(?:GPU|node)s?\b|\bthousands of\b"
          r"|\bmillions? of\b|\bbillions? of\b|\bhorizontal(?:ly)?\b|\bclusters?\b|\btensor[- ]parallel"),
-        (ClaimType.TECHNICAL_CAPABILITY,
-         r"\b(?:supports?|supported|support for|compatible with|works with|runs? on|running on|integrates? with"
-         r"|deploy(?:s|ed)? (?:on|to)|available on|optimi[sz]ed for|native(?:ly)? (?:on|for)|out of the box)\b"
-         r"|\bmulti[- ]cloud\b|\bany cloud\b|\bcloud[- ]agnostic\b"),
+        (ClaimType.TECHNICAL_CAPABILITY, _CAP_VERB + "|" + _CAP_CLOUD),
         (ClaimType.MARKET,
          r"\b(?:fastest|leading|first|only|#1|number one|largest|best|most (?:popular|advanced|efficient|powerful))\b"
          r"|\bindustry[- ]leading\b|\bworld'?s\b"),
@@ -79,6 +92,9 @@ CUES: tuple[tuple[ClaimType, re.Pattern[str]], ...] = tuple(
          r"|battle[- ]tested|enterprise[- ]ready)\b"),
     )
 )
+
+_CAP_VERB_RE = re.compile(_CAP_VERB, re.IGNORECASE)
+_ARCH_RE = next(p for t, p in CUES if t == ClaimType.ARCHITECTURE)
 
 TYPE_WEIGHT: dict[str, float] = {
     ClaimType.PERFORMANCE: 3.0, ClaimType.TECHNICAL_CAPABILITY: 2.5, ClaimType.OPEN_SOURCE: 2.5,
@@ -96,10 +112,14 @@ _BOILERPLATE = re.compile(
 # UI / setup instructions ("Pick the build…", "Click Install") describe how to use the product, not what it claims.
 _INSTRUCTION = re.compile(r"^\W*(?:pick|click|select|choose|press|tap|open|enter|type|navigate|go to|copy|paste|"
                           r"download|scroll|drag|toggle|set|make sure|ensure you|note:?)\b", re.IGNORECASE)
-_QUANT = re.compile(rf"\b{_N}\s?(?:x|×|%|ms|k\b|m\b|b\b|\+|tokens|GB|TB|tok/s)|\$\s?\d", re.IGNORECASE)
+_QUANT = re.compile(rf"\b{_N}\s?(?:x|×|%|ms|k\b|m\b|b\b|\+|tokens|GB|TB|tok/s)|\$\s?\d|\b(?:double|twice|triple)\b",
+                    re.IGNORECASE)
 _MATURITY = re.compile(r"\bproduction[- ](?:ready|grade)\b|\bbattle[- ]tested\b|\benterprise[- ]ready\b", re.I)
 _FIGURE = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)\s?(x|×|%)(?![A-Za-z0-9])", re.IGNORECASE)
-_ROADMAP = re.compile(r"\b(?:coming soon|roadmap|will (?:soon )?(?:support|add|ship)|planned)\b", re.IGNORECASE)
+_COMPONENT = re.compile(r"\b(?:runtime|storage|scheduler|scheduling|file ?system|kernels?|compiler|control plane|image system"
+                        r"|hypervisor|microVMs?|gVisor|Firecracker|network stack|caching layer)\b", re.IGNORECASE)
+_ROADMAP = re.compile(r"\b(?:coming soon|roadmap|will (?:soon )?(?:support|add|ship)|planned"
+                      r"|(?:excited|plan(?:ning)?|going) to roll out)\b", re.IGNORECASE)
 
 # ── segmentation ─────────────────────────────────────────────────────────────
 
@@ -175,6 +195,25 @@ _NON_CLAIM_SECTION = re.compile(r"(?i)\b(acknowledg|credits?\b|thanks|thank you|
                                 r"contributors?\b|sponsors?\b|backers\b)")
 
 
+_WORD = re.compile(r"\S+")
+
+
+def nav_label_end(raw: str) -> int:
+    """Offset where real text starts after a navigation label glued onto it.
+
+    Mega-menus render a card's title and its description as one block: "Modal Infrastructure Infrastructure rebuilt
+    for AI, …". A short Title-Case label (≤ 4 words) whose last word is immediately repeated is a label, not part
+    of the sentence; the sentence starts at the repeat. Returns 0 when there is no such label."""
+    words = list(_WORD.finditer(raw[:160]))
+    for i in range(min(4, len(words) - 1)):
+        w, nxt = words[i].group(), words[i + 1].group().rstrip(",.:;")
+        if not (w[:1].isupper() and w.isalpha() and len(w) >= 3):
+            return 0
+        if w.lower() == nxt.lower():
+            return words[i + 1].start()
+    return 0
+
+
 def sentences(art: ArtifactDraft) -> list[tuple[int, str, str]]:
     """[(offset, raw quote, clean text)] for every candidate sentence in the artifact."""
     text = art.text or ""
@@ -191,10 +230,11 @@ def sentences(art: ArtifactDraft) -> list[tuple[int, str, str]]:
         if skipping:
             continue
         for s, e in _sentence_spans(text, ls, le):
-            raw = text[s:e].strip()
+            off = s + (len(text[s:e]) - len(text[s:e].lstrip()))
+            off += nav_label_end(text[off:e])  # "Modal Infrastructure Infrastructure rebuilt…" → "Infrastructure rebuilt…"
+            raw = text[off:e].strip()
             if not raw or len(raw) > 600:
                 continue
-            off = s + (len(text[s:e]) - len(text[s:e].lstrip()))
             clean = clean_inline(raw)
             if sum(ch.isalpha() for ch in clean) < 12:
                 continue
@@ -205,23 +245,135 @@ def sentences(art: ArtifactDraft) -> list[tuple[int, str, str]]:
 # ── classification ───────────────────────────────────────────────────────────
 
 
+# "open source frameworks like slime", "open-weight models that Snorkel is evaluating", "creators of popular
+# open-source projects": other people's open-source work, not the company's open-source status.
+_OSS_OF_OTHERS = re.compile(
+    r"\bopen[- ]?source[ds]?\s+(?:AI\s+|ML\s+)?(?:frameworks|projects|libraries|tools|ecosystem|community|models"
+    r"|LLMs|alternatives|contributions|code|datasets)\b"
+    r"|\bopen[- ]weights?(?:\s+or\s+[\w-]+)?\s+models\b|\busing open[- ]weights?\b", re.IGNORECASE)
+_OSS_RE = next(p for t, p in CUES if t == ClaimType.OPEN_SOURCE)
+
+
 def classify(text: str) -> ClaimType | None:
     for ctype, pat in CUES:
         if pat.search(text):
+            if ctype == ClaimType.OPEN_SOURCE and not _OSS_RE.search(_OSS_OF_OTHERS.sub(" ", text)):
+                continue
             if ctype == ClaimType.TECHNICAL_CAPABILITY and not (
                 find_terms(text, ("hardware", "os", "framework", "model", "cloud", "scale"))
                 or re.search(r"multi[- ]cloud|any cloud|cloud[- ]agnostic", text, re.I)
             ):
                 continue  # "supports" without a concrete target is not a capability claim
+            if ctype == ClaimType.TECHNICAL_CAPABILITY and not _CAP_VERB_RE.search(text) and _ARCH_RE.search(text):
+                # "Infrastructure rebuilt for AI, from the container runtime … to a multi-cloud capacity pool"
+                # says how it is built; "multi-cloud" alone is not a supports-X claim.
+                return ClaimType.ARCHITECTURE
             return ctype
     return None
 
 
-def materiality(clean: str, ctype: ClaimType, source_rank: int) -> float | None:
-    """Score a candidate (None = not material: vague, boilerplate, a question, or the wrong length)."""
+# ── not a company claim (hand audit of the live Modal run, Nov 6, 2026) ─────────
+
+# Third-party model families and vendors. A sentence *about* one of them (it is the subject, or a possessive
+# "NVIDIA's …") describes another company's product unless the company itself is the subject too.
+_MODEL_FAMILY = (r"DeepSeek|Qwen[\d.]*|Llama[- ]?[\d.]*|Gemma\s?\d*|Mistral|Mixtral|Nemotron|Kimi|GLM[- ]?[\d.]*|Phi-\d"
+                 r"|GPT-?[\d.]+o?|gpt-oss|Claude|Gemini|Grok|Falcon")
+_VENDOR = (r"OpenAI|Anthropic|Google|Meta|NVIDIA|Microsoft|Alibaba|Moonshot|Zhipu|Cohere|xAI|StepFun|Hugging ?Face|AMD"
+           r"|Intel|Reflection")
+_THIRD_PARTY_SUBJECT = re.compile(
+    rf"^(?:(?:the|this|a|an|new)\s+)?(?:(?:{_VENDOR})\s+)?(?:{_MODEL_FAMILY})\b|\b(?:{_VENDOR}|{_MODEL_FAMILY})['’]s\b")
+# "NVIDIA CUDA Compiler Driver nvcc" (a glossary heading): a vendor's product as the subject, with no claim that the
+# company supports or runs on it.
+_VENDOR_PRODUCT = re.compile(rf"^(?:(?:the|this|a|an|new)\s+)?(?:{_VENDOR})\s+(?-i:[A-Z])", re.IGNORECASE)
+# Model-card text: "This model is an updated checkpoint of …", "Beam has 501B total parameters, 23B active per token".
+_MODEL_CARD = re.compile(
+    r"^(?:this|the|it|a|an)\s+(?:[\w-]+\s+){0,2}?(?:model|checkpoint)\b(?!\s+(?:server|serving|registry|hub|gateway|library))"
+    r"|\b\d+(?:\.\d+)?\s?[BMT]\s+(?:total\s+|active\s+)?param(?:eter)?s?\b|\bactive (?:parameters )?per token\b"
+    r"|\b\d+[KM]?-token context(?: window)?\b|\bopen[- ]weights? (?:checkpoint|release) of\b", re.IGNORECASE)
+# A catalog line announces that something can now be used ("X is now available on Shared Endpoints").
+_CATALOG = re.compile(r"^.{0,120}?\b(?:is|are) now (?:available|live|supported|in (?:beta|preview|GA))\b"
+                      r"(?:\s+(?:on|in|via|through|as|for|to)\b[^.]{0,60})?\.?$", re.IGNORECASE)
+# A first-person story ("For example, when we wanted to train …") illustrates; it does not assert.
+_ANECDOTE = re.compile(
+    r"^(?:(?:for example|for instance|e\.g\.)[,:]?\s+)?(?:when|while|after|before|once|back when)\s+(?:we|I)\b"
+    r"|^(?:for example|for instance)[,:]?\s+(?:we|I)\b|^(?:last|earlier this) (?:week|month|year|quarter)\b"
+    r"|\bI (?:vividly )?remember\b|\bwe (?:wanted|tried|decided) to\b", re.IGNORECASE)
+# Price lists and worked cost examples are published facts or arithmetic, not claims needing evidence.
+_WORKED_EXAMPLE = re.compile(r"\b(?:will|would) cost (?:you )?(?:approximately |about |roughly |around )?\$"
+                             r"|\badd(?:s|ing) up to\b|\d\s*×\s*\$?\d", re.IGNORECASE)
+_BILLING = re.compile(r"\b(?:billed|charged|metered|invoiced)\b|\bmultiplier\b|\blist price\b|\bmonthly fee\b"
+                      r"|\bfree (?:credits?|compute)\b|\bcredits?\b|\bincludes? \$", re.IGNORECASE)
+_VALUE = re.compile(rf"\bsav(?:e|es|ed|ings)\b|\bcheaper\b|\bless (?:than|expensive)\b|\blower (?:costs?|prices?|bills?)\b"
+                    rf"|\bcost[- ]effective\b|\b{_N}\s?%\s+(?:lower|less|cheaper|savings?|off)\b|\bthan\b|\bversus\b"
+                    rf"|\bvs\.?\s|\bcompared (?:to|with)\b|\bfraction of\b", re.IGNORECASE)
+_FUNDING = re.compile(r"\braised\b[^.]*\$|\bSeries [A-F]\b|\b(?:funding|valuation)\b", re.IGNORECASE)
+
+
+def _fragment(clean: str) -> bool:
+    """A table row or price-list fragment: a third or more of its tokens carry no letters ("$ 0.000842 0 .")."""
+    toks = clean.split()
+    return bool(toks) and sum(not re.search(r"[A-Za-z]", t) for t in toks) / len(toks) >= 0.3
+
+
+def _own_subject(clean: str, company: Iterable[str]) -> bool:
+    head = " ".join(clean.split()[:8])
+    if re.search(r"\b(?:we|our|us)\b", head, re.IGNORECASE):
+        return True
+    return any(re.search(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])", head, re.IGNORECASE) for n in company if n)
+
+
+def company_names(name: str | None) -> tuple[str, ...]:
+    """Ways the company names itself: 'Unsloth AI' → ('Unsloth AI', 'Unsloth')."""
+    name = (name or "").strip()
+    if not name:
+        return ()
+    short = re.sub(r"(?i)[\s,]+(?:AI|Labs?|Inc\.?|Corp\.?|Technologies|Systems|HQ)$", "", name).strip()
+    return tuple(dict.fromkeys(n for n in (name, short) if len(n) >= 3))
+
+
+def _label(clean: str) -> bool:
+    """A UI or navigation label ("Audit Logs Action Actor Targets"): Title-Case words with at most one lowercase
+    word and no figure — a heading or a mock-up, not a sentence. ("New 3x Faster Training" states a figure.)"""
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'’-]*", clean) if len(w) >= 2]
+    title = sum(w[0].isupper() and w[1:].islower() for w in words)
+    return title >= 3 and sum(w.islower() for w in words) <= 1 and not _QUANT.search(clean)
+
+
+def not_a_claim(clean: str, ctype: ClaimType, company: Iterable[str] = ()) -> str | None:
+    """Why a classified sentence is still not the company's own material claim (None = it may be one)."""
+    company = tuple(company)
+    if _fragment(clean):
+        return "table or price-list fragment"
+    if _label(clean):
+        return "heading or UI label"
+    if _WORKED_EXAMPLE.search(clean):
+        return "worked cost example"
+    if _CATALOG.match(clean):
+        return "catalog availability line"
+    if _ANECDOTE.search(clean):
+        return "first-person anecdote"
+    if not _own_subject(clean, company) and (
+            _THIRD_PARTY_SUBJECT.search(clean) or _MODEL_CARD.search(clean)
+            or (_VENDOR_PRODUCT.search(clean) and not _CAP_VERB_RE.search(clean))):
+        return "describes a third-party model or product"
+    if ctype == ClaimType.CUSTOMER_TRACTION and not re.search(r"\d|\b(?:millions?|billions?|thousands?|hundreds?)\b",
+                                                             clean, re.I) \
+            and not [n for n in proper_names(clean) if n.lower() not in {c.lower() for c in company}]:
+        return "vague traction (no figure and no named customer)"
+    if ctype == ClaimType.ECONOMICS:
+        if _FUNDING.search(clean):
+            return "financing, not a technical claim"
+        if _BILLING.search(clean) and not _VALUE.search(clean):
+            return "pricing policy (a published fact)"
+    return None
+
+
+def materiality(clean: str, ctype: ClaimType, source_rank: int, *, company: Iterable[str] = ()) -> float | None:
+    """Score a candidate (None = not material: vague, boilerplate, a question, the wrong length, or not the
+    company's own claim — see :func:`not_a_claim`)."""
     words = clean.split()
     if not (MIN_WORDS <= len(words) <= MAX_WORDS) or clean.rstrip().endswith("?") or _BOILERPLATE.search(clean) \
-            or _INSTRUCTION.match(clean):
+            or _INSTRUCTION.match(clean) or not_a_claim(clean, ctype, company):
         return None
     terms = find_terms(clean)
     has_num = bool(re.search(r"\d", clean))
@@ -232,6 +384,9 @@ def materiality(clean: str, ctype: ClaimType, source_rank: int) -> float | None:
     if _QUANT.search(clean):
         score += 1.5
     score += 0.5 * min(len(terms), 3)
+    if ctype == ClaimType.ARCHITECTURE:
+        # Named components are what make an architecture claim concrete (vocabulary terms rarely cover them).
+        score += 0.5 * min(len(set(m.lower() for m in _COMPONENT.findall(clean))), 2)
     score += max(0.0, 0.6 - 0.15 * source_rank)
     if _MATURITY.search(clean):
         score += 1.0  # maturity claims are what production buyers rely on
@@ -244,6 +399,8 @@ def source_rank(art: ArtifactDraft) -> int:
     """Where a claim is most authoritative: homepage > benchmark/docs pages > other pages > README > docs > HN."""
     if art.kind == "web_page":
         kind = (art.data or {}).get("page_kind")
+        if (art.data or {}).get("seed"):
+            return 1  # the page a portfolio event pointed at is what the run was started to examine
         return 0 if kind == "home" else 1 if kind in ("benchmarks", "docs", "product") else 2
     return {"readme": 3, "doc": 4, "hn_story": 5}.get(art.kind, 6)
 
@@ -253,9 +410,15 @@ def _company_sources(artifacts: Iterable[ArtifactDraft]) -> list[ArtifactDraft]:
     return sorted(arts, key=lambda a: (source_rank(a), a.key))
 
 
+_WORD_FIGURE = {"double": "2x", "doubles": "2x", "twice": "2x", "triple": "3x", "triples": "3x"}
+
+
 def figures(text: str) -> frozenset[str]:
-    """Quantitative figures ('3x', '60%') — two claims of one type stating the same figures are one claim."""
-    return frozenset(f"{float(n):g}{'x' if u.lower() in ('x', '×') else '%'}" for n, u in _FIGURE.findall(text))
+    """Quantitative figures ('3x', '60%', 'double' = 2x) — two claims of one type stating the same figures are one
+    claim."""
+    out = {f"{float(n):g}{'x' if u.lower() in ('x', '×') else '%'}" for n, u in _FIGURE.findall(text)}
+    out |= {_WORD_FIGURE[w.lower()] for w in re.findall(r"\b(?:double|doubles|twice|triple|triples)\b", text, re.I)}
+    return frozenset(out)
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -280,6 +443,8 @@ def _same_claim(c: ClaimDraft, k: ClaimDraft, toks: set[str], ktoks: set[str]) -
     figs = figures(c.text)
     if figs and figures(k.text) == figs:
         return True
+    if c.claim_type == ClaimType.OPEN_SOURCE and set(proper_names(c.text)) & set(proper_names(k.text)):
+        return True  # "Spindle is open source" said three ways is one claim about Spindle
     terms = {t.name for t in find_terms(c.text)}
     if len(terms) >= 2 and terms == {t.name for t in find_terms(k.text)}:
         return True
@@ -291,24 +456,49 @@ def _company_ev(art: ArtifactDraft, quote: str) -> dict:
                          note="The company states this.", quote=quote)
 
 
-def candidates(artifacts: Iterable[ArtifactDraft]) -> list[ClaimDraft]:
+MAX_ECONOMICS_PER_PRICING_PAGE = 1
+NARRATIVE_PAGES = frozenset({"blog", "changelog", "about", "customers"})
+PLAN_BULLET_WORDS = 8
+
+
+def _self_reference(clean: str, company: Iterable[str]) -> bool:
+    if re.search(r"\b(?:we|we[’']\w+|our|us)\b", clean, re.IGNORECASE):
+        return True
+    return any(re.search(rf"(?<![A-Za-z0-9]){re.escape(n)}(?![A-Za-z0-9])", clean, re.IGNORECASE) for n in company if n)
+
+
+def candidates(artifacts: Iterable[ArtifactDraft], *, company: str | None = None) -> list[ClaimDraft]:
+    names = company_names(company)
     out: list[ClaimDraft] = []
     for art in _company_sources(artifacts):
         rank = source_rank(art)
+        found: list[ClaimDraft] = []
         for off, raw, clean in sentences(art):
             if detect_injection(raw):
                 continue
             ctype = classify(clean)
             if ctype is None:
                 continue
-            score = materiality(clean, ctype, rank)
+            score = materiality(clean, ctype, rank, company=names)
             if score is None:
                 continue
-            out.append(ClaimDraft(
+            found.append(ClaimDraft(
                 text=clean, claim_type=ctype.value, source_key=art.key, source_url=art.url, source_quote=raw,
                 observed_at=art.fetched_at, materiality=score, position=off, source_rank=rank,
                 company_evidence=[_company_ev(art, raw)],
             ))
+        if (art.data or {}).get("page_kind") in NARRATIVE_PAGES or (art.data or {}).get("seed"):
+            # Blog posts, changelogs and about pages narrate; there a claim names the company or speaks as "we".
+            found = [c for c in found if _self_reference(c.text, names)]
+        if (art.data or {}).get("page_kind") == "pricing":
+            # A pricing page publishes prices; only a value assertion ("12% lower cost than reserved GPUs") is a
+            # claim, and at most one per page.
+            econ = sorted((c for c in found if c.claim_type == ClaimType.ECONOMICS and _VALUE.search(c.text)),
+                          key=lambda c: (-c.materiality, c.position))[:MAX_ECONOMICS_PER_PRICING_PAGE]
+            # Its short bullets ("Audit logs, Okta SSO, and HIPAA") are plan features, not claims.
+            found = [c for c in found if (c.claim_type != ClaimType.ECONOMICS and len(c.text.split()) >= PLAN_BULLET_WORDS)
+                     or c in econ]
+        out.extend(found)
     return out
 
 
@@ -338,9 +528,12 @@ def merge_and_rank(cands: list[ClaimDraft], *, cap: int = MAX_CLAIMS) -> list[Cl
     return final
 
 
-def extract_claims(artifacts: Iterable[ArtifactDraft], *, cap: int = MAX_CLAIMS) -> list[ClaimDraft]:
-    """Rule-based extraction over company-published artifacts."""
-    return merge_and_rank(candidates(list(artifacts)), cap=cap)
+def extract_claims(artifacts: Iterable[ArtifactDraft], *, cap: int = MAX_CLAIMS, company: str | None = None
+                   ) -> list[ClaimDraft]:
+    """Rule-based extraction over company-published artifacts. ``company`` (its name) lets a sentence about a
+    third-party model still count when the company is its subject ("NVIDIA Vera CPUs double throughput for Modal
+    Sandboxes")."""
+    return merge_and_rank(candidates(list(artifacts), company=company), cap=cap)
 
 
 # ── optional LLM-assisted extraction ─────────────────────────────────────────
@@ -369,8 +562,8 @@ For every claim copy the exact sentence from the source into `quote` (verbatim, 
 Do not judge whether claims are true. Return at most 15 claims."""
 
 
-def extract_with_llm(provider, artifacts: Iterable[ArtifactDraft], *, max_chars: int = 6000
-                     ) -> tuple[list[ClaimDraft], dict]:
+def extract_with_llm(provider, artifacts: Iterable[ArtifactDraft], *, max_chars: int = 6000,
+                     company: str | None = None) -> tuple[list[ClaimDraft], dict]:
     """LLM-proposed claims, kept only when their quote is a verbatim substring of the cited artifact.
 
     Returns (claims, info) where info = {used, model, rejected, cost_usd, error}. A provider without a live
@@ -405,7 +598,7 @@ def extract_with_llm(provider, artifacts: Iterable[ArtifactDraft], *, max_chars:
             continue
         clean = clean_inline(quote)
         rank = source_rank(art)
-        score = materiality(clean, ClaimType(c.claim_type), rank)
+        score = materiality(clean, ClaimType(c.claim_type), rank, company=company_names(company))
         if score is None:
             info["rejected"] += 1
             continue

@@ -6,6 +6,7 @@ Nested report sections stay ``dict`` here: their exact shape is defined (and val
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -143,3 +144,5 @@ class DiligenceRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     budget_s: int = Field(default=180, ge=10, le=180)
+    # Portfolio handoff: the MaterialEvent (of this company) that prompted the run; its source URLs are collected.
+    event_id: uuid.UUID | None = None

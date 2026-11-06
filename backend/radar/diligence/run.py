@@ -24,7 +24,15 @@ from radar.diligence.capture import Capture, default_path, dump, load
 from radar.diligence.collect import collect
 from radar.diligence.taxonomy import Relation
 from radar.diligence.types import CompanyFacts
-from radar.models import Company, DiligenceArtifact, DiligenceClaim, DiligenceRun, ResearchReport, ReviewDecision
+from radar.models import (
+    Company,
+    DiligenceArtifact,
+    DiligenceClaim,
+    DiligenceRun,
+    MaterialEvent,
+    ResearchReport,
+    ReviewDecision,
+)
 
 log = logging.getLogger(__name__)
 
@@ -107,14 +115,34 @@ def _persist(session: Session, run: DiligenceRun, company: Company, cap: Capture
     run.evidence_coverage = analysis.evidence_coverage()
 
 
+def handoff_event(session: Session, company: Company, event_id: uuid.UUID | str) -> MaterialEvent:
+    """The portfolio MaterialEvent a diligence run is started from; it must belong to ``company``."""
+    try:
+        eid = event_id if isinstance(event_id, uuid.UUID) else uuid.UUID(str(event_id).strip())
+    except ValueError:
+        raise DiligenceError(f"not an event id: {event_id!r}") from None
+    ev = session.get(MaterialEvent, eid)
+    if ev is None:
+        raise DiligenceError(f"no material event {eid}")
+    if ev.company_id != company.id:
+        raise DiligenceError(f"event {eid} is not about {company.slug}")
+    return ev
+
+
 def run_diligence(session: Session, company_ref: Company | uuid.UUID | str, *, live: bool = True, provider=None,
                   capture_path: Path | None = None, budget_s: float = DEFAULT_BUDGET_S, capture: bool = False,
-                  commit_progress: bool = False, fetcher=None) -> DiligenceRun:
+                  commit_progress: bool = False, fetcher=None, seed_urls: list[str] | None = None,
+                  event_id: uuid.UUID | str | None = None, requested_by: str = "analyst") -> DiligenceRun:
     """Collect (or replay) and analyse; persist and return the run.
 
     ``provider`` enables optional LLM-assisted claim extraction (statuses always come from the rules).
     ``capture`` writes the collected artifacts to ``radar/demo/diligence/<slug>.json.gz`` (or ``capture_path``).
     ``commit_progress`` commits the "running" row first so concurrent readers see IN_PROGRESS (API use).
+
+    Portfolio handoff (live runs only): ``event_id`` names the MaterialEvent that prompted the run — its
+    ``source_urls`` join ``seed_urls`` — and the seeds are collected as company pages (own domain only). The run
+    trace records ``{"type": "handoff", "event_id", "seed_urls"}`` and the portfolio decision log gets a
+    ``diligence_requested`` step by ``requested_by``.
     """
     company = resolve_company(session, company_ref)
     if company is None:
@@ -122,22 +150,37 @@ def run_diligence(session: Session, company_ref: Company | uuid.UUID | str, *, l
     path = Path(capture_path) if capture_path else default_path(company.slug)
     if not live and not path.exists():
         raise DiligenceError(f"no capture file at {path}")
+    if not live and (seed_urls or event_id):
+        raise DiligenceError("seed URLs and events start live runs; a replay uses only its capture")
+    event = handoff_event(session, company, event_id) if event_id else None
+    seeds = list(dict.fromkeys([*(seed_urls or []), *((event.source_urls or []) if event else [])]))
     t0 = time.perf_counter()
     run = DiligenceRun(company_id=company.id, status="running", mode="live" if live else "replay",
                        method_version=METHOD_VERSION, started_at=clock.wall_now(), is_demo=company.is_demo, trace=[])
     session.add(run)
     session.flush()
+    handoff: list[dict[str, Any]] = []
+    if event is not None or seeds:
+        handoff = [{"type": "handoff", "event_id": str(event.id) if event else None, "seed_urls": seeds}]
+        run.trace = list(handoff)
+    if event is not None:
+        from radar.portfolio.decisions import log_human
+
+        log_human(session, company_id=company.id, kind="diligence_requested", actor=requested_by,
+                  event_id=event.id, note=f"RUN DILIGENCE from event: {event.title}"[:2000])
     if commit_progress:
         session.commit()
     try:
         # A savepoint: if anything fails, partial artifacts/claims vanish and only the errored run row remains.
         with session.begin_nested():
             if live:
-                res = collect(session, company, budget_s=budget_s, fetcher=fetcher)
+                res = collect(session, company, budget_s=budget_s, fetcher=fetcher,
+                              **({"seed_urls": seeds} if seeds else {}))
                 cap = Capture(facts=res.facts, artifacts=res.artifacts, collected_at=res.collected_at,
                               trace=res.trace, partial=res.partial, method_version=METHOD_VERSION)
                 if res.errors:
                     cap.trace.append({"type": "errors", "errors": res.errors})
+                cap.trace = [*handoff, *cap.trace]  # kept in the capture: replays show which event seeded it
             else:
                 cap = load(path)
             analysis = analyze(cap.artifacts, cap.facts, as_of=cap.collected_at, company=company_header(company),

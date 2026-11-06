@@ -14,4 +14,4 @@ an evidence assessment, never an investment recommendation. Method: ``docs/DILIG
 
 from __future__ import annotations
 
-METHOD_VERSION = "dil-2026.11-1"
+METHOD_VERSION = "dil-2026.11-2"

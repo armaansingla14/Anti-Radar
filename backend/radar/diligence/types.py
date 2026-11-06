@@ -147,6 +147,29 @@ def gap_item(key: str, note: str, matcher: str) -> dict[str, Any]:
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
+# Capitalised words that are never a product or project name.
+_NOT_A_NAME = frozenset("""
+api apis sdk sdks cli gpu gpus cpu cpus ai ml llm llms rl lora oss mit apache bsd gpl agpl lgpl mpl license licence
+github today we our the this it its a an and or with while since designed now also as in on for of to from
+beta alpha preview new free
+""".split())
+
+
+def proper_names(text: str) -> list[str]:
+    """Capitalised names in a sentence (a sentence-initial word only when it is the subject: "Spindle is …"),
+    without acronyms and licence words. "Today we're releasing Spindle, an open-source …" → ['Spindle']."""
+    words = list(re.finditer(r"[A-Za-z][A-Za-z0-9_.-]*[A-Za-z0-9]", text or ""))
+    out: list[str] = []
+    for i, m in enumerate(words):
+        w = m.group()
+        if not w[0].isupper() or w.lower() in _NOT_A_NAME or len(w) < 3:
+            continue
+        if i == 0 and not re.match(r"\s+(?:is|are)\b", text[m.end():]):
+            continue  # a sentence-initial capital is just capitalisation
+        out.append(w)
+    return list(dict.fromkeys(out))
+
+
 def iso(d: datetime | date | None) -> str | None:
     return d.isoformat() if d else None
 

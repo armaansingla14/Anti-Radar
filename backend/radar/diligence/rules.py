@@ -103,6 +103,7 @@ _ROADMAP = re.compile(r"\b(?:coming soon|roadmap|will (?:soon )?(?:support|add|s
                       re.I)
 _COMPLIANCE = re.compile(r"\bSOC ?2\b|\bHIPAA\b|\bISO ?27001\b|\bGDPR\b|\bcertified\b|\bcompliant\b", re.I)
 _SUPERLATIVE = re.compile(r"\b(?:fastest|leading|first|only|#1|number one|largest|best|most|world'?s)\b", re.I)
+_WORD_MULTIPLIER = re.compile(r"\b(?:double[sd]?|twice|triple[sd]?|halve[sd]?)\b", re.I)
 _BASELINE_NAMED = re.compile(r"\b(?:than|vs\.?|versus|against|compared to|over)\s+[A-Z]", re.I)
 
 
@@ -113,7 +114,7 @@ def classify_testability(claim: ClaimDraft) -> str:
         return Testability.NOT_TESTABLE
     has_num = bool(_NUMBER.search(text))
     if t == ClaimType.PERFORMANCE:
-        if has_num:
+        if has_num or _WORD_MULTIPLIER.search(text):  # "double throughput" states a figure (2×)
             return Testability.HIGH
         return Testability.MEDIUM if _BASELINE_NAMED.search(text) else Testability.LOW
     if t == ClaimType.TECHNICAL_CAPABILITY:

@@ -69,10 +69,10 @@ def analyze(artifacts: list[ArtifactDraft], facts: CompanyFacts, *, as_of: datet
     deps = analyze_dependencies(arts, as_of)
     ctx = Context.build(arts, facts, as_of, deps)
 
-    claims = extract_claims(arts)
+    claims = extract_claims(arts, company=facts.name)
     llm: dict[str, Any] = {"used": False, "model": None, "rejected": 0, "cost_usd": 0.0, "error": None}
     if provider is not None:
-        extra, llm = extract_with_llm(provider, arts)
+        extra, llm = extract_with_llm(provider, arts, company=facts.name)
         if extra:
             claims = merge_and_rank(claims + extra)
 

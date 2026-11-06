@@ -18,6 +18,7 @@ from radar.api.ratelimit import rate_limit
 from radar.db import get_session, session_scope
 from radar.diligence import workspace as ws
 from radar.diligence.run import diligence_status, resolve_company, run_diligence
+from radar.models import MaterialEvent
 from radar.schemas.diligence import (
     DiligenceClaimOut,
     DiligenceIndexOut,
@@ -89,15 +90,23 @@ def diligence_claim(session: SessionDep, company_ref: CompanyRef,
 def diligence_run(company_ref: CompanyRef, req: Annotated[DiligenceRunRequest | None, Body()] = None) -> dict:
     """Live collection + analysis, synchronously within the time budget; returns the resulting status."""
     _refuse_on_snapshot()
+    req = req or DiligenceRunRequest()
     with session_scope() as s:
         company = _company(s, company_ref)
+        if req.event_id is not None:
+            ev = s.get(MaterialEvent, req.event_id)
+            if ev is None:
+                raise HTTPException(404, detail="event_not_found")
+            if ev.company_id != company.id:
+                raise HTTPException(422, detail="event_not_for_company")
         if diligence_status(s, company.id)["status"] == "IN_PROGRESS":
             raise HTTPException(409, detail="diligence_in_progress")
         company_id = company.id
-        _log_portfolio_handoff(s, company_id)
-    budget = (req or DiligenceRunRequest()).budget_s
+        if req.event_id is None:  # with an event, run_diligence logs the handoff against that event
+            _log_portfolio_handoff(s, company_id)
     with session_scope() as s:
-        run = run_diligence(s, company_id, live=True, budget_s=budget, commit_progress=True)
+        run = run_diligence(s, company_id, live=True, budget_s=req.budget_s, commit_progress=True,
+                            event_id=req.event_id)
         if run.status == "error":
             log.warning("diligence run %s failed: %s", run.id, run.error)
     with session_scope() as s:

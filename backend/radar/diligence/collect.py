@@ -60,6 +60,7 @@ log = logging.getLogger(__name__)
 TEXT_CAP = 40_000
 TREE_CAP = 5_000
 MAX_PAGES = 8
+MAX_SEEDS = 5  # handoff URLs (a portfolio event's sources) fetched per run
 MAX_FILES = 25
 MAX_DEP_LOOKUPS = 15
 MAX_HN_STORIES = 10
@@ -364,8 +365,8 @@ def pick_pages(home: ExtractedPage, *, limit: int = MAX_PAGES) -> list[tuple[str
     return out
 
 
-def _fetch_html(f: Fetcher, url: str) -> tuple[str, str, int] | None:
-    r = f.get(url, stage="website", client="web", headers=ACCEPT_HTML, robots=True, max_bytes=2_000_000)
+def _fetch_html(f: Fetcher, url: str, stage: str = "website") -> tuple[str, str, int] | None:
+    r = f.get(url, stage=stage, client="web", headers=ACCEPT_HTML, robots=True, max_bytes=2_000_000)
     if r is None or r.status_code != 200:
         return None
     ctype = r.headers.get("content-type", "").lower()
@@ -401,6 +402,55 @@ def collect_website(f: Fetcher, company: Company, facts: CompanyFacts, arts: dic
         a = _artifact(f"web:{final}", "web_page", Publisher.COMPANY, final, page.title, block_text(html),
                       {"page_kind": kind}, status)
         arts.setdefault(a.key, a)
+
+
+def page_kind_of(url: str) -> str | None:
+    """The PAGE_KINDS label a URL's path suggests (None when nothing matches)."""
+    p = urlparse(url)
+    hay = f"{p.netloc.split('.')[0]} {p.path.replace('/', ' ').replace('-', ' ')}".lower()
+    best = max(((s, k) for k, pat, s in PAGE_KINDS if pat.search(hay)), default=None)
+    return best[1] if best else None
+
+
+def company_sites(company: Company, facts: CompanyFacts) -> list[str]:
+    """The registrable domains that count as the company's own (website and recorded domain)."""
+    sites = [site_of(company.website or ""), site_of(f"https://{facts.domain}") if facts.domain else None]
+    return sorted({s for s in sites if s})
+
+
+def collect_seeds(f: Fetcher, company: Company, facts: CompanyFacts, arts: dict[str, ArtifactDraft],
+                  seed_urls: list[str]) -> None:
+    """Pages a portfolio event pointed at (the diligence handoff), fetched as company web pages.
+
+    Only URLs on the company's own domain are fetched — with the same SSRF guard, robots.txt check, HTML-only rule
+    and size caps as the website crawl; a redirect off the company's domain is dropped. The crawl follows links
+    from the homepage only, so a blog post the homepage does not link (e.g. Modal's "NVIDIA Vera CPUs double
+    throughput for Modal Sandboxes") is reachable only this way."""
+    sites = company_sites(company, facts)
+    for raw in list(dict.fromkeys(u for u in seed_urls if u))[:MAX_SEEDS]:
+        t0 = time.perf_counter()
+        try:
+            url = sanitize_url(raw)
+        except UnsafeURLError as e:
+            f._record("seeds", str(raw), None, t0, 0, f"refused: unsafe URL ({e})")
+            continue
+        if not any(same_site(url, site) for site in sites):
+            f._record("seeds", url, None, t0, 0, "refused: not on the company's own domain")
+            continue
+        res = _fetch_html(f, url, stage="seeds")
+        if res is None:
+            continue
+        final, html, status = res
+        if not any(same_site(final, site) for site in sites):
+            f._record("seeds", final, None, t0, 0, "refused: redirected off the company's own domain")
+            continue
+        key = f"web:{final}"
+        if key in arts:
+            arts[key].data["seed"] = True
+            continue
+        page = extract_page(html, final)
+        arts[key] = _artifact(key, "web_page", Publisher.COMPANY, final, page.title, block_text(html),
+                              {"page_kind": page_kind_of(final) or "seed", "seed": True}, status)
 
 
 # ── GitHub ───────────────────────────────────────────────────────────────────
@@ -875,9 +925,12 @@ def collect_papers(session: Session, company: Company, arts: dict[str, ArtifactD
 # ── orchestration ────────────────────────────────────────────────────────────
 
 
-def collect(session: Session, company: Company, *, budget_s: float = 180.0, fetcher: Fetcher | None = None
-            ) -> CollectResult:
-    """Collect public artifacts for ``company`` within ``budget_s`` seconds. Partial collection is recorded."""
+def collect(session: Session, company: Company, *, budget_s: float = 180.0, fetcher: Fetcher | None = None,
+            seed_urls: list[str] | None = None) -> CollectResult:
+    """Collect public artifacts for ``company`` within ``budget_s`` seconds. Partial collection is recorded.
+
+    ``seed_urls`` (the diligence handoff from a portfolio event) are fetched right after the website crawl, on the
+    company's own domain only (:func:`collect_seeds`)."""
     from radar.settings import get_settings
 
     started = clock.wall_now()
@@ -889,6 +942,7 @@ def collect(session: Session, company: Company, *, budget_s: float = 180.0, fetc
     errors: list[str] = []
     stages: list[tuple[str, Callable[[], None]]] = [
         ("website", lambda: collect_website(f, company, facts, arts)),
+        *([("seeds", lambda: collect_seeds(f, company, facts, arts, list(seed_urls or [])))] if seed_urls else []),
         ("github", lambda: collect_github(f, session, company, facts, arts, started)),
         ("registries", lambda: collect_registries(f, arts)),
         ("osv", lambda: collect_osv(f, arts)),

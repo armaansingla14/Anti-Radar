@@ -64,11 +64,18 @@ def _context_terms(claim: ClaimDraft, source: ArtifactDraft | None, category: st
     return names
 
 
+_COMPARED = re.compile(r"\b(?:than|vs\.?|versus|against|compared (?:to|with))\s+(?:(?:an?|the)\s+)?(?:equivalent\s+)?"
+                       r"((?:[A-Z0-9][\w.+-]*|[a-z]+\d[\w.+-]*)(?:\s[A-Z0-9][\w.+-]*){0,2})")
+_WORD_X = {"double": 2.0, "doubles": 2.0, "doubled": 2.0, "twice": 2.0, "triple": 3.0, "triples": 3.0, "tripled": 3.0}
+
+
 def _baseline(claim: ClaimDraft, packages: dict[str, ArtifactDraft]) -> dict[str, Any] | None:
     mentions = baseline_mentions(claim.text)
     if not mentions:
-        m = re.search(r"\b(?:than|vs\.?|versus|against|compared to)\s+([A-Z][\w.+-]*(?:\s[A-Z][\w.+-]*)?)",
-                      claim.text)
+        # The ledger keeps the strongest wording; the same claim's other quotes may name what it was measured against
+        # ("… up to double the task throughput on Vera compared with an equivalent x86 GNR machine").
+        texts = [claim.text, *(str(e.get("quote") or "") for e in claim.company_evidence)]
+        m = next((m for t in texts if (m := _COMPARED.search(t))), None)
         if not m:
             return None
         return {"name": m.group(1), "version_claimed": None,
@@ -91,9 +98,11 @@ def _baseline(claim: ClaimDraft, packages: dict[str, ArtifactDraft]) -> dict[str
 
 def _pass_criteria(claim: ClaimDraft, facets: list[str]) -> list[str]:
     m, p = _MULT.search(claim.text), _PCT.search(claim.text)
-    cond = "under comparable conditions (same hardware, model, precision/quantization, batch and sequence lengths)"
-    if claim.claim_type == ClaimType.PERFORMANCE and m:
-        x = float(m.group(1))
+    w = re.search(r"\b(" + "|".join(_WORD_X) + r")\b", claim.text, re.I)
+    cond = ("under comparable conditions (same host size, container image, task mix and concurrency)" if _compute(claim)
+            else "under comparable conditions (same hardware, model, precision/quantization, batch and sequence lengths)")
+    if claim.claim_type == ClaimType.PERFORMANCE and (m or w):
+        x = float(m.group(1)) if m else _WORD_X[w.group(1).lower()]
         metric = "throughput" if "throughput" in facets else facets[0]
         return [
             f"Supported if the geometric-mean {metric} ratio across the workload grid is ≥ {x:g}× the baseline {cond}.",
@@ -127,7 +136,8 @@ def _procedure(claim: ClaimDraft, baseline: dict | None) -> list[str]:
              "Use a fresh container per system under test; record the image digest."]
     if claim.claim_type in (ClaimType.PERFORMANCE, ClaimType.SCALABILITY, ClaimType.ECONOMICS):
         steps += [
-            "Use identical model weights, precision and quantization for candidate and baseline.",
+            "Use the same container image, task mix and resource limits for candidate and baseline hosts."
+            if _compute(claim) else "Use identical model weights, precision and quantization for candidate and baseline.",
             "Warm up for at least 1 minute (or 50 requests) before measuring.",
             "Run each configuration ≥ 5 times; report the median and interquartile range.",
             "Record exact commands, environment variables and hardware details (GPU model, count, interconnect).",
@@ -148,7 +158,20 @@ def _procedure(claim: ClaimDraft, baseline: dict | None) -> list[str]:
     return steps
 
 
+def _compute(claim: ClaimDraft) -> bool:
+    """A general-compute claim (sandboxes, containers, CPU tasks), not a model-serving one: tokens/sec workloads
+    would test the wrong thing."""
+    t = claim.text
+    return bool(re.search(r"\b(?:sandbox(?:es)?|containers?|CPUs?|tasks?|jobs?|builds?|grep|volumes?|storage|file ?systems?"
+                          r"|disk|I/O)\b", t, re.I)) and not re.search(
+        r"\b(?:tokens?|LLMs?|models?|inference|serving|training|fine-?tun)", t, re.I)
+
+
 def _workloads(claim: ClaimDraft, models: list[str]) -> list[str]:
+    if claim.claim_type == ClaimType.PERFORMANCE and _compute(claim):
+        return ["a fixed mix of representative tasks (builds, file search, git operations, test suites)",
+                "concurrency sweep from 1 task to host saturation", "the same container image and task mix on "
+                "candidate and baseline hosts"]
     if claim.claim_type in (ClaimType.PERFORMANCE, ClaimType.ECONOMICS):
         return ["batch size 1, 8 and 32", "input/output lengths 128/128, 512/2048 and 2048/512 tokens",
                 "concurrency sweep 1 → 64 requests"]
@@ -168,16 +191,22 @@ def build_test_plan(claim: ClaimDraft, *, source: ArtifactDraft | None = None,
     baseline = _baseline(claim, packages or {}) if claim.claim_type == ClaimType.PERFORMANCE else None
     measured = claim.claim_type in (ClaimType.PERFORMANCE, ClaimType.SCALABILITY, ClaimType.ECONOMICS)
     if measured:
-        hardware = _context_terms(claim, source, "hardware") or [
+        hardware = _context_terms(claim, source, "hardware")
+        if _compute(claim) and not re.search(r"\bGPUs?\b", claim.text):
+            hardware = [h for h in hardware if not h.endswith("GPUs")]  # "NVIDIA Vera CPUs" names a CPU, not GPUs
+        hardware = hardware or [
             "Not stated by the company — choose hardware matching the target market and record it; ask the company "
             "which hardware produced their figure."]
-        models = _context_terms(claim, source, "model") or [
+        models = [] if _compute(claim) else _context_terms(claim, source, "model") or [
             "Not stated — the company's benchmark must specify model, size and precision."]
     else:
         hardware = [t.name for t in find_terms(claim.text, ("hardware",))]
         models = [t.name for t in find_terms(claim.text, ("model",))]
     targets = [t.name for t in find_terms(claim.text, ("hardware", "os", "framework", "model", "cloud"))]
-    if claim.claim_type in (ClaimType.PERFORMANCE, ClaimType.ECONOMICS):
+    if claim.claim_type == ClaimType.PERFORMANCE and _compute(claim):
+        metrics = ["completed tasks per minute at each concurrency level", "per-task latency p50/p95 (s)",
+                   "CPU throttling and steal time"]
+    elif claim.claim_type in (ClaimType.PERFORMANCE, ClaimType.ECONOMICS):
         metrics = [m for f in facets for m in METRICS[f]]
     elif claim.claim_type == ClaimType.TECHNICAL_CAPABILITY:
         metrics = ["installation success per target", "end-to-end smoke test pass/fail", "errors and warnings logged"]

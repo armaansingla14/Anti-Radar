@@ -34,6 +34,7 @@ from radar.diligence.types import (
     parse_dt,
     parse_quantity,
     parse_version,
+    proper_names,
 )
 from radar.diligence.vocab import Term, baseline_mentions, find_terms, is_source_path, path_matches
 
@@ -152,11 +153,35 @@ def m_license(claim: ClaimDraft, ctx: Context) -> list[dict]:
     return out
 
 
+def _named_projects(text: str, own: list[str]) -> list[str]:
+    """Project names an open-source claim is about, other than the company and its known repositories/packages
+    ("Today we're releasing Spindle, an open-source …" → ['Spindle']). Empty for a claim about the company itself."""
+    own_l = {o.lower() for o in own if o}
+    for o in sorted(own_l, key=len, reverse=True):  # "Unsloth Desktop", "Modal Sandboxes": the company's own product
+        text = re.sub(rf"(?i)(?<![A-Za-z0-9]){re.escape(o)}\s+[A-Z][\w-]*", o, text)
+    return [n for n in proper_names(text) if n.lower() not in own_l and not any(n.lower() in o.split() for o in own_l)]
+
+
+def _repo_named(repo: ArtifactDraft, names: list[str]) -> bool:
+    short = str(repo.data.get("full_name") or "").split("/")[-1].lower()
+    return any(n.lower() == short or n.lower() in re.split(r"[-_.]", short) for n in names)
+
+
 def m_open_source(claim: ClaimDraft, ctx: Context) -> list[dict]:
     if not OPEN_SOURCE_RE.search(claim.text):
         return []
     out = []
-    for repo in ctx.repos():
+    repos = ctx.repos()
+    named = _named_projects(claim.text, [ctx.facts.name, *ctx.names, *str(ctx.facts.name).split()])
+    if named:
+        # The claim is about a specific project: only a repository of that name can verify it. Other public repos
+        # of the organisation say nothing about whether *this* project is open source (Modal, Nov 6, 2026).
+        repos = [r for r in repos if _repo_named(r, named)]
+        if not repos:
+            return [gap_item(f"gap:repo:{named[0]}", f"No collected public repository is named {', '.join(named)}; "
+                             "the organisation's other repositories do not show that it is open source.",
+                             "open_source")]
+    for repo in repos:
         spdx = repo.data.get("license_spdx")
         name = repo.data.get("full_name")
         if spdx in OSI_LICENSES:

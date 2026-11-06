@@ -1,6 +1,7 @@
 """`radar diligence …` commands (registered in radar/cli.py).
 
     radar diligence run "Acme" [--capture/--no-capture] [--budget 180]   # live collection + analysis
+    radar diligence run acme --from-event <event id> [--seed-url URL …]  # portfolio handoff: seed the event's pages
     radar diligence replay acme [--all]                                   # offline, from radar/demo/diligence/
     radar diligence show "Acme"                                           # print the claim ledger
 """
@@ -42,6 +43,10 @@ def run_cmd(
     company: str,
     capture: Annotated[bool, typer.Option("--capture/--no-capture", help="Write radar/demo/diligence/<slug>.json.gz")] = True,
     budget: Annotated[int, typer.Option(min=10, max=900, help="Collection time budget (seconds)")] = 180,
+    seed_url: Annotated[list[str] | None, typer.Option(
+        "--seed-url", help="Also collect this company page (own domain only; repeatable)")] = None,
+    from_event: Annotated[str | None, typer.Option(
+        "--from-event", help="Portfolio MaterialEvent id: collect its source URLs and log the handoff")] = None,
 ) -> None:
     """Collect public artifacts for a company (live network) and analyse them."""
     from radar.db import session_scope
@@ -49,7 +54,8 @@ def run_cmd(
 
     try:
         with session_scope() as s:
-            run = run_diligence(s, company, live=True, budget_s=budget, capture=capture)
+            run = run_diligence(s, company, live=True, budget_s=budget, capture=capture, seed_urls=seed_url or None,
+                                event_id=from_event)
             _print_run(run)
     except DiligenceError as e:
         raise typer.BadParameter(str(e)) from None

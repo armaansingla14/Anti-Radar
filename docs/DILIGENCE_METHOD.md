@@ -1,6 +1,6 @@
 # Technical Diligence — method
 
-Method version `dil-2026.11-1` (`radar/diligence/__init__.py`).
+Method version `dil-2026.11-2` (`radar/diligence/__init__.py`).
 
 Diligence answers seven questions about a company found by the radar:
 
@@ -52,6 +52,11 @@ It is gzip-compressed JSON with sorted keys and a zero timestamp, so the same ca
   - The homepage, plus up to 8 same-site pages. Pages are ranked by how likely they are to hold claims: benchmarks, docs, pricing, security, product, changelog, blog, about. At most two pages of each kind are kept.
   - robots.txt is respected, and only HTML is accepted.
   - Text is extracted one block per line, so headings and sentences stay separate.
+  - The crawl follows links from the homepage only. A blog post the homepage does not link is not reached this way (Modal's blog index renders its post list client-side, so "NVIDIA Vera CPUs double throughput for Modal Sandboxes" was missed).
+- **Portfolio handoff (seed URLs):** a run started from a portfolio MaterialEvent (`radar diligence run <slug> --from-event <id>`, `--seed-url URL` (repeatable), or `POST /api/diligence/{slug}/run` with `{"event_id": …}`) also fetches the event's `source_urls`.
+  - Only URLs on the company's own registrable domain (its website or recorded domain) are fetched, at most 5, with the same SSRF guard, robots.txt check, HTML-only rule and size caps. A redirect off the domain is dropped; refusals are in the trace.
+  - Seeded pages are company web pages (`data.seed = true`) and rank with benchmark and docs pages.
+  - The run trace and the capture record `{"type": "handoff", "event_id", "seed_urls"}`. A live run from an event logs a `diligence_requested` step in the portfolio decision log against that event (a replay never does). The event must belong to the company (API: 404 `event_not_found`, 422 `event_not_for_company`).
 - **GitHub:** up to 3 primary repositories by stars, or 1 without a token, because anonymous access allows 60 requests per hour. For each repository:
   - Repository metadata.
   - The raw README.
@@ -102,15 +107,24 @@ The claim types are PERFORMANCE, TECHNICAL_CAPABILITY, ARCHITECTURE, ECONOMICS, 
 **Rule-based extraction** (`extract.py`) works only on company-published artifacts.
 
 1. Text is split into sentences. Fenced and indented code, tables, badges, images and HTML are removed. A heading counts as a sentence.
-2. Each sentence is classified by ordered cue patterns. The first type that matches wins. A TECHNICAL_CAPABILITY cue needs a named target, such as a GPU, OS, framework, model or cloud.
+2. Each sentence is classified by ordered cue patterns. The first type that matches wins. A TECHNICAL_CAPABILITY cue needs a named target, such as a GPU, OS, framework, model or cloud; "multi-cloud" without a supports-verb in a sentence that describes the stack (runtime, engine…) is ARCHITECTURE. A named organisation using the product ("… that Snorkel is evaluating") is CUSTOMER_TRACTION. Other people's open source ("open source frameworks like …", "open-weight models", "the open-source ecosystem") is not an OPEN_SOURCE claim.
 3. **Materiality filter:**
    - 5–60 words
    - not boilerplate
    - not a question
    - concrete, meaning it contains a number, a named technology or a proper noun
-   - quantitative claims, production-readiness claims and homepage sources rank higher; roadmap language ranks lower
+   - quantitative claims ("double" counts as 2×), production-readiness claims and homepage sources rank higher; roadmap language ranks lower; architecture claims rank higher for each named component (runtime, storage, scheduler…)
+   - **not a company claim** (`not_a_claim`; hand audit of the live Modal run, Nov 6, 2026):
+     - table or price-list fragments (a third or more of the tokens carry no letters) and worked cost examples ("This job will cost …", "adding up to", "75 GPUs × 24 hrs × $3");
+     - headings and UI labels (Title-Case words, at most one lowercase word, no figure) and navigation labels glued to a sentence: a short Title-Case label whose last word is repeated ("Modal Infrastructure Infrastructure rebuilt for AI…") is cut off, so the sentence starts at the repeat;
+     - catalog lines ("X is now available on Y") and sentences about a third-party model or product: a model family as the subject, a vendor's possessive ("NVIDIA's …"), a vendor product with no supports-verb ("NVIDIA CUDA Compiler Driver nvcc"), or model-card text (parameter counts, "active per token", context windows) — unless the company, "we" or "our" appears in the first 8 words ("NVIDIA Vera CPUs double throughput for Modal Sandboxes" stays);
+     - first-person anecdotes ("For example, when we wanted to …");
+     - CUSTOMER_TRACTION with no figure and no named customer ("Trusted by the world's leading AI teams");
+     - ECONOMICS that is financing, or a billing rule (billed, multiplier, list price, credits) without a value assertion (cheaper, save, less than, versus).
+   - **pricing pages** publish prices: at most one ECONOMICS claim per pricing page, and only a value assertion; plan bullets shorter than 8 words are not claims.
+   - **blog, changelog, about and customer pages** (and seeded pages) narrate: a sentence there must name the company or speak as "we"/"our".
 4. **Near-duplicates are merged:**
-   - when token Jaccard similarity is at least 0.6, one sentence contains the other, or two claims of the same type state the same figure ("3x");
+   - when token Jaccard similarity is at least 0.6, one sentence contains the other, two claims of the same type state the same figure ("3x"; "double" = 2x), or two OPEN_SOURCE claims name the same project;
    - the strongest source wins, in this order: homepage, benchmark or docs page, other page, README, docs, Show HN;
    - every source is kept as company evidence.
 5. The ledger is capped at 12 claims and at most 4 per type, in deterministic order.
@@ -125,7 +139,7 @@ The claim types are PERFORMANCE, TECHNICAL_CAPABILITY, ARCHITECTURE, ECONOMICS, 
 | Matcher | Evidence | Relation / strength |
 |---|---|---|
 | `license` | Named license vs the SPDX license GitHub reports | supports direct, **verifies**; mismatch contradicts direct |
-| `open_source` | "open source" vs a public repo under an OSI license | supports direct, **verifies**; a source-available license (BUSL, Elastic, SSPL) contradicts direct |
+| `open_source` | "open source" vs a public repo under an OSI license. A claim about a named project ("Spindle is open source") counts only that project's repository; with none collected it gets a gap, never another repo's licence | supports direct, **verifies**; a source-available license (BUSL, Elastic, SSPL) contradicts direct |
 | `capability_paths` | Named targets (hardware, OS, framework, model, scale) vs tree paths, using aliases such as H100 → `sm90`/`hopper` and MI300X → `gfx942` | supports **direct** if a source file names it, otherwise indirect; never verifies |
 | `capability_config` | Target named in manifests, Dockerfiles, CI configs | supports indirect |
 | `capability_release` | Target named in release tags | supports indirect |
@@ -168,7 +182,7 @@ R2 is stricter than "no direct contradiction". A verified license does not make 
 | Claim | Testability |
 |---|---|
 | Roadmap language ("coming soon", "will support") | NOT_TESTABLE |
-| PERFORMANCE with a number | HIGH; with a named baseline but no number: MEDIUM; otherwise LOW |
+| PERFORMANCE with a number (or "double", "twice", "triple") | HIGH; with a named baseline but no number: MEDIUM; otherwise LOW |
 | TECHNICAL_CAPABILITY naming a target | HIGH; otherwise MEDIUM |
 | OPEN_SOURCE | HIGH |
 | CUSTOMER_TRACTION on public metrics (stars, downloads, contributors, forks) | HIGH; named references without counts: LOW; customer/user counts: NOT_TESTABLE |
@@ -200,7 +214,9 @@ Every HIGH or MEDIUM testability claim gets a plan with these fields:
 - metrics by facet: throughput, p50/p95 latency, TTFT, peak memory, accuracy, cost per 1M tokens, install success
 - workloads: batch sizes 1, 8 and 32, three sequence-length mixes, a concurrency sweep
 - procedure: pinned versions, identical precision, warm-up, at least 5 runs, median and IQR, logged commands
-- pass criteria. For example, "3x faster" passes if the geometric-mean ratio is at least 3× under comparable conditions; between 0.8× and 1× of the claimed ratio it is partially supported; below 0.8× it is contradicted.
+- pass criteria. For example, "3x faster" passes if the geometric-mean ratio is at least 3× under comparable conditions; between 0.8× and 1× of the claimed ratio it is partially supported; below 0.8× it is contradicted. "Double" and "triple" are 2× and 3×.
+- the baseline is taken from the claim, or from another quote of the same claim ("compared with an equivalent x86 GNR machine").
+- general-compute claims (sandboxes, containers, CPUs, tasks, storage) get task workloads and metrics (completed tasks per minute across a concurrency sweep, per-task p50/p95, CPU throttling) instead of token workloads, and no model.
 - sandbox requirements: disposable container, no host filesystem, no secrets, network only for pinned installs, resource limits, every command logged
 
 The plan's `execution` is always `{status: "not_executed"}`. **Plans are never run on the radar host.**
