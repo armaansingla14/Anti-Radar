@@ -2,6 +2,8 @@
 export interface NavItem {
   href: string;
   label: string;
+  /** Shorter label for the masthead strip when space is tight (the full label stays in the tooltip and palette). */
+  short?: string;
   /** Second key of the "G then …" jump sequence, if any. */
   jump?: string;
   description: string;
@@ -24,7 +26,7 @@ export const NAV_PRIMARY: NavItem[] = [
 export const NAV_SECONDARY: NavItem[] = [
   { href: "/daily", label: "Daily", jump: "d", description: "What changed since your last visit" },
   { href: "/brief", label: "Brief", jump: "b", description: "Morning brief" },
-  { href: "/retrospective", label: "Retrospective", description: "How the framework reads known breakouts" },
+  { href: "/retrospective", label: "Retrospective", short: "Retro", description: "How the framework reads known breakouts" },
   { href: "/status", label: "Status", description: "Providers, freshness, LLM usage" },
 ];
 

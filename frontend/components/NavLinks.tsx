@@ -13,13 +13,13 @@ function NavLink({ item, quiet }: { item: NavItem; quiet?: boolean }) {
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
-      title={item.description}
+      title={item.short ? `${item.label}: ${item.description}` : item.description}
       className={clsx(
-        "relative whitespace-nowrap py-3 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors",
+        "relative whitespace-nowrap py-3 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors",
         active ? "text-ink" : quiet ? "text-ink-3 hover:text-ink" : "text-ink-2 hover:text-ink",
       )}
     >
-      {item.label}
+      {item.short ?? item.label}
       <span
         aria-hidden
         className={clsx("absolute inset-x-0 bottom-[7px] h-px transition-opacity", active ? "bg-accent opacity-100" : "opacity-0")}
@@ -33,7 +33,7 @@ export function NavLinks() {
   const { openPalette } = useKeyboard();
   return (
     <nav aria-label="Primary" className="flex items-center gap-6">
-      <div className="-mx-1 flex min-w-0 flex-1 items-center gap-x-5 overflow-x-auto px-1 [scrollbar-width:none]">
+      <div className="-mx-1 flex min-w-0 flex-1 items-center gap-x-[15px] overflow-x-auto px-1 [scrollbar-width:none]">
         {NAV_PRIMARY.map((item) => (
           <NavLink key={item.href} item={item} />
         ))}
