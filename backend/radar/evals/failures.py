@@ -627,6 +627,61 @@ DOCUMENTED: list[dict[str, Any]] = [
         "regression_case": None,
         "regression_test": "tests/unit/test_diligence_realdata_modal.py::test_open_source_claim_about_a_named_project_needs_that_projects_repository",
     },
+    {
+        "source_ref": 'Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #15', "agent": "PORTFOLIO ANALYST",
+        "entity_ref": "company:factory",
+        "claim_text": "'Factory Announces Connor Maloney as Head of Federal' typed PRODUCT.product_launch",
+        "category": "RANKING_ERROR", "severity": "LOW", "status": "FIXED",
+        "evidence_summary": "Found by the frontend review on real data: 'announces' matched the launch rule before any "
+                            "leadership rule, because 'announces <person> as <title>' was not a leadership pattern.",
+        "resolution": "'announces … as' with a leadership title is TALENT.executive_join; 'Head of …' is below C-level, "
+                      "so WATCH by M5.",
+        "regression_case": None,
+        "regression_test": 'tests/unit/test_portfolio_realdata_regressions.py::test_head_of_hire_is_talent_watch_not_a_launch',
+    },
+    {
+        "source_ref": 'Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #16', "agent": "PORTFOLIO ANALYST",
+        "entity_ref": "company:cognition",
+        "claim_text": "'National Design Studio and Cognition Launch the American Forge Residency' typed as a product "
+                      "launch, and counted as the prior launch that made 'Introducing SWE-2 Flash' a repeat (WATCH)",
+        "category": "RANKING_ERROR", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "A residency is a program, not a product. After the fix SWE-2 Flash (Nov 4) is still WATCH "
+                            "under M4, honestly: Cognition published 'Introducing SWE-2: Pushing the Pareto Frontier' "
+                            "(Sep 10) and 'Introducing Fusion in Devin Desktop & CLI' (Sep 11) within the 90 days before.",
+        "resolution": "Residencies, fellowships, accelerators, programs (not 'program of record'), summits, conferences "
+                      "and workshops are STRATEGIC.program NOISE and never count as launches for M4 novelty.",
+        "regression_case": None,
+        "regression_test": 'tests/unit/test_portfolio_realdata_regressions.py::test_programs_are_not_launches_and_do_not_count_for_novelty',
+    },
+    {
+        "source_ref": "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #17", "agent": "PORTFOLIO ANALYST",
+        "entity_ref": "company:modal",
+        "claim_text": "'NVIDIA Vera CPUs double throughput for Modal Sandboxes' became MATERIAL by M7 ('bears on diligence claim') after the diligence handoff",
+        "category": "MISSING_COUNTEREVIDENCE", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "Found on the round-3 re-run: the diligence run started from this event collected the post and "
+                            "extracted it as a claim; the event then matched its own claim (shared terms cpus, double, "
+                            "modal, nvidia). Circular evidence, not support.",
+        "resolution": "A diligence claim whose source URL is one of the event's own sources is skipped by M7's "
+                      "diligence link, and the link needs at least 3 shared key terms besides the company's name (it "
+                      "then matched an unrelated Snorkel customer claim on 'cpu, modal, sandboxes'); only a "
+                      "separately sourced, specific claim can make a technical event MATERIAL.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_portfolio_realdata_regressions.py::test_a_claim_extracted_from_the_same_post_does_not_make_it_material",
+    },
+    {
+        "source_ref": "Hand audit of the first live portfolio monitoring run (Nov 6, 2026) #18", "agent": "PORTFOLIO ANALYST",
+        "entity_ref": "company:cognition",
+        "claim_text": "'Corridor is Joining Cognition' (the company's own post) was classified NOISE",
+        "category": "RANKING_ERROR", "severity": "MEDIUM", "status": "FIXED",
+        "evidence_summary": "cognition.com/blog/corridor-joining-cognition (Oct 28) says 'Today, Corridor is joining "
+                            "Cognition, where we'll be taking Devin Security to the next level.' An organisation joining a "
+                            "portfolio company matched no title rule because the post never says 'acquire'.",
+        "resolution": "Rule N19: '<X> is joining <Company>' / 'Welcoming <X> to <Company>' on the company's own site, with "
+                      "no role ('as …'), is STRATEGIC.company_joining (WATCH by M11). It records what the post states; "
+                      "terms are not disclosed, so it is not called an acquisition.",
+        "regression_case": None,
+        "regression_test": "tests/unit/test_portfolio_realdata_regressions.py::test_an_organisation_joining_the_company_is_a_strategic_event_not_noise",
+    },
 ]
 
 _SEED_FIELDS = ("agent", "entity_ref", "claim_text", "category", "severity", "evidence_summary", "resolution",

@@ -76,7 +76,8 @@ def _diligence_claims(session: Session, ids: list[uuid.UUID]) -> dict[uuid.UUID,
     for cl in session.scalars(select(DiligenceClaim).where(DiligenceClaim.run_id.in_(list(latest.values())))
                               .order_by(DiligenceClaim.ordinal)):
         out[cl.company_id].append({"id": str(cl.id), "ordinal": cl.ordinal, "text": cl.claim_text,
-                                   "claim_type": cl.claim_type, "status": cl.verification_status})
+                                   "claim_type": cl.claim_type, "status": cl.verification_status,
+                                   "source_url": cl.source_url})
     return out
 
 
@@ -173,9 +174,12 @@ def run_portfolio(session: Session, day: date | None = None, *, window_days: int
     q = persist_questions(session, cards)
 
     metrics_written = 0
+    metric_reasons: dict[str, dict[str, str]] = {}
     for cid, company in sorted(tracked.items(), key=lambda kv: kv[1].slug):
-        proxies, _missing = company_proxies(session, company, day)
+        proxies, missing = company_proxies(session, company, day)
         metrics_written += write_proxies(session, cid, day, proxies)
+        if missing:
+            metric_reasons[company.slug] = missing
 
     counts = {
         "raw_changes": sum(1 for r in raw if r.in_window),
@@ -188,6 +192,7 @@ def run_portfolio(session: Session, day: date | None = None, *, window_days: int
         "questions_created": q["created"], "events_removed": removed, "metrics_written": metrics_written,
         "per_company": {tracked[uuid.UUID(k)].slug: dict(v) for k, v in sorted(per_company.items())
                         if uuid.UUID(k) in tracked},
+        "metric_reasons": metric_reasons,
     }
     session.execute(delete(PortfolioRun).where(PortfolioRun.day == day))
     run = PortfolioRun(id=uuid.uuid4(), day=day, started_at=started, finished_at=clock.wall_now(), counts=counts,
@@ -195,7 +200,8 @@ def run_portfolio(session: Session, day: date | None = None, *, window_days: int
     session.add(run)
     session.flush()
     out: dict[str, Any] = {"day": day.isoformat(), "run_id": str(run.id), **{k: v for k, v in counts.items()
-                                                                               if k != "per_company"},
+                                                                               if k not in ("per_company",
+                                                                                            "metric_reasons")},
                            "needs_attention": [c.company_slug for c in cards]}
     if reports:
         from radar.portfolio.reports import generate_brief, generate_reviews

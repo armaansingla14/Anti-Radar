@@ -86,6 +86,7 @@ Company posts and Hacker News titles first go through context rules, which use t
 | N11c | NOISE catalog_addition | "\<third-party thing\> is now available / in preview on \<platform\>" when the thing is not the company's own. Never counted as a launch. |
 | N17 | PRODUCT.product_sunset | sunset, deprecate, discontinue, shutting down |
 | N11b | PRODUCT.product_beta (WATCH) | beta, preview, early access |
+| N18 | NOISE program | Residency, fellowship, accelerator, program (not "program of record"), summit, conference, workshop. Never counted as a launch. |
 | N8o | PRODUCT.capability_announcement | "\<Company\> deploys \<thing\>". A customer announcement needs "\<Customer\> deploys \<Company\>". |
 
 Then the ordered title rules. The first match wins:
@@ -150,9 +151,9 @@ The first matching rule decides. M9 can then cap the result.
 | M2 | FINANCING announced by the company or a primary source | MATERIAL | "Acme raises $40M Series B" on acme.com |
 | M3 | Government contract of $1M or more; a company-announced partner or customer naming a tracked company or an agency | MATERIAL. A smaller or unpriced award, or an unnamed partner, gives WATCH. A proposed award (letter of intent) is WATCH until it is awarded. | DOE award of $2.4M |
 | M4 | Launch or major release announced by the company, and the first in 90 days | MATERIAL. A repeat launch, new feature or pricing change gives WATCH. | "Introducing Gelgrip 2" |
-| M5 | Founder or executive join or departure from a verified source | MATERIAL. Unverified gives WATCH. | "Jane Doe joins as CTO" on the company newsroom |
+| M5 | Founder, C-level, president or board join or departure from a verified source | MATERIAL. A VP / head-of hire, or an unverified change, gives WATCH. | "Jane Doe joins as CTO" on the company newsroom |
 | M6 | At least 10 roles of one specialised class in 14 days, or a new class | MATERIAL. At least 5 roles, acceleration or closures give WATCH. Always INFERENCE. | 12 new ML research roles |
-| M7 | Paper, open-source release, benchmark, release, or repo traction | WATCH. MATERIAL if it bears on a V3 diligence claim (2 or more shared distinctive terms) or traction is high (1,000 stars or more on a major or new repo). | Benchmark that restates a diligence performance claim |
+| M7 | Paper, open-source release, benchmark, release, or repo traction | WATCH. MATERIAL if it bears on a V3 diligence claim (3 or more shared distinctive terms besides the company's name, and the claim was not extracted from the event's own source) or traction is high (1,000 stars or more on a major or new repo). | Benchmark that restates a diligence performance claim |
 | M8 | A comp's event (`impact.py`) | A DIRECT comp's MATERIAL event is MATERIAL for the company. Other comp types give WATCH. A DIRECT comp's WATCH event gives WATCH. | A direct competitor launches |
 | M9 | Confidence below 0.5, or only third-party sources from one family | Capped at WATCH | A financing seen only on Hacker News |
 | M10 | Generic post, copy edit, docs, routine release, small repo, hiring snapshot, activity metric, low-engagement discussion (under 50 HN points) | NOISE | Homepage text edit with an unchanged title |
@@ -177,6 +178,8 @@ Per-company counts are stored as well. The Pulse page and the brief show the fun
 The same comp can belong to several portfolio companies; it is one `Company` with several relationships.
 
 Impact confidence is the event's confidence scaled by the comp's stated confidence (HIGH 1.0, MEDIUM 0.8, LOW 0.6). The impact reason quotes `why_comparable`. NOISE never propagates.
+
+Every event in the API carries `affects`: the portfolio companies it reaches, as SELF or through a comp, with the comp type, the reason and the materiality for that company. The events API filter `type=COMPETITIVE` selects events that reach a portfolio company through a comp. COMPETITIVE is a relation, never a stored event type. `materiality` accepts a comma list.
 
 ## Needs Attention
 
@@ -231,7 +234,18 @@ Windows are dated by the event itself: posting, release, publication, story or a
 | Releases | last 30 days vs the prior 30 |
 | Hacker News points | last 30 days vs the prior 30 |
 
-A pair is comparable only when both sides were observed. Otherwise it says "not compared" and why: no posting dates, no repository linked, or USAspending not queried. Movers list only comparable pairs.
+Levels (open technical roles, federal awards) are also compared with the previous capture.
+
+A pair is comparable only when both sides were observed. Otherwise it says "not compared" and gives the specific reason:
+- no posting dates on the job board;
+- no careers board configured;
+- no GitHub org linked;
+- USAspending not queried (no recipient configured);
+- first observation (no earlier capture).
+
+Movers list only comparable pairs.
+
+The `commercial` freshness family is observed when USAspending was queried, even when no award matched. It is `not_applicable` for a company with no configured recipient, which is different from never observed.
 
 ## Review workflow and decision log
 

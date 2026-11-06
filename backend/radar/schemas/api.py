@@ -184,6 +184,9 @@ class DataAge(BaseModel):
     last_observed_at: datetime | None = None  # max over families
     age_days: int | None = None  # data-clock days since last_observed_at
     families: dict[str, datetime | None] = Field(default_factory=dict)
+    # Families that do not apply to this entity (e.g. 'commercial' for a company with no USAspending recipient):
+    # distinct from a family that applies but was never observed (null in ``families``).
+    not_applicable: list[str] = Field(default_factory=list)
 
 
 class VelocityMetric(BaseModel):

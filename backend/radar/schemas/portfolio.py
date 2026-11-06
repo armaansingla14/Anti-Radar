@@ -140,8 +140,18 @@ class ImpactOut(BaseModel):
     materiality_for_company: Materiality
 
 
+class AffectOut(BaseModel):
+    company_slug: str
+    company_name: str
+    relation: str  # SELF | COMPETITOR | ADJACENT | INFRASTRUCTURE | INCUMBENT | OPEN_SOURCE
+    comp_type: str | None = None  # the configured comp type when relation is not SELF
+    impact_reason: str
+    materiality_for_company: Materiality
+
+
 class EventOut(BaseModel):
     id: str
+    affects: list[AffectOut] = Field(default_factory=list)  # portfolio companies this event affects
     company: CompanyBrief
     event_type: str
     event_subtype: str
@@ -311,6 +321,8 @@ class PortfolioCompanyOut(BaseModel):
     next_review: str | None = None
     decision_trace: list[DecisionOut]
     data_age: dict[str, Any] | None = None
+    # USAspending for this company: {state: queried | configured | not_applicable, recipient, last_queried_at}
+    usaspending: dict[str, Any] | None = None
     report_id: str | None = None
     diligence: dict[str, Any]
     needs_attention: AttentionCardOut | None = None

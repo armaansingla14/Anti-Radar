@@ -28,7 +28,7 @@ from radar.models import (
     ScoreSnapshot,
 )
 from radar.portfolio import attention, candidates
-from radar.portfolio.metrics import compare_windows, stored_proxies
+from radar.portfolio.metrics import compare_windows, previous_proxies, stored_proxies
 from radar.portfolio.run import attention_items
 
 STALE_DAYS = 7
@@ -72,9 +72,33 @@ def data_day(session: Session) -> date:
     return session.scalar(select(func.max(PortfolioRun.day))) or clock.today()
 
 
-def event_out(ev: MaterialEvent, subject: Company, *, relation: str | None = None) -> dict[str, Any]:
+def affects_for(session: Session, events: list[MaterialEvent]) -> dict[uuid.UUID, list[dict[str, Any]]]:
+    """Which portfolio companies each event affects (SELF and through comps), from EventImpact + the comp type."""
+    ids = [e.id for e in events]
+    out: dict[uuid.UUID, list[dict[str, Any]]] = {i: [] for i in ids}
+    if not ids:
+        return out
+    subj = {e.id: e.company_id for e in events}
+    rows = session.execute(select(EventImpact, Company).join(Company, Company.id == EventImpact.company_id)
+                           .where(EventImpact.event_id.in_(ids))).all()
+    pairs = {(r.company_id, r.comp_company_id): r.comp_type for r in session.scalars(
+        select(CompRelationship).where(CompRelationship.comp_company_id.in_(list(set(subj.values())))))}
+    for imp, c in rows:
+        out[imp.event_id].append({
+            "company_slug": c.slug, "company_name": c.name, "relation": imp.relation,
+            "comp_type": None if imp.relation == "SELF" else pairs.get((c.id, subj[imp.event_id])),
+            "impact_reason": imp.impact_reason, "materiality_for_company": imp.materiality_for_company})
+    for v in out.values():
+        v.sort(key=lambda a: (a["relation"] != "SELF", {"MATERIAL": 0, "WATCH": 1}.get(a["materiality_for_company"], 2),
+                              a["company_slug"]))
+    return out
+
+
+def event_out(ev: MaterialEvent, subject: Company, *, relation: str | None = None,
+              affects: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     meta = ev.meta or {}
     return {
+        "affects": affects or [],
         "id": str(ev.id), "company": company_brief(subject), "event_type": ev.event_type,
         "event_subtype": ev.event_subtype, "title": ev.title, "description": ev.description,
         "event_at": ev.event_at.isoformat(), "detected_at": _iso(ev.detected_at),
@@ -134,6 +158,23 @@ def _portfolio(session: Session) -> list[tuple[Company, PortfolioPosition]]:
     return sorted(((c, p) for c, p in rows), key=lambda cp: cp[0].name.lower())
 
 
+def metric_reasons(session: Session) -> dict[str, dict[str, str]]:
+    """Why each proxy could not be computed, per company slug, as recorded by the latest monitoring run."""
+    counts = session.scalar(select(PortfolioRun.counts).order_by(PortfolioRun.day.desc(),
+                                                                 PortfolioRun.started_at.desc()).limit(1)) or {}
+    return dict(counts.get("metric_reasons") or {})
+
+
+def usaspending_status(company: Company) -> dict[str, Any]:
+    """'queried' (with the time, even when no award matched) | 'configured' (not queried yet) | 'not_applicable'."""
+    attrs = company.attrs or {}
+    ident = attrs.get("portfolio_identifiers") if isinstance(attrs.get("portfolio_identifiers"), dict) else {}
+    recipient = ident.get("usaspending_recipient") or attrs.get("usaspending_recipient")
+    queried = attrs.get("usaspending_checked_at")
+    state = "queried" if queried else "configured" if recipient else "not_applicable"
+    return {"state": state, "recipient": recipient, "last_queried_at": queried}
+
+
 def monitoring(session: Session) -> dict[str, Any]:
     from radar.services.freshness import data_age, feed_as_of
 
@@ -175,7 +216,8 @@ def monitoring(session: Session) -> dict[str, Any]:
 def movers(session: Session, day: date, limit: int = 8) -> list[dict[str, Any]]:
     out = []
     for c, _ in _portfolio(session):
-        windows = compare_windows(stored_proxies(session, c.id, day))
+        windows = compare_windows(stored_proxies(session, c.id, day), metric_reasons(session).get(c.slug),
+                                  previous_proxies(session, c.id, day))
         for w in windows:
             if w["comparable"] and w["delta"]:
                 out.append({"company": company_brief(c), "metric": w})
@@ -243,10 +285,12 @@ def pulse(session: Session) -> dict[str, Any]:
     mats = sorted({ev.id: (imp, ev) for imp, ev in impacts if imp.materiality_for_company == "MATERIAL"}.values(),
                   key=lambda x: (-x[1].event_at.timestamp(), str(x[1].id)))[:12]
     subj = _subjects(session, [ev for _, ev in mats])
+    aff = affects_for(session, [ev for _, ev in mats])
     brief_id = session.scalar(select(ResearchReport.id).where(ResearchReport.kind == "portfolio_brief")
                               .order_by(ResearchReport.created_at.desc()).limit(1))
     return {"day": day.isoformat(), "counts": counts, "funnel": funnel(session), "needs_attention": cards,
-            "material_events": [event_out(ev, subj[ev.company_id], relation=imp.relation) for imp, ev in mats],
+            "material_events": [event_out(ev, subj[ev.company_id], relation=imp.relation, affects=aff.get(ev.id))
+                                for imp, ev in mats],
             "movers": movers(session, day), "since_last_review": since_last_review(session, day),
             "monitoring": monitoring(session), "brief_id": str(brief_id) if brief_id else None}
 
@@ -355,8 +399,11 @@ def company_view(session: Session, company: Company, position: PortfolioPosition
         .where(EventImpact.company_id == company.id, MaterialEvent.event_at >= start, MaterialEvent.event_at <= end)
         .order_by(MaterialEvent.event_at.desc(), MaterialEvent.id)).all()
     subj = _subjects(session, [ev for _, ev in rows])
-    own = [event_out(ev, subj[ev.company_id], relation="SELF") for imp, ev in rows if imp.relation == "SELF"]
-    comp = [event_out(ev, subj[ev.company_id], relation=imp.relation) for imp, ev in rows if imp.relation != "SELF"]
+    aff = affects_for(session, [ev for _, ev in rows])
+    own = [event_out(ev, subj[ev.company_id], relation="SELF", affects=aff.get(ev.id))
+           for imp, ev in rows if imp.relation == "SELF"]
+    comp = [event_out(ev, subj[ev.company_id], relation=imp.relation, affects=aff.get(ev.id))
+            for imp, ev in rows if imp.relation != "SELF"]
     noise = session.scalar(select(func.count()).select_from(MaterialEvent).where(
         MaterialEvent.company_id == company.id, MaterialEvent.materiality == "NOISE",
         MaterialEvent.event_at >= start, MaterialEvent.event_at <= end)) or 0
@@ -373,7 +420,8 @@ def company_view(session: Session, company: Company, position: PortfolioPosition
     return {
         "company": company_brief(company), "position": position_out(position), "events": own,
         "competitor_events": comp, "noise_count": int(noise),
-        "metrics": compare_windows(proxies), "proxies": sorted(proxies.values(), key=lambda p: p["metric"]),
+        "metrics": compare_windows(proxies, metric_reasons(session).get(company.slug),
+                                   previous_proxies(session, company.id, day)), "proxies": sorted(proxies.values(), key=lambda p: p["metric"]),
         "comps": [{k: v for k, v in c.items() if k != "_founded"} for c in comps_of(session, company, day)],
         "questions": questions_out(session, qs),
         "last_review": ({"id": str(last.id), "decision": last.decision, "note": last.note, "reviewer": last.reviewer,
@@ -381,17 +429,22 @@ def company_view(session: Session, company: Company, position: PortfolioPosition
         "next_review": (last.created_at + timedelta(days=REVIEW_INTERVAL_DAYS)).date().isoformat() if last else None,
         "decision_trace": decisions_out(trace),
         "data_age": age.model_dump(mode="json") if age is not None else None,
+        "usaspending": usaspending_status(company),
         "report_id": latest_review_id(session, company.id),
         "diligence": diligence_status(session, company.id),
         "needs_attention": card[0] if card else None,
     }
 
 
-def list_events(session: Session, *, event_type: str | None = None, materiality: str | None = None,
+def list_events(session: Session, *, event_type: str | None = None, materiality: str | list[str] | None = None,
                 company: Company | None = None, relation: str | None = None, offset: int = 0, limit: int = 50
                 ) -> dict[str, Any]:
     """Events, newest first. With ``company`` / ``relation`` the list is the impacts on portfolio companies
-    (materiality then means materiality for that company); otherwise every stored event."""
+    (materiality then means materiality for that company); otherwise every stored event.
+
+    ``materiality`` takes one level or several. ``event_type='COMPETITIVE'`` is not a stored type: it selects events
+    that reach a portfolio company through a comp (an impact whose relation is not SELF)."""
+    levels = [materiality] if isinstance(materiality, str) else list(materiality or [])
     joined = company is not None or relation is not None
     if joined:
         q = select(MaterialEvent, EventImpact.relation).join(EventImpact, EventImpact.event_id == MaterialEvent.id)
@@ -399,20 +452,25 @@ def list_events(session: Session, *, event_type: str | None = None, materiality:
             q = q.where(EventImpact.company_id == company.id)
         if relation is not None:
             q = q.where(EventImpact.relation == relation)
-        if materiality is not None:
-            q = q.where(EventImpact.materiality_for_company == materiality)
+        if levels:
+            q = q.where(EventImpact.materiality_for_company.in_(levels))
+        if event_type == "COMPETITIVE":
+            q = q.where(EventImpact.relation != "SELF")
     else:
         q = select(MaterialEvent)
-        if materiality is not None:
-            q = q.where(MaterialEvent.materiality == materiality)
-    if event_type is not None:
+        if levels:
+            q = q.where(MaterialEvent.materiality.in_(levels))
+        if event_type == "COMPETITIVE":
+            q = q.where(MaterialEvent.id.in_(select(EventImpact.event_id).where(EventImpact.relation != "SELF")))
+    if event_type is not None and event_type != "COMPETITIVE":
         q = q.where(MaterialEvent.event_type == event_type)
     total = session.scalar(select(func.count()).select_from(q.subquery())) or 0
     q = q.order_by(MaterialEvent.event_at.desc(), MaterialEvent.id).offset(offset).limit(limit)
     rows = [(r[0], r[1]) for r in session.execute(q).all()] if joined else [(e, None) for e in session.scalars(q)]
     subj = _subjects(session, [ev for ev, _ in rows])
+    aff = affects_for(session, [ev for ev, _ in rows])
     return {"total": int(total), "offset": offset, "limit": limit,
-            "items": [event_out(ev, subj[ev.company_id], relation=rel) for ev, rel in rows]}
+            "items": [event_out(ev, subj[ev.company_id], relation=rel, affects=aff.get(ev.id)) for ev, rel in rows]}
 
 
 def event_detail(session: Session, ev: MaterialEvent) -> dict[str, Any]:
@@ -434,7 +492,7 @@ def event_detail(session: Session, ev: MaterialEvent) -> dict[str, Any]:
                "workspace": f"/diligence/{subject.slug}", "run_endpoint": f"/api/diligence/{subject.slug}/run",
                "claim": (ev.meta or {}).get("diligence_claim")}
     return {
-        "event": event_out(ev, subject),
+        "event": event_out(ev, subject, affects=affects_for(session, [ev]).get(ev.id)),
         "impacts": [{"company": company_brief(comps[i.company_id]), "relation": i.relation,
                      "impact_reason": i.impact_reason, "confidence": i.confidence,
                      "materiality_for_company": i.materiality_for_company} for i in imps if i.company_id in comps],

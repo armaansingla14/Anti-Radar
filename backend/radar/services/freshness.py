@@ -15,7 +15,9 @@ Two views:
   web        website signals; company web pages last fetched
   community  hackernews signals
   social     x signals
-  commercial usaspending signals (federal awards; companies only)
+  commercial usaspending signals (federal awards; companies only), or the time USAspending was queried
+             with no matching award (Company.attrs['usaspending_checked_at']); ``not_applicable`` when no
+             recipient is configured (different from "applies but never observed")
   ========== ==================================================================
 
   Signal observation time is ``detected_at`` (stamped on the data clock at ingest), never later
@@ -164,6 +166,11 @@ def family_last_observed(session: Session, entity_type: EntityType, ids: Iterabl
                     _bump(out, pid, "github", at)
 
     if entity_type == "company":
+        # USAspending queried for the company (portfolio capture): an observation even when no award matched.
+        for cid, attrs in session.execute(select(Company.id, Company.attrs).where(Company.id.in_(ids))):
+            at = _parse_dt((attrs or {}).get("usaspending_checked_at"))
+            if at is not None and at <= now:
+                _bump(out, cid, "commercial", at)
         for cid, at in session.execute(
                 select(WebPage.company_id, func.max(WebPage.last_fetched_at))
                 .where(WebPage.company_id.in_(ids), WebPage.last_fetched_at <= now).group_by(WebPage.company_id)):
@@ -204,6 +211,8 @@ def data_age(session: Session, entity_type: EntityType, ids: Iterable[uuid.UUID]
         return {}
     model = Company if entity_type == "company" else Person
     updated = dict(session.execute(select(model.id, model.updated_at).where(model.id.in_(ids))).tuples().all())
+    company_attrs = dict(session.execute(select(Company.id, Company.attrs).where(Company.id.in_(ids))).tuples()
+                         .all()) if entity_type == "company" else {}
     fams = family_last_observed(session, entity_type, ids)
     out = {}
     applicable = PERSON_FAMILIES if entity_type == "person" else FAMILIES
@@ -212,7 +221,14 @@ def data_age(session: Session, entity_type: EntityType, ids: Iterable[uuid.UUID]
         f = {k: got.get(k) for k in applicable}
         seen = [v for v in f.values() if v is not None]
         last = max(seen) if seen else None
-        out[i] = DataAge(updated_at=updated.get(i), last_observed_at=last, age_days=age_days(last), families=f)
+        na = []
+        if entity_type == "company" and f.get("commercial") is None:
+            attrs = company_attrs.get(i) or {}
+            ident = attrs.get("portfolio_identifiers") if isinstance(attrs.get("portfolio_identifiers"), dict) else {}
+            if not (ident.get("usaspending_recipient") or attrs.get("usaspending_recipient")):
+                na.append("commercial")  # USAspending is only queried for a configured recipient
+        out[i] = DataAge(updated_at=updated.get(i), last_observed_at=last, age_days=age_days(last), families=f,
+                         not_applicable=na)
     return out
 
 

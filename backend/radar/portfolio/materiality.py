@@ -22,7 +22,8 @@ M5     TALENT: a founder / C-level executive / president / board member joining 
 M6     TALENT hiring: >= 10 new postings of one specialised role class in 14 days, or a specialised class never
        posted before → MATERIAL; >= 5 → WATCH; hiring acceleration or role closures → WATCH. Always INFERENCE.
 M7     TECHNICAL (paper, open-source release, benchmark claim, repository release, repo traction) → WATCH;
-       MATERIAL when it bears on a claim in the company's V3 diligence (shared key terms with a recorded claim)
+       MATERIAL when it bears on a claim in the company's V3 diligence (>= 3 shared key terms besides the company name with a recorded claim that
+       was not extracted from the event's own source)
        or repository traction is high (a major release or new repository of a repo with >= 1,000 stars).
 M8     Competitor events (``impact.py``): a MATERIAL event of a DIRECT comp is MATERIAL for the portfolio company;
        of an ADJACENT / INFRASTRUCTURE / INCUMBENT / OPEN_SOURCE comp → WATCH. A comp's WATCH event is WATCH for a
@@ -49,7 +50,7 @@ CONTRACT_MATERIAL_USD = 1_000_000
 NOVELTY_DAYS = 90
 LOW_CONFIDENCE = 0.5
 HIGH_TRACTION_STARS = 1_000
-DILIGENCE_OVERLAP = 2  # distinctive shared tokens between an event title and a diligence claim
+DILIGENCE_OVERLAP = 3  # distinctive shared tokens (company name excluded) between an event and a diligence claim
 LAUNCH_SUBTYPES = frozenset({"product_launch", "major_release"})
 C_LEVEL_RE = re.compile(r"\b(CEO|CTO|COO|CFO|CPO|CSO|Chief \w+ Officer|President|co-?founder|founder|"
                         r"board of directors|chair(man|woman|person)?)\b", re.IGNORECASE)
@@ -117,14 +118,21 @@ _STOP_EXTRA = frozenset("model models ai launch launches launched introducing an
 
 def diligence_link(ev: Candidate, ctx: CompanyContext) -> dict | None:
     """The diligence claim an event bears on (>= 2 distinctive shared tokens), or None."""
-    et = tokens(f"{ev.title} {ev.description or ''}") - _STOP_EXTRA
+    et = tokens(f"{ev.title} {ev.description or ''}") - _STOP_EXTRA - tokens(ctx.name)
+    own = {_url_key(u) for u in ev.urls}
     best = None
     for cl in ctx.diligence_claims:
+        if cl.get("source_url") and _url_key(str(cl["source_url"])) in own:
+            continue  # a claim extracted from this very post is not separate evidence about it
         shared = sorted(et & (tokens(str(cl.get("text") or "")) - _STOP_EXTRA))
         shared = [t for t in shared if len(t) > 2 and not t.isdigit()]
         if len(shared) >= DILIGENCE_OVERLAP and (best is None or len(shared) > len(best["shared"])):
             best = {**cl, "shared": shared}
     return best
+
+
+def _url_key(u: str) -> str:
+    return re.sub(r"^https?://(www\.)?", "", (u or "").strip().lower()).split("#")[0].rstrip("/")
 
 
 def _names_major_counterparty(ev: Candidate, ctx: CompanyContext) -> str | None:

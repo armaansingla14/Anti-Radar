@@ -6,6 +6,7 @@ semver). Company posts and Hacker News story titles go through ``TITLE_RULES`` i
 =====  ==========  ======================  ===============================================================
 N1     RISK        security_incident …     breach / outage / incident / lawsuit / recall / vulnerability
 N2     FINANCING   acquisition             acquires / acquired / acquisition
+N19    STRATEGIC   company_joining         '<X> is joining <Company>' / 'Welcoming <X> to <Company>' (no role)
 N3     FINANCING   new_round               series A–H / seed round / funding round / raises|raised + $amount …
 N4     FINANCING   strategic_investment    strategic investment / invests in / investment from
 N5     REGULATORY  regulatory_milestone    FAA / FCC / NRC / FDA / export control / operating licence / regulat…
@@ -91,14 +92,19 @@ TITLE_RULES: tuple[TitleRule, ...] = (
     TitleRule("N6", "COMMERCIAL", "government_contract", _rx(r"\b(contracts?|awarded|awards?|task order|OTA)\b"),
               AGENCY_RE),
     TitleRule("N7", "COMMERCIAL", "partnership", _rx(r"\b(partners? with|partnership|partnering|collaborat\w+|"
-                                                     r"teams up)\b")),
+                                                     r"teams? up)\b")),
     TitleRule("N8", "COMMERCIAL", "customer_announcement",
               _rx(r"\b(deploys|deployed (at|with|by)|deployment (at|with)|selects|chooses|adopts|customer)\b")),
     TitleRule("N9", "TALENT", "executive_departure",
               _rx(r"\b(steps down|stepping down|departs|departure|leaves|leaving|resigns)\b"), LEADER_TITLE_RE),
     TitleRule("N9", "TALENT", "executive_join",
-              _rx(r"\b(joins|joined|appoints|appointed|names|named|welcomes|hires|hired|promotes|promoted|new)\b"),
+              _rx(r"\b(joins|joined|appoints|appointed|names|named|welcomes|hires|hired|promotes|promoted|new|"
+                  r"announces\b.{1,80}\bas)\b"),
               LEADER_TITLE_RE),
+    # Residencies, fellowships, programs and events are not products (and never count as launches for novelty).
+    TitleRule("N18", NOISE_TYPE, "program",
+              _rx(r"\b(residency|fellowship|accelerator|incubator|scholarship|hackathon|grant program|"
+                  r"(?<!of record )program(me)?(?! of record)|summit|conference|webinar|meetup|workshop|bootcamp)\b")),
     TitleRule("N14", "PRODUCT", "integration", _rx(r"\b(integrat(es|ed|ion|ions|ing)|native integration)\b")),
     TitleRule("N11", "PRODUCT", "product_launch",
               _rx(r"\b(launch(es|ed|ing)?|introducing|introduces|announcing|announces|unveil\w*|now available|"
@@ -118,13 +124,13 @@ TITLE_RULES: tuple[TitleRule, ...] = (
 
 NOISE_SUBTYPES = frozenset({"generic_post", "minor_copy_update", "routine_docs", "routine_release", "minor_repo",
                             "hiring_state", "activity_metric", "low_engagement_discussion", "single_postings",
-                            "other", "catalog_addition", "customer_story", "guide"})
+                            "other", "catalog_addition", "customer_story", "guide", "program"})
 # The stored event type of a NOISE candidate (its materiality is NOISE; the type only says which area it touched).
 NOISE_EVENT_TYPE = {"generic_post": "STRATEGIC", "minor_copy_update": "STRATEGIC", "low_engagement_discussion":
                     "STRATEGIC", "other": "STRATEGIC", "routine_docs": "TECHNICAL", "routine_release": "TECHNICAL",
                     "minor_repo": "TECHNICAL", "activity_metric": "TECHNICAL", "hiring_state": "TALENT",
                     "single_postings": "TALENT", "catalog_addition": "PRODUCT", "customer_story": "COMMERCIAL",
-                    "guide": "STRATEGIC"}
+                    "guide": "STRATEGIC", "program": "STRATEGIC"}
 HN_TYPES = frozenset({"hn_launch", "hn_show", "hn_discussion"})
 HN_ENGAGED_POINTS = 50  # below this, an unmatched HN discussion is low-engagement social noise
 SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?(?:[-+.]?([0-9A-Za-z.-]+))?$")
@@ -173,6 +179,11 @@ AWARD_WORD_RE = _rx(r"\b(award|awards|incentives?|contract|funding|grant|CHIPS|l
 SUNSET_RE = _rx(r"\b(sunset\w*|deprecat\w*|discontinu\w*|shutting down|shut down|end[- ]of[- ]life|winding down)\b")
 BETA_RE = _rx(r"\b(beta|preview|early access|waitlist|research preview)\b")
 DEPLOY_VERB_RE = _rx(r"\b(deploys|deployed|selects|chooses|adopts|standardi[sz]es on)\b")
+# '<X> is joining <Company>' / 'Welcoming <X> to <Company>' on the company's own site: an organisation or team joining.
+# The post may not say 'acquire', so this records only what it states (terms not disclosed); a person joining in a
+# role ('… as CTO') is left to the leadership rules.
+JOINING_RE = _rx(r"^(?P<x>.+?)\s+(?:is|are)\s+joining\s+(?P<co>.+?)\s*$")
+WELCOMING_RE = _rx(r"^welcoming\s+(?P<x>.+?)\s+to\s+(?P<co>.+?)\s*$")
 
 
 def _norm(s: str) -> str:
@@ -230,6 +241,10 @@ def classify_title(title: str, *, url: str | None = None, description: str | Non
         after = t[verb.end():]
         if _mentions(before, company_name) and not _mentions(after, company_name):
             return "PRODUCT", "capability_announcement", "N8o"  # '<Company> deploys <thing>': its own capability
+    if company_name and not re.search(r"\bas\s+(an?\s+|our\s+|the\s+)?[A-Za-z]", t):
+        j = JOINING_RE.match(t.strip()) or WELCOMING_RE.match(t.strip())
+        if j and _mentions(j.group("co"), company_name) and not _mentions(j.group("x"), company_name):
+            return "STRATEGIC", "company_joining", "N19"
     if rule is None:
         return None
     return rule.event_type, rule.subtype, rule.id

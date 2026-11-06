@@ -307,3 +307,41 @@ def test_window_bounds():
 
     s, e = window_bounds(date(2026, 10, 6), 30)
     assert e.date() == date(2026, 10, 6) and (e - s).days == 30
+
+
+def test_meaning_follows_the_actual_subtypes():
+    """A Modal-like mix: own financing, launch, beta, sunset and a performance claim; the competitor (RunPod) only
+    shipped repository releases. The template must not speak of competitor launches."""
+    items = [item("modal", "MATERIAL", et="FINANCING", st="new_round"),
+             item("modal", "WATCH", et="PRODUCT", st="product_beta"),
+             item("modal", "WATCH", et="PRODUCT", st="product_sunset"),
+             item("modal", "WATCH", et="PRODUCT", st="product_launch"),
+             item("modal", "WATCH", et="TECHNICAL", st="performance_claim"),
+             item("modal", "WATCH", rel="COMPETITOR", et="TECHNICAL", st="repository_release")]
+    text = attention.what_this_could_mean(items)
+    assert "competitor" not in text.lower() or "launch" not in text.lower()
+    assert "Launches by the company and a competitor" not in text
+    assert text.startswith("New capital")
+    both = items + [item("modal", "WATCH", rel="COMPETITOR", et="PRODUCT", st="product_launch")]
+    assert "Launches by the company and a competitor" in attention.what_this_could_mean(both)
+    only_comp_release = [item("x", "WATCH", rel="COMPETITOR", et="TECHNICAL", st="repository_release")]
+    assert "shipping pace" in attention.what_this_could_mean(only_comp_release)
+    funding = [item("x", "MATERIAL", rel="COMPETITOR", et="FINANCING", st="new_round")]
+    assert "funding" in attention.what_this_could_mean(funding)
+
+
+def test_specific_not_compared_reasons():
+    reasons = {"new_technical_roles": "no posting dates on the job board", "releases": "no GitHub org linked",
+               "federal_awards": "USAspending not queried (no recipient configured)"}
+    p = {"proxy_open_technical_roles": {"value": 4, "day": "2026-11-06"},
+         "proxy_hn_points_30d": {"value": 3}, "proxy_hn_points_prior_30d": {"value": 1}}
+    w = {x["metric"]: x for x in compare_windows(p, reasons, previous={})}
+    assert w["new_technical_roles"]["reason"] == "no posting dates on the job board"
+    assert w["releases"]["reason"] == "no GitHub org linked"
+    assert w["open_technical_roles"]["reason"] == "first observation (no earlier capture)"
+    assert w["federal_awards"]["reason"] == "USAspending not queried (no recipient configured)"
+    assert w["hn_points"]["comparable"] and all(x["reason"] != "one of the two windows was not observed"
+                                                for x in w.values())
+    w2 = {x["metric"]: x for x in compare_windows(p, reasons, previous={
+        "proxy_open_technical_roles": {"value": 2}})}
+    assert w2["open_technical_roles"]["comparable"] and w2["open_technical_roles"]["delta"] == 2

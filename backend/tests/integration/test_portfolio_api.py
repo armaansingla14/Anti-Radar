@@ -156,3 +156,51 @@ def test_monitoring_freshness_and_staleness(api, db):
     m = _get(api, "/api/portfolio")["monitoring"]
     assert m["tracked"] == m["fresh"] + m["stale"] + m["never_observed"] == 4
     assert m["stale"] == 1 and m["stale_after_days"] == 7 and m["events_updated_at"]
+
+
+def test_events_say_which_portfolio_company_they_affect(api):
+    """Round 3 #2: comp events carry the affected portfolio companies (SELF included)."""
+    p = _get(api, "/api/portfolio")
+    orbit = next(e for e in p["material_events"] if "Orbit One" in e["title"])
+    aff = {a["company_slug"]: a for a in orbit["affects"]}
+    assert aff["acme-robotics"]["relation"] == "COMPETITOR" and aff["acme-robotics"]["comp_type"] == "DIRECT"
+    assert aff["halcyon-fusion"]["comp_type"] == "INFRASTRUCTURE" and aff["halcyon-fusion"]["impact_reason"]
+    own = next(e for e in _get(api, "/api/portfolio/events?materiality=MATERIAL")["items"] if "Series B" in e["title"])
+    assert [(a["company_slug"], a["relation"], a["comp_type"]) for a in own["affects"]] == [
+        ("acme-robotics", "SELF", None)]
+
+
+def test_competitive_type_and_materiality_lists(api):
+    """Round 3 #4 and #8."""
+    comp = _get(api, "/api/portfolio/events?type=COMPETITIVE")
+    assert comp["total"] == 2  # Orbitform's launch and Gripworks' round reach portfolio companies through comps
+    assert all(any(a["relation"] != "SELF" for a in e["affects"]) for e in comp["items"])
+    assert _get(api, "/api/portfolio/events?company=acme-robotics&type=COMPETITIVE")["total"] == 2
+    both = _get(api, "/api/portfolio/events?materiality=MATERIAL,WATCH")
+    assert both["total"] == 6 and {e["materiality"] for e in both["items"]} == {"MATERIAL", "WATCH"}
+    assert api.get("/api/portfolio/events?materiality=MATERIAL,NOPE").status_code == 422
+
+
+def test_usaspending_freshness_queried_vs_not_applicable(api, db):
+    """Round 3 #7: a queried recipient is observed even without awards; no recipient is 'not applicable'."""
+    from radar.models import Company, Signal
+
+    hal = db.scalar(select(Company).where(Company.slug == "halcyon-fusion"))
+    db.execute(Signal.__table__.delete().where(Signal.signal_type == "federal_award"))
+    hal.attrs = {**(hal.attrs or {}), "usaspending_checked_at": "2026-10-05"}
+    db.commit()
+    h = _get(api, "/api/portfolio/halcyon-fusion")
+    assert h["usaspending"]["state"] == "queried" and h["usaspending"]["last_queried_at"] == "2026-10-05"
+    assert h["data_age"]["families"]["commercial"].startswith("2026-10-05")
+    assert "commercial" not in h["data_age"]["not_applicable"]
+    a = _get(api, "/api/portfolio/acme-robotics")
+    assert a["usaspending"]["state"] == "not_applicable" and a["data_age"]["not_applicable"] == ["commercial"]
+    reasons = {m["metric"]: m["reason"] for m in a["metrics"]}
+    assert reasons["releases"] == "no public repository observed for the GitHub org"
+    assert reasons["open_technical_roles"] == "first observation (no earlier capture)"
+
+
+def test_diligence_run_accepts_an_event_id(api, db):
+    """Round 3 #5: the frontend sends {event_id}; it is parsed (404 for an unknown event), never 422."""
+    r = api.post("/api/diligence/acme-robotics/run", json={"event_id": "00000000-0000-0000-0000-000000000001"})
+    assert r.status_code == 404 and r.json()["detail"] == "event_not_found"

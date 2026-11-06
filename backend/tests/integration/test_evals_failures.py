@@ -33,10 +33,10 @@ def test_related_tests_are_exposed_for_ledger_entries():
 
 
 def test_seeding_is_idempotent_with_documented_statuses(db):
-    assert seed_documented_failures(db) == {"created": 40, "updated": 0}
+    assert seed_documented_failures(db) == {"created": 44, "updated": 0}
     assert seed_documented_failures(db) == {"created": 0, "updated": 0}
     rows = list_failures(db)
-    assert [f.number for f in rows] == list(range(1, 41))
+    assert [f.number for f in rows] == list(range(1, 45))
     found_by_evaluator = [f for f in rows if f.origin == "evaluator"]
     assert len(found_by_evaluator) == 1 and "Founder Score 48/100" in found_by_evaluator[0].claim_text
     assert all(f.origin == "documented" for f in rows if f not in found_by_evaluator)
@@ -88,13 +88,13 @@ def test_review_persists_and_survives_reseed(db):
 def test_create_failure_numbers_and_validation(db):
     seed_documented_failures(db)
     f = create_failure(db, agent="RADAR ANALYST", claim_text="x", category="UNSUPPORTED_CLAIM", severity="LOW")
-    assert f.number == 41 and f.status == "OPEN" and f.origin == "reviewer" and f.detected_at is not None
+    assert f.number == 45 and f.status == "OPEN" and f.origin == "reviewer" and f.detected_at is not None
     import pytest
 
     with pytest.raises(ValueError):
         create_failure(db, agent="RADAR ANALYST", claim_text="x", category="NOPE", severity="LOW")
     with pytest.raises(ValueError):
         review_failure(db, 11, status="MAYBE", note="x")
-    assert list_failures(db, status="OPEN", agent="RADAR ANALYST")[0].number == 41
+    assert list_failures(db, status="OPEN", agent="RADAR ANALYST")[0].number == 45
     assert len(list_failures(db, category="SOURCE_QUALITY")) == 5  # smg-project is ATTRIBUTION_ERROR; + portfolio #3, Modal #1, #4
-    assert db.scalar(select(func.count()).select_from(AgentFailure)) == 41
+    assert db.scalar(select(func.count()).select_from(AgentFailure)) == 45

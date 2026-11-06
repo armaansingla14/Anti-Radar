@@ -87,17 +87,18 @@ def portfolio_companies(session: SessionDep) -> list[dict]:
 
 
 @router.get("/portfolio/events", response_model=EventListOut)
-def portfolio_events(
+def portfolio_events(  # type=COMPETITIVE: events reaching a portfolio company through a comp; materiality=A,B
     session: SessionDep,
     type: Annotated[str | None, Query(pattern=EVENT_TYPE_RE)] = None,  # noqa: A002 — public query name
-    materiality: Annotated[str | None, Query(pattern=r"^(MATERIAL|WATCH|NOISE)$")] = None,
+    materiality: Annotated[str | None, Query(pattern=r"^(MATERIAL|WATCH|NOISE)(,(MATERIAL|WATCH|NOISE)){0,2}$")] = None,
     company: Annotated[str | None, Query(max_length=200)] = None,
     relation: Annotated[str | None, Query(pattern=RELATION_RE)] = None,
     offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
     c = _any_company(session, company) if company else None
-    return views.list_events(session, event_type=type, materiality=materiality, company=c, relation=relation,
+    levels = sorted(set(materiality.split(","))) if materiality else None
+    return views.list_events(session, event_type=type, materiality=levels, company=c, relation=relation,
                              offset=offset, limit=limit)
 
 

@@ -67,6 +67,7 @@ def company_proxies(session: Session, company: Company, day: date) -> tuple[list
     out: list[Proxy] = []
     missing: dict[str, str] = {}
     attrs = company.attrs or {}
+    ident = attrs.get("portfolio_identifiers") if isinstance(attrs.get("portfolio_identifiers"), dict) else {}
     pages = attrs.get("pages") if isinstance(attrs.get("pages"), dict) else {}
     careers = pages.get("careers") if pages else None
 
@@ -82,10 +83,12 @@ def company_proxies(session: Session, company: Company, day: date) -> tuple[list
             out += [Proxy("proxy_new_technical_roles_14d", float(cur), url, 0.9),
                     Proxy("proxy_new_technical_roles_prior_14d", float(prior), url, 0.9)]
         else:
-            missing["new_technical_roles"] = "the job board gives no posting dates"
+            missing["new_technical_roles"] = "no posting dates on the job board"
     else:
-        missing["open_technical_roles"] = "no public job board observed"
-        missing["new_technical_roles"] = "no public job board observed"
+        why = ("careers board configured but not observed yet" if ident.get("ats")
+               else "no careers board configured or found on the website")
+        missing["open_technical_roles"] = why
+        missing["new_technical_roles"] = why
 
     repos = list(session.scalars(select(Repository).where(Repository.company_id == company.id)))
     if repos:
@@ -118,8 +121,10 @@ def company_proxies(session: Session, company: Company, day: date) -> tuple[list
         else:
             missing["contributors"] = "contributor counts not observed"
     else:
-        missing["releases"] = "no public repository linked to the company"
-        missing["contributors"] = "no public repository linked to the company"
+        why = ("no public repository observed for the GitHub org" if company.github_org or ident.get("github_org")
+               else "no GitHub org linked")
+        missing["releases"] = why
+        missing["contributors"] = why
 
     papers = session.scalar(select(func.count()).select_from(ResearchPaper).where(
         ResearchPaper.company_id == company.id, ResearchPaper.published_at <= end,
@@ -155,7 +160,9 @@ def company_proxies(session: Session, company: Company, day: date) -> tuple[list
         out += [Proxy("proxy_federal_awards_24m", float(len(awards)), url, 1.0),
                 Proxy("proxy_federal_award_amount_24m", float(sum(float(v or 0) for v, _ in awards)), url, 1.0)]
     else:
-        missing["federal_awards"] = "no federal award recorded (USAspending not queried or no exact-name match)"
+        missing["federal_awards"] = ("USAspending not queried yet (recipient configured)"
+                                     if ident.get("usaspending_recipient")
+                                     else "USAspending not queried (no recipient configured)")
     return out, missing
 
 
@@ -177,9 +184,20 @@ def write_proxies(session: Session, company_id: uuid.UUID, day: date, proxies: l
     return len(rows)
 
 
-def compare_windows(proxies: dict[str, Proxy | dict[str, Any]], missing: dict[str, str] | None = None
-                    ) -> list[dict[str, Any]]:
-    """[{metric, current, prior, window, comparable, reason, proxy_label, source_url, confidence}] per pair."""
+OBSERVED: tuple[tuple[str, str], ...] = (
+    ("open_technical_roles", "proxy_open_technical_roles"),
+    ("federal_awards", "proxy_federal_awards_24m"),
+)
+
+
+def compare_windows(proxies: dict[str, Proxy | dict[str, Any]], missing: dict[str, str] | None = None,
+                    previous: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """[{metric, current, prior, window, comparable, reason, proxy_label, source_url, confidence}].
+
+    Event-dated pairs (last 14 / 30 days vs the window before) need both sides; observed pairs (a level now vs the
+    previous capture) need an earlier capture. A pair that cannot be compared carries the specific reason (no posting
+    dates on the board, no careers board configured, no GitHub org linked, USAspending not queried, first
+    observation…), never a generic one."""
     missing = missing or {}
 
     def val(m: str) -> tuple[float | None, Any]:
@@ -188,17 +206,51 @@ def compare_windows(proxies: dict[str, Proxy | dict[str, Any]], missing: dict[st
             return None, None
         return (p.value, p) if isinstance(p, Proxy) else (p.get("value"), p)
 
+    def meta(pc: Any) -> tuple[Any, Any]:
+        if isinstance(pc, Proxy):
+            return pc.source_url, pc.confidence
+        return ((pc or {}).get("source_url"), (pc or {}).get("confidence")) if pc else (None, None)
+
     out = []
     for name, cur_m, prior_m, window in PAIRS:
         cur, pc = val(cur_m)
         prior, _ = val(prior_m)
         comparable = cur is not None and prior is not None
-        reason = None if comparable else (missing.get(name) or "one of the two windows was not observed")
-        src = pc.source_url if isinstance(pc, Proxy) else (pc or {}).get("source_url") if pc else None
-        conf = pc.confidence if isinstance(pc, Proxy) else (pc or {}).get("confidence") if pc else None
+        reason = None if comparable else (missing.get(name) or ("no observation of this metric yet"
+                                                                if cur is None else "the earlier window was not "
+                                                                                    "observed"))
+        src, conf = meta(pc)
         out.append({"metric": name, "current": cur, "prior": prior, "window": window, "comparable": comparable,
                     "reason": reason, "delta": (cur - prior) if comparable else None,
                     "proxy_label": LABELS.get(cur_m), "source_url": src, "confidence": conf})
+    if previous is not None:
+        for name, m in OBSERVED:
+            cur, pc = val(m)
+            prev = (previous.get(m) or {}).get("value")
+            comparable = cur is not None and prev is not None
+            if comparable:
+                reason = None
+            elif cur is None:
+                reason = missing.get(name) or "no observation of this metric yet"
+            else:
+                reason = "first observation (no earlier capture)"
+            src, conf = meta(pc)
+            out.append({"metric": name, "current": cur, "prior": prev, "window": "since the previous capture",
+                        "comparable": comparable, "reason": reason, "delta": (cur - prev) if comparable else None,
+                        "proxy_label": LABELS.get(m), "source_url": src, "confidence": conf})
+    return out
+
+
+def previous_proxies(session: Session, company_id: uuid.UUID, day: date | None = None) -> dict[str, dict[str, Any]]:
+    """Per proxy metric, the value stored on the latest day *before* the latest stored day (an earlier capture)."""
+    latest = stored_proxies(session, company_id, day)
+    out: dict[str, dict[str, Any]] = {}
+    for m, cur in latest.items():
+        row = session.scalar(select(MetricSnapshot).where(
+            MetricSnapshot.entity_id == company_id, MetricSnapshot.metric == m,
+            MetricSnapshot.day < date.fromisoformat(cur["day"])).order_by(MetricSnapshot.day.desc()).limit(1))
+        if row is not None:
+            out[m] = {"metric": m, "value": row.value, "day": row.day.isoformat()}
     return out
 
 

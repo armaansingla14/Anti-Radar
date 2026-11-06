@@ -66,9 +66,7 @@ def match_company(session: Session, resolver: Resolver, cfg: CompanyConfig | Com
                 c.github_org = cfg.github_org
             if not c.website:
                 c.website = cfg.website
-            doms = own_domains(cfg)
-            if (c.attrs or {}).get("portfolio_domains") != doms:
-                c.attrs = {**(c.attrs or {}), "portfolio_domains": doms}
+            _remember_config(c, cfg)
             return Matched(c, False, "slug")
     ref, rec = _record(cfg, source_url)
     res = resolver.resolve(ref, rec)
@@ -85,10 +83,19 @@ def match_company(session: Session, resolver: Resolver, cfg: CompanyConfig | Com
             c.slug = slug
     if not c.website:
         c.website = cfg.website
-    doms = own_domains(cfg)
-    if (c.attrs or {}).get("portfolio_domains") != doms:
-        c.attrs = {**(c.attrs or {}), "portfolio_domains": doms}
+    _remember_config(c, cfg)
     return Matched(c, res.created, res.via)
+
+
+def _remember_config(c: Company, cfg: CompanyConfig | CompConfig) -> None:
+    """The verified domains and which identifiers the config gives (so 'not observed' can say why: no board
+    configured, no GitHub org linked, no USAspending recipient)."""
+    want = {"portfolio_domains": own_domains(cfg),
+            "portfolio_identifiers": {"ats": bool(cfg.ats), "github_org": cfg.github_org,
+                                      "usaspending_recipient": cfg.usaspending_recipient}}
+    attrs = dict(c.attrs or {})
+    if any(attrs.get(k) != v for k, v in want.items()):
+        c.attrs = {**attrs, **want}
 
 
 def sync_portfolio(session: Session, cfg: PortfolioConfig) -> dict[str, Any]:

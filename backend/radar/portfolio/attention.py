@@ -90,35 +90,74 @@ def card_action(items: list[AttentionItem]) -> tuple[str, str]:
 
 
 MEANING: dict[str, str] = {
-    "FINANCING": "New capital usually changes hiring capacity and the pace of the roadmap.",
-    "COMMERCIAL": "A commercial or government award can mean a move from pilots toward programs of record.",
-    "PRODUCT": "A launch shifts the question from technical feasibility to adoption.",
-    "TALENT": "Specialised hiring often precedes a new product line or program.",
-    "TECHNICAL": "Technical output can confirm or challenge what the company says it can do.",
     "RISK": "A risk signal needs a factual account before any conclusion.",
+    "FINANCING": "New capital usually changes hiring capacity and the pace of the roadmap.",
+    "ACQUISITION": "An acquisition changes the team, the technology or the market the company addresses.",
+    "COMMERCIAL": "A commercial or government award can mean a move from pilots toward programs of record.",
+    "PROPOSED_AWARD": "A proposed award signals government interest; it is not money until it is finalized.",
+    "PRODUCT_LAUNCH": "A launch shifts the question from technical feasibility to adoption.",
+    "PRODUCT_CHANGE": "Betas, integrations and retirements show where the product is heading.",
+    "TALENT_HIRING": "Specialised hiring often precedes a new product line or program.",
+    "TALENT_LEADER": "A leadership change shifts who owns a function and what it prioritises.",
+    "TECHNICAL": "Technical output can confirm or challenge what the company says it can do.",
     "REGULATORY": "A regulatory step can unlock or delay commercial timelines.",
     "STRATEGIC": "A change in positioning can mean a change in target market.",
-    "COMPETITOR": "A competitor's move can change the comparison buyers and investors make.",
+    "COMPETITOR_LAUNCH": "A competitor's launch can change the comparison buyers make.",
+    "COMPETITOR_FUNDING": "A competitor's new funding can intensify competition for customers and hires.",
+    "COMPETITOR_ACQUISITION": "A competitor's acquisition can change its product scope and the competitive set.",
+    "COMPETITOR_TECH": "Competitors' technical releases show their shipping pace; on their own they do not change "
+                       "the product comparison.",
+    "COMPETITOR_HIRING": "A competitor's hiring shows where it is investing.",
+    "COMPETITOR_OTHER": "A competitor's move can change the comparison buyers and investors make.",
 }
-PAIR_MEANING: dict[frozenset[str], str] = {
-    frozenset({"FINANCING", "TALENT"}): "Financing followed by specialised hiring can mean the technical roadmap is "
-                                        "being expanded.",
-    frozenset({"PRODUCT", "TALENT"}): "A launch with hiring in the same area can mean the company is scaling what "
-                                      "it just shipped.",
-    frozenset({"COMMERCIAL", "TALENT"}): "An award alongside hiring can mean the company is staffing a program.",
-    frozenset({"PRODUCT", "COMPETITOR"}): "Launches by the company and a competitor in the same window can mean the "
-                                          "category is getting crowded.",
-}
+PAIR_MEANING: tuple[tuple[frozenset[str], str], ...] = (
+    (frozenset({"FINANCING", "TALENT_HIRING"}), "Financing followed by specialised hiring can mean the technical "
+                                                "roadmap is being expanded."),
+    (frozenset({"PRODUCT_LAUNCH", "TALENT_HIRING"}), "A launch with hiring in the same area can mean the company is "
+                                                     "scaling what it just shipped."),
+    (frozenset({"COMMERCIAL", "TALENT_HIRING"}), "An award alongside hiring can mean the company is staffing a "
+                                                 "program."),
+    (frozenset({"PRODUCT_LAUNCH", "COMPETITOR_LAUNCH"}), "Launches by the company and a competitor in the same window "
+                                                         "can mean the category is getting crowded."),
+)
+_ORDER = ("RISK", "FINANCING", "ACQUISITION", "COMMERCIAL", "PROPOSED_AWARD", "PRODUCT_LAUNCH", "TALENT_HIRING",
+          "TALENT_LEADER", "TECHNICAL", "PRODUCT_CHANGE", "REGULATORY", "STRATEGIC", "COMPETITOR_LAUNCH",
+          "COMPETITOR_ACQUISITION", "COMPETITOR_FUNDING", "COMPETITOR_HIRING", "COMPETITOR_TECH", "COMPETITOR_OTHER")
+_LAUNCH = frozenset({"product_launch", "major_release"})
+
+
+def meaning_kind(i: AttentionItem) -> str:
+    """The template key for one item, from its actual subtype (a competitor's SDK release is not a launch)."""
+    st = i.subtype
+    if i.relation != "SELF":
+        if st in _LAUNCH:
+            return "COMPETITOR_LAUNCH"
+        if st in ("new_round", "strategic_investment"):
+            return "COMPETITOR_FUNDING"
+        if st == "acquisition":
+            return "COMPETITOR_ACQUISITION"
+        if i.event_type == "TECHNICAL":
+            return "COMPETITOR_TECH"
+        if i.event_type == "TALENT":
+            return "COMPETITOR_HIRING"
+        return "COMPETITOR_OTHER"
+    if i.event_type == "FINANCING":
+        return "ACQUISITION" if st == "acquisition" else "FINANCING"
+    if i.event_type == "COMMERCIAL":
+        return "PROPOSED_AWARD" if st == "proposed_award" else "COMMERCIAL"
+    if i.event_type == "PRODUCT":
+        return "PRODUCT_LAUNCH" if st in _LAUNCH else "PRODUCT_CHANGE"
+    if i.event_type == "TALENT":
+        return "TALENT_LEADER" if st in ("executive_join", "executive_departure") else "TALENT_HIRING"
+    return i.event_type if i.event_type in MEANING else "STRATEGIC"
 
 
 def what_this_could_mean(items: list[AttentionItem]) -> str:
-    kinds = {("COMPETITOR" if i.relation != "SELF" else i.event_type) for i in items
-             if i.materiality in ("MATERIAL", "WATCH")}
-    for pair, text in PAIR_MEANING.items():
+    kinds = {meaning_kind(i) for i in items if i.materiality in ("MATERIAL", "WATCH")}
+    for pair, text in PAIR_MEANING:
         if pair <= kinds:
             return text
-    ordered = [k for k in ("RISK", "FINANCING", "COMMERCIAL", "PRODUCT", "TALENT", "TECHNICAL", "REGULATORY",
-                           "STRATEGIC", "COMPETITOR") if k in kinds]
+    ordered = [k for k in _ORDER if k in kinds]
     return " ".join(MEANING[k] for k in ordered[:2])
 
 

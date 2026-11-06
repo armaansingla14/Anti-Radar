@@ -194,3 +194,61 @@ def test_language_named_client_libraries_are_sdks():
     r = raw("release_published", "elevenlabs/elevenlabs-python: Released v2.76.0", st="github",
             meta={"tag": "v2.76.0", "repo": "elevenlabs/elevenlabs-python", "repo_stars": 3000, "repo_flagship": True})
     assert classify(r)[0].subtype == "routine_release"
+
+
+def test_head_of_hire_is_talent_watch_not_a_launch():
+    """#15: 'Factory Announces Connor Maloney as Head of Federal' was typed as a product launch."""
+    c, (level, rule, _) = classify(raw("company_post", "Factory Announces Connor Maloney as Head of Federal",
+                                       company="Factory"))
+    assert (c.event_type, c.subtype, level, rule) == ("TALENT", "executive_join", "WATCH", "M5")
+    assert classify(raw("company_post", "Factory announces Droids 2.0", company="Factory"))[0].subtype == \
+        "product_launch"
+
+
+def test_programs_are_not_launches_and_do_not_count_for_novelty():
+    """#16: a residency/fellowship 'launch' is a program (NOISE) and never makes a later product launch a repeat."""
+    prog = normalize.normalize_one(raw("company_post", "National Design Studio and Cognition Launch the American "
+                                                       "Forge Residency", company="Cognition"))
+    assert (prog.subtype, prog.event_type) == ("program", "NOISE")
+    launch = normalize.normalize_one(raw("company_post", "Introducing SWE-2 Flash", company="Cognition"))
+    ctx = CompanyContext(company_id=CID, name="Cognition")
+    assert materiality.classify(launch, ctx, [prog, launch])[:2] == ("MATERIAL", "M4")
+    # The rule stays honest: a real product launch in the previous 90 days still makes it a repeat.
+    earlier = normalize.normalize_one(raw("company_post", "Introducing SWE-2: Pushing the Pareto Frontier",
+                                          company="Cognition"))
+    earlier.event_at = launch.event_at.replace(month=9)
+    assert materiality.classify(launch, ctx, [prog, earlier, launch])[:2] == ("WATCH", "M4")
+    assert classify(raw("company_post", "Anduril selected for Army program of record", company="Anduril"))[0] \
+        .subtype != "program"
+
+
+def test_a_claim_extracted_from_the_same_post_does_not_make_it_material():
+    """#17: after the portfolio -> diligence handoff, the diligence run extracted the post itself as a claim; the
+    event then 'bore on' its own claim and became MATERIAL by M7. Circular evidence is ignored."""
+    url = "https://modal.com/blog/nvidia-vera-sandboxes"
+    c = normalize.normalize_one(raw("company_post", "NVIDIA Vera CPUs double throughput for Modal Sandboxes", url=url))
+    same = CompanyContext(company_id=CID, name="Modal", diligence_claims=[
+        {"id": "1", "text": "NVIDIA Vera CPUs double throughput for Modal Sandboxes", "source_url": url}])
+    assert materiality.classify(c, same, [c])[:2] == ("WATCH", "M7")
+    other = CompanyContext(company_id=CID, name="Modal", diligence_claims=[
+        {"id": "2", "text": "Modal Sandboxes on NVIDIA Vera CPUs reach double throughput", "source_url":
+         "https://modal.com/docs/sandboxes"}])
+    assert materiality.classify(c, other, [c])[:2] == ("MATERIAL", "M7")
+    # Two generic shared words (besides the company name) are not "bearing on" a claim.
+    weak = CompanyContext(company_id=CID, name="Modal", diligence_claims=[
+        {"id": "3", "text": "Modal powers GPU and CPU sandboxes for millions of runs",
+         "source_url": "https://modal.com/blog/snorkel"}])
+    assert materiality.classify(c, weak, [c])[:2] == ("WATCH", "M7")
+
+
+def test_an_organisation_joining_the_company_is_a_strategic_event_not_noise():
+    """'Corridor is Joining Cognition' (cognition.com/blog, Oct 28: 'Today, Corridor is joining Cognition…') was NOISE."""
+    got = normalize.classify_title("Corridor is Joining Cognition", company_name="Cognition")
+    assert got == ("STRATEGIC", "company_joining", "N19")
+    assert normalize.classify_title("Welcoming Dioxus to Cognition", company_name="Cognition")[1] == "company_joining"
+    # a person joining in a role is a leadership change, never an organisation joining
+    hire = normalize.classify_title("Jane Doe is joining Cognition as Chief Technology Officer", company_name="Cognition")
+    assert hire is None or hire[1] != "company_joining"
+    # the company joining something else is not this rule
+    other = normalize.classify_title("Cognition is joining the Agentic AI Foundation", company_name="Cognition")
+    assert other is None or other[1] != "company_joining"
