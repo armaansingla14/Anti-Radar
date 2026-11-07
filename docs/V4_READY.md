@@ -18,7 +18,7 @@
 | **Comps tracked** | 43 companies, 46 typed relationships. Each has a reason it is comparable, a public source and a confidence. |
 | **Test totals** | 1,421 backend (955 unit, 441 integration on real Postgres, 25 eval regression) and 215 frontend. Playwright tours pass for `/demo`, `/demo/diligence` and `/demo/portfolio`. The public verifier passes on the snapshot build with no backend. |
 | **Agent eval status** | PORTFOLIO ANALYST is registered in the same control plane as every other agent. All 24/24 YAML regression cases pass. The failure ledger has 44 documented real failures; 42 are pinned by a regression test. |
-| **CI status** | See the CI section below. |
+| **CI status** | Green on `main` (commit 8f6ed19). It covers backend lint, the full Postgres suite, frontend typecheck, lint, tests and build, and a smoke test of the snapshot site with no backend. |
 
 PORTFOLIO ANALYST metrics, from its stored outputs:
 
@@ -82,7 +82,7 @@ Each one was fixed, filed in the failure ledger (`/agents/failures`) and pinned 
 
 ## CI
 
-The CI smoke test now also renders `/changes`, `/diligence*`, `/agents*` and `/portfolio*` with no backend. CI result for this push: see the commit on `main`.
+The CI smoke test now also renders `/changes`, `/diligence*`, `/agents*` and `/portfolio*` with no backend. CI passed on `main` (8f6ed19).
 
 ## Acceptance questions
 
