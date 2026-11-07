@@ -1,5 +1,6 @@
 /**
- * Playwright config for the presenter tours: /demo (demo-tour.spec.ts) and /demo/diligence (diligence-tour.spec.ts).
+ * Playwright config for the presenter tours: /demo (demo-tour.spec.ts), /demo/diligence (diligence-tour.spec.ts) and
+ * /demo/portfolio (portfolio-tour.spec.ts).
  *
  *   npx playwright test -c playwright.config.ts demo-tour.spec.ts             # fast functional pass of one tour
  *   RECORD=1 npx playwright test -c playwright.config.ts demo-tour.spec.ts    # paced run, 1920×1080 video (see record-demo.sh)
@@ -19,7 +20,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [str
 
 export default defineConfig({
   testDir: ".",
-  testMatch: /(demo|diligence)-tour\.spec\.ts$/,
+  testMatch: /(demo|diligence|portfolio)-tour\.spec\.ts$/,
   outputDir: "test-results",
   timeout: 12 * 60_000,
   expect: { timeout: 20_000 },

@@ -11,6 +11,7 @@
  * - private investment fields never render, even if a payload carried one (`stripPrivate`).
  */
 import type {
+  Affect,
   CompsMap,
   Comp,
   Funnel,
@@ -24,6 +25,7 @@ import type {
   ProxyValue,
   ReviewInfo,
   SinceReviewRow,
+  UsaspendingState,
 } from "../../lib/types-portfolio.ts";
 
 // ── Hrefs ────────────────────────────────────────────────────────────────────
@@ -109,13 +111,47 @@ export function questionStatusLabel(s: string | null | undefined): string {
 
 // ── Event types ──────────────────────────────────────────────────────────────
 
-export const EVENT_TYPES = ["PRODUCT", "TECHNICAL", "TALENT", "COMMERCIAL", "FINANCING", "REGULATORY", "RISK", "STRATEGIC"] as const;
+/** Stored event types, plus COMPETITIVE (a comp's event reaching a portfolio company — a relation, filterable as a type). */
+export const EVENT_TYPES = ["PRODUCT", "TECHNICAL", "TALENT", "COMMERCIAL", "FINANCING", "COMPETITIVE", "REGULATORY", "RISK", "STRATEGIC"] as const;
 export const RELATIONS = ["SELF", "COMPETITOR", "ADJACENT", "INFRASTRUCTURE", "INCUMBENT", "OPEN_SOURCE"] as const;
+
+/** Subtypes whose plain words would mislead or read badly. */
+const SUBTYPE_LABELS: Record<string, string> = {
+  proposed_award: "proposed award (not finalized)",
+  government_contract: "government contract",
+  company_joining: "company joining",
+  product_beta: "beta",
+  product_sunset: "product sunset",
+  capability_announcement: "capability announcement",
+  performance_claim: "performance claim",
+  benchmark_claim: "benchmark claim",
+  executive_join: "executive join",
+  executive_departure: "executive departure",
+  specialized_hiring_cluster: "specialised hiring cluster",
+  hiring_acceleration: "hiring acceleration",
+  new_role_class: "new role class",
+  role_closures: "role closures (filled or withdrawn — unknown)",
+  repository_release: "repository release",
+  open_source_release: "open-source release",
+  marketplace_security: "marketplace security (third-party item)",
+  public_attention: "public attention",
+  new_round: "new round",
+  strategic_investment: "strategic investment",
+  regulatory_milestone: "regulatory milestone",
+  market_entry: "market entry",
+  customer_announcement: "customer announcement",
+};
+
+/** "product_launch" → "product launch"; "proposed_award" → "proposed award (not finalized)". */
+export function subtypeLabel(subtype: string | null | undefined): string {
+  const k = (subtype ?? "").trim().toLowerCase();
+  return SUBTYPE_LABELS[k] ?? k.replace(/_/g, " ");
+}
 
 /** "PRODUCT", "product_launch" → "PRODUCT · product launch". */
 export function typeLabel(type: string | null | undefined, subtype?: string | null): string {
   const t = (type ?? "EVENT").toUpperCase();
-  const s = (subtype ?? "").replace(/_/g, " ").trim().toLowerCase();
+  const s = subtypeLabel(subtype);
   return s ? `${t} · ${s}` : t;
 }
 
@@ -183,7 +219,7 @@ export function countsRow(counts: Record<string, number> | null | undefined): Co
         k === "competitive"
           ? `Of the ${relevant} material + watch events, those that are a comp's event (reaching the portfolio company as a competitor)`
           : `Of the ${relevant} material + watch events, the company's own ${k.toUpperCase()} events`,
-      href: k === "competitive" ? "/portfolio/events?relation=COMPETITOR" : `/portfolio/events?type=${k.toUpperCase()}`,
+      href: `/portfolio/events?type=${k.toUpperCase()}`,
     });
   }
   return out;
@@ -235,7 +271,9 @@ const METRIC_NAMES: Record<string, string> = {
   papers_90d: "linked arXiv papers, 90 days",
   releases_30d: "GitHub releases, 30 days",
   releases_prior_30d: "GitHub releases, the 30 days before",
-  federal_awards: "federal award obligations",
+  federal_awards: "federal awards started, last 24 months",
+  federal_awards_24m: "federal awards started, last 24 months",
+  federal_award_amount_24m: "federal award obligations, last 24 months (USD)",
 };
 
 /** "proxy_open_technical_roles" → "open technical roles". Never "headcount". */
@@ -260,17 +298,17 @@ export function proxyKind(p: { metric?: string | null; proxy_label?: string | nu
   return "PUBLIC PROXY";
 }
 
-/** "(not headcount)" / "(not revenue, not a customer count)" → "not headcount" — what the proxy is not. */
+/** "(not headcount)" / "(count, not revenue)" → "not headcount" / "not revenue" — what the proxy is not. */
 export function proxyIsNot(label: string | null | undefined): string | null {
-  const m = /\((not [^)]+)\)/i.exec(label ?? "");
+  const m = /\([^)]*?\b(not [^)]+)\)/i.exec(label ?? "");
   return m ? m[1] : null;
 }
 
 /** The proxy's own description without the "Public … signal:" prefix and the "(not …)" note. */
 export function proxyDescription(label: string | null | undefined): string {
   return (label ?? "")
-    .replace(/^public\s+\w+\s+signal:\s*/i, "")
-    .replace(/\s*\(not [^)]+\)/i, "")
+    .replace(/^public\s+(\w+\s+signal|record):\s*/i, "")
+    .replace(/\s*\([^)]*\bnot [^)]+\)/i, "")
     .trim();
 }
 
@@ -290,7 +328,10 @@ export function windowPhrase(window: string | null | undefined): string {
 
 /** "24 vs 32 · last 30 days vs the prior 30" | "not compared: one of the two windows was not observed". */
 export function windowText(m: Pick<MetricWindow, "current" | "prior" | "window" | "comparable" | "reason">): string {
-  if (!m.comparable) return `not compared: ${m.reason?.trim() || "both windows were not observed"}`;
+  if (!m.comparable) {
+    const now = m.current !== null && m.current !== undefined ? `${fmtVal(m.current)} now · ` : "";
+    return `${now}not compared: ${m.reason?.trim() || "both windows were not observed"}`;
+  }
   return `${fmtVal(m.current)} vs ${fmtVal(m.prior)} · ${windowPhrase(m.window)}`;
 }
 
@@ -355,13 +396,8 @@ export interface EventFilters {
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? null;
 
 export function parseEventFilters(sp: Record<string, string | string[] | undefined>): EventFilters {
-  let type = one(sp.type)?.toUpperCase() ?? null;
-  let relation = one(sp.relation)?.toUpperCase() ?? null;
-  // COMPETITIVE is a relation (a comp's event seen from the portfolio company), not a stored event type.
-  if (type === "COMPETITIVE") {
-    type = null;
-    relation = relation ?? "COMPETITOR";
-  }
+  const type = one(sp.type)?.toUpperCase() ?? null;
+  const relation = one(sp.relation)?.toUpperCase() ?? null;
   const mat = one(sp.materiality)?.toUpperCase() ?? null;
   const company = one(sp.company);
   return {
@@ -381,12 +417,11 @@ export function eventFilterHref(current: EventFilters, key: keyof EventFilters, 
   return qs ? `/portfolio/events?${qs}` : "/portfolio/events";
 }
 
-/** The API queries behind a filter: the default (no materiality) is MATERIAL + WATCH; ALL includes NOISE. */
-export function eventQueries(f: EventFilters): { type?: string; materiality?: string; company?: string; relation?: string }[] {
+/** The API query behind a filter: the default (no materiality) is MATERIAL,WATCH in one call; ALL includes NOISE. */
+export function eventQuery(f: EventFilters): { type?: string; materiality?: string; company?: string; relation?: string } {
   const base = { type: f.type ?? undefined, company: f.company ?? undefined, relation: f.relation ?? undefined };
-  if (f.materiality === "ALL") return [base];
-  if (f.materiality) return [{ ...base, materiality: f.materiality }];
-  return [{ ...base, materiality: "MATERIAL" }, { ...base, materiality: "WATCH" }];
+  if (f.materiality === "ALL") return base;
+  return { ...base, materiality: f.materiality ?? "MATERIAL,WATCH" };
 }
 
 /** Merge lists, dedupe by id, newest first. */
@@ -431,21 +466,47 @@ export function compIndex(maps: CompsMap[] | null | undefined): Map<string, Comp
 }
 
 export interface RelationView {
-  kind: "SELF" | "COMPETITOR" | "COMP" | "UNKNOWN";
-  /** Portfolio companies this event is about (SELF) or reaches through a comp. */
+  /** SELF: a portfolio company's own event · AFFECTS: a comp's event reaching portfolio companies · COMP: a comp's
+   * event that reaches none (rule M8) · UNKNOWN: neither. */
+  kind: "SELF" | "AFFECTS" | "COMP" | "UNKNOWN";
+  /** Non-SELF portfolio companies the event reaches (from the API's `affects`). */
+  affects: Affect[];
+  /** For COMP: the portfolio companies that track the subject as a comp (from the comps map). */
   via: CompLink[];
 }
 
 /**
- * How an event relates to the portfolio: SELF when its subject is a portfolio company, else the portfolio
- * companies that track the subject as a comp. `relation` from a company-filtered list wins.
+ * How an event relates to the portfolio, from the API's `affects` (SELF included). A comp event that reaches no
+ * portfolio company still names who tracks it (comps map) so the page can say it does not propagate.
  */
-export function relationOf(e: Pick<PEvent, "company" | "relation">, portfolio: ReadonlySet<string>, comps: Map<string, CompLink[]>): RelationView {
-  if (portfolio.has(e.company.slug) || e.relation === "SELF") return { kind: "SELF", via: [] };
+export function relationOf(e: Pick<PEvent, "company" | "relation" | "affects">, portfolio: ReadonlySet<string>, comps: Map<string, CompLink[]>): RelationView {
+  const affects = e.affects ?? [];
+  const others = affects.filter((a) => a.relation !== "SELF");
+  if (affects.some((a) => a.relation === "SELF") || (!e.affects && (portfolio.has(e.company.slug) || e.relation === "SELF")))
+    return { kind: "SELF", affects: others, via: [] };
+  if (others.length) return { kind: "AFFECTS", affects: others, via: [] };
   const via = comps.get(e.company.slug) ?? [];
-  if (e.relation && e.relation !== "SELF") return { kind: "COMPETITOR", via };
-  if (via.length) return { kind: "COMP", via };
-  return { kind: "UNKNOWN", via: [] };
+  if (via.length) return { kind: "COMP", affects: [], via };
+  return { kind: "UNKNOWN", affects: [], via: [] };
+}
+
+/** The `affects` entry for one portfolio company (impact reason, comp type, materiality for it). */
+export function affectFor(e: Pick<PEvent, "affects">, slug: string): Affect | null {
+  return (e.affects ?? []).find((a) => a.company_slug === slug) ?? null;
+}
+
+// ── USAspending ──────────────────────────────────────────────────────────────
+
+/**
+ * "checked 3 h ago · 128 federal awards" | "checked 3 h ago · no awards" | "not applicable (no federal recipient
+ * configured)" | "recipient configured · not queried yet". Never "unavailable" when it was queried.
+ */
+export function usaspendingText(u: UsaspendingState | null | undefined, awards: number | null | undefined, age: string | null): string {
+  if (!u || u.state === "not_applicable") return "not applicable (no federal recipient configured)";
+  if (u.state === "configured") return `recipient ${u.recipient ?? "configured"} · not queried yet`;
+  const when = age ? `checked ${age}` : u.last_queried_at ? `checked ${u.last_queried_at}` : "checked";
+  const what = awards === null || awards === undefined ? "awards not counted" : awards === 0 ? "no awards" : `${awards.toLocaleString("en-US")} federal award${awards === 1 ? "" : "s"}`;
+  return `${when} · ${what}${u.recipient ? ` · recipient “${u.recipient}”` : ""}`;
 }
 
 // ── Decision trace ───────────────────────────────────────────────────────────

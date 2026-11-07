@@ -89,7 +89,7 @@ export default async function FailuresPage({ searchParams }: PageProps<"/agents/
       {shown.length === 0 ? (
         <EmptyState className="mt-6" title="No failures match these filters." action={<Link href="/agents/failures" className="link font-mono text-[11px] uppercase tracking-[0.08em]">Clear filters</Link>} />
       ) : (
-        <ol className="mt-5 border-t border-ink">
+        <ol className="mt-5 border-t border-ink" data-demo="failure-ledger">
           {shown.map((f) => (
             <li key={f.number} className="grid grid-cols-[minmax(0,1fr)] gap-x-5 gap-y-1.5 border-b border-rule py-3.5 md:grid-cols-[118px_minmax(0,1fr)_200px]">
               <Link href={failureHref(f.number)} className="tnum pt-0.5 font-mono text-[11px] text-ink hover:text-accent">

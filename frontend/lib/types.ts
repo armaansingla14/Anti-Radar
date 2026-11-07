@@ -167,6 +167,8 @@ export interface DataAge {
   age_days: number | null;
   /** Last observation per source family (null = never observed). Empty on cards. */
   families: Partial<Record<SourceFamily, ISODateTime | null>>;
+  /** Families that do not apply to the entity (e.g. "commercial" with no federal recipient configured). */
+  not_applicable?: string[];
 }
 
 export type VelocityBasis = "observed" | "backfill" | "insufficient_history";

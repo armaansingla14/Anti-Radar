@@ -12,7 +12,7 @@ import { ActionChip, CompTypeChip, InferenceTag, PriorityBadge } from "@/compone
 import { DiligenceHandoff } from "@/components/portfolio/Handoff";
 import { PortfolioReviewActions } from "@/components/portfolio/ReviewActions";
 import { DecisionTrace, EventList, Ext, MethodNote, MetricRow, QuestionList, Sub } from "@/components/portfolio/Views";
-import { compIndex, portfolioSlugs, positionFacts, proxyDescription, proxyIsNot, proxyKind, metricName, reviewText, standaloneProxies, stripPrivate } from "@/components/portfolio/logic";
+import { affectFor, compIndex, portfolioSlugs, usaspendingText, positionFacts, proxyDescription, proxyIsNot, proxyKind, metricName, reviewText, standaloneProxies, stripPrivate } from "@/components/portfolio/logic";
 import { dataSource, displayNow } from "@/lib/dataSource";
 import { fmtDate, fmtDateTime } from "@/lib/format";
 import { getSession } from "@/lib/session";
@@ -197,19 +197,20 @@ export default async function PortfolioCompanyPage({ params }: PageProps<"/portf
             <div className="space-y-8">
               {[...competitor.entries()].map(([slug, evs]) => {
                 const comp = compByslug.get(slug);
+                const affect = affectFor(evs[0], c.slug);
                 return (
                   <div key={slug}>
                     <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                       <Link href={`/companies/${slug}`} className="font-serif text-[19px] text-ink hover:text-accent">
                         {evs[0].company.name}
                       </Link>
-                      {comp && <CompTypeChip value={comp.comp_type} />}
+                      {(affect?.comp_type ?? comp?.comp_type) && <CompTypeChip value={(affect?.comp_type ?? comp?.comp_type)!} />}
                       {comp && <span className="font-mono text-[9.5px] uppercase tracking-[0.06em] text-ink-3">{comp.confidence} confidence</span>}
                     </p>
-                    {comp && (
+                    {(affect || comp) && (
                       <p className="mt-1 text-[12.5px] leading-snug text-ink-2">
                         <span className="label mr-1.5 text-ink-3">Impact reason</span>
-                        {evs[0].company.name} is a {comp.comp_type.replace(/_/g, " ").toLowerCase()} comp of {c.name}: {comp.why_comparable}{" "}
+                        {affect?.impact_reason ?? `${evs[0].company.name} is a ${comp!.comp_type.replace(/_/g, " ").toLowerCase()} comp of ${c.name}: ${comp!.why_comparable}`}{" "}
                         <InferenceTag className="ml-1 align-[1px]" />
                       </p>
                     )}
@@ -305,6 +306,14 @@ export default async function PortfolioCompanyPage({ params }: PageProps<"/portf
           <div className="border-y border-rule py-2.5">
             <DataAge age={v.data_age} now={now} />
           </div>
+          <p className="mt-3 text-[12.5px] leading-snug text-ink-2" suppressHydrationWarning>
+            <span className="label mr-2 text-ink">USAspending</span>
+            {usaspendingText(
+              v.usaspending,
+              v.metrics.find((m) => m.metric === "federal_awards")?.current ?? null,
+              v.usaspending?.last_queried_at ? fmtDate(v.usaspending.last_queried_at) : null,
+            )}
+          </p>
         </Section>
       </div>
     </article>

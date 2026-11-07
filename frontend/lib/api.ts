@@ -231,7 +231,8 @@ export const getDiligenceStatus = (company: string) => get<DiligenceStatus>(`/di
 export const getDiligenceClaim = (company: string, ordinal: number | string) =>
   get<DiligenceClaim>(`/diligence/${enc(company)}/claims/${enc(String(ordinal))}`);
 /** Live collection + analysis (admin-gated; refused on the verified snapshot). */
-export const postDiligenceRun = (company: string) => post<DiligenceStatus>(`/diligence/${enc(company)}/run`, {});
+export const postDiligenceRun = (company: string, eventId?: string | null) =>
+  post<DiligenceStatus>(`/diligence/${enc(company)}/run`, eventId ? { event_id: eventId } : {});
 /** Record a human review decision (admin-gated; refused on the verified snapshot). */
 export const postReview = (req: ReviewRequest) => post<Review>("/reviews", req);
 export const getReviews = (params?: { target_type?: ReviewTargetType; target_id?: string; limit?: number }) => get<Review[]>("/reviews", params);

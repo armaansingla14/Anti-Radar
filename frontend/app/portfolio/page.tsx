@@ -144,7 +144,12 @@ export default async function PortfolioPulsePage() {
                   stage={stages.get(card.company.slug)}
                   handoff={
                     card.suggested_action === "RUN_DILIGENCE" ? (
-                      <DiligenceHandoff slug={card.company.slug} hasWorkspace={workspaces.has(card.company.slug)} writable={writable} />
+                      <DiligenceHandoff
+                        slug={card.company.slug}
+                        hasWorkspace={workspaces.has(card.company.slug)}
+                        writable={writable}
+                        eventId={card.what_changed.find((w) => w.relation === "SELF" && /performance_claim|benchmark_claim/.test(w.subtype))?.event_id ?? null}
+                      />
                     ) : undefined
                   }
                 />

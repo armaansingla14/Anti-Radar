@@ -77,6 +77,24 @@ export interface PEvent {
   relation: string | null;
   performance_claim: boolean;
   is_demo: boolean;
+  /** Every portfolio company this event reaches (SELF included); empty when it reaches none (rule M8). */
+  affects?: Affect[];
+}
+
+export interface Affect {
+  company_slug: string;
+  company_name: string;
+  relation: string;
+  comp_type: string | null;
+  impact_reason: string;
+  materiality_for_company: Materiality;
+}
+
+export interface UsaspendingState {
+  /** queried (even with no award) | configured (recipient set, not queried yet) | not_applicable (no federal recipient). */
+  state: "queried" | "configured" | "not_applicable" | string;
+  recipient: string | null;
+  last_queried_at: string | null;
 }
 
 export interface Impact {
@@ -264,6 +282,8 @@ export interface PortfolioDataAge {
   last_observed_at: ISODateTime | null;
   age_days: number | null;
   families: Record<string, ISODateTime | null>;
+  /** Families that do not apply to this company (e.g. "commercial" without a federal recipient). */
+  not_applicable?: string[];
 }
 
 export interface PortfolioCompany {
@@ -283,6 +303,7 @@ export interface PortfolioCompany {
   report_id: string | null;
   diligence: PortfolioDiligence;
   needs_attention: AttentionCard | null;
+  usaspending?: UsaspendingState | null;
 }
 
 export interface PortfolioIndexItem {

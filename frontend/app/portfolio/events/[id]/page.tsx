@@ -120,7 +120,7 @@ export default async function PortfolioEventPage({ params }: PageProps<"/portfol
             <SuggestedAction action={d.suggested_action}>
               {d.suggested_action === "RUN_DILIGENCE" && handoffSlug && (
                 <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <DiligenceHandoff slug={handoffSlug} hasWorkspace={hasWorkspace} writable={writable} />
+                  <DiligenceHandoff slug={handoffSlug} hasWorkspace={hasWorkspace} writable={writable} eventId={e.company.slug === handoffSlug ? e.id : null} />
                   <span className="text-[12px] text-ink-3">
                     {e.performance_claim ? "The event states a performance claim that diligence can check against public evidence." : "The event bears on a diligence claim."}
                   </span>

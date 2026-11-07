@@ -223,7 +223,7 @@ export function PortfolioBriefSections({ body, prefix = "psrc", numbered = true 
 /** Masthead + sections + source index: the printable PORTFOLIO MORNING BRIEF. */
 export function PortfolioBriefView({ body, sources, actions, generatedNote }: { body: PortfolioBriefBody; sources: BriefSource[]; actions?: ReactNode; generatedNote?: ReactNode }) {
   return (
-    <div className="brief-print mx-auto max-w-[860px]">
+    <div className="brief-print mx-auto max-w-[860px]" data-demo="portfolio-brief">
       {actions && <div className="mb-8 flex flex-wrap items-center justify-between gap-4 print:hidden">{actions}</div>}
       <header className="border-t-[3px] border-ink pt-1">
         <div className="border-t border-ink pt-4">

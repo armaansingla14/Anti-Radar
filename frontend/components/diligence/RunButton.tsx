@@ -11,7 +11,18 @@ import { stateLabel } from "./logic";
  * Start a live diligence run (POST /api/proxy/diligence/{slug}/run; synchronous, up to 3 minutes). Rendered
  * only on a writable live backend; nothing in the static snapshot.
  */
-export function RunDiligenceButton({ slug, writable, label = "Run diligence" }: { slug: string; writable: boolean; label?: string }) {
+export function RunDiligenceButton({
+  slug,
+  writable,
+  label = "Run diligence",
+  eventId,
+}: {
+  slug: string;
+  writable: boolean;
+  label?: string;
+  /** Portfolio handoff: the material event that prompted the run (its sources are collected too). */
+  eventId?: string | null;
+}) {
   const staticSnapshot = useStaticSnapshot();
   const router = useRouter();
   const toast = useToast();
@@ -22,7 +33,7 @@ export function RunDiligenceButton({ slug, writable, label = "Run diligence" }: 
     if (busy) return;
     setBusy(true);
     try {
-      const s = await postDiligenceRun(slug);
+      const s = await postDiligenceRun(slug, eventId);
       toast(`Diligence ${stateLabel(s.status).toLowerCase()}`);
       router.refresh();
     } catch (err) {

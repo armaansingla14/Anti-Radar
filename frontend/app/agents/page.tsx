@@ -212,7 +212,7 @@ export default async function AgentsPage() {
               </thead>
               <tbody>
                 {ov.agents.map((a) => (
-                  <tr key={a.key} className="border-b border-rule">
+                  <tr key={a.key} className="border-b border-rule" data-demo-agent={a.name}>
                     <td className={clsx(td, "min-w-[180px] max-w-[230px]")}>
                       <p className="font-mono text-[11.5px] uppercase tracking-[0.06em] text-ink">{a.name}</p>
                       <p className="mt-0.5 text-[11.5px] leading-snug text-ink-2">{a.description}</p>

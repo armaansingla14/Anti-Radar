@@ -9,11 +9,14 @@ import {
   deltaText,
   eventFilterHref,
   eventFilterLinks,
-  eventQueries,
+  eventQuery,
   funnelLine,
   funnelSteps,
   materialityLabel,
   mergeEvents,
+  subtypeLabel,
+  usaspendingText,
+  affectFor,
   metricName,
   needsAttentionCount,
   parseEventFilters,
@@ -77,6 +80,11 @@ describe("materiality, priority and action labels", () => {
   it("labels type.subtype readably", () => {
     assert.equal(typeLabel("PRODUCT", "product_launch"), "PRODUCT · product launch");
     assert.equal(typeLabel("RISK", null), "RISK");
+    assert.equal(typeLabel("COMMERCIAL", "proposed_award"), "COMMERCIAL · proposed award (not finalized)");
+    assert.equal(subtypeLabel("company_joining"), "company joining");
+    assert.equal(subtypeLabel("product_beta"), "beta");
+    assert.equal(subtypeLabel("executive_join"), "executive join");
+    assert.equal(subtypeLabel("brand_new_kind"), "brand new kind");
   });
 });
 
@@ -87,7 +95,7 @@ describe("counts row", () => {
     assert.equal(row[2].value, 29);
     assert.match(row[1].title, /portfolio company/);
     assert.match(row.find((r) => r.key === "competitive")!.title, /34 material \+ watch/);
-    assert.equal(row.find((r) => r.key === "competitive")!.href, "/portfolio/events?relation=COMPETITOR");
+    assert.equal(row.find((r) => r.key === "competitive")!.href, "/portfolio/events?type=COMPETITIVE");
   });
 });
 
@@ -146,6 +154,11 @@ describe("comparable windows", () => {
   it("says not compared and why", () => {
     const m = { current: null, prior: null, window: "14 days", comparable: false, reason: "one of the two windows was not observed", delta: null };
     assert.equal(windowText(m), "not compared: one of the two windows was not observed");
+    assert.equal(
+      windowText({ current: 21, prior: null, window: "since the previous capture", comparable: false, reason: "first observation (no earlier capture)" }),
+      "21 now · not compared: first observation (no earlier capture)",
+    );
+    assert.equal(windowText({ current: 13, prior: 12, window: "since the previous capture", comparable: true, reason: null }), "13 vs 12 · since the previous capture");
     assert.equal(windowText({ ...m, reason: null }), "not compared: both windows were not observed");
     assert.equal(deltaText(m), "");
   });
@@ -178,7 +191,7 @@ describe("event filters", () => {
     assert.deepEqual(parseEventFilters({ type: "product", materiality: "watch", company: "Modal", relation: "self" }), {
       type: "PRODUCT", materiality: "WATCH", company: "modal", relation: "SELF",
     });
-    assert.deepEqual(parseEventFilters({ type: "COMPETITIVE" }), { type: null, materiality: null, company: null, relation: "COMPETITOR" });
+    assert.deepEqual(parseEventFilters({ type: "COMPETITIVE" }), { type: "COMPETITIVE", materiality: null, company: null, relation: null });
     assert.deepEqual(parseEventFilters({ type: "EVIL", materiality: "HUGE", company: "../x", relation: "FRIEND" }), { type: null, materiality: null, company: null, relation: null });
     assert.equal(parseEventFilters({ materiality: ["all", "x"] }).materiality, "ALL");
   });
@@ -191,10 +204,11 @@ describe("event filters", () => {
     assert.ok(links.includes("/portfolio/events?relation=COMPETITOR"));
     assert.ok(links.includes("/portfolio/events?company=modal"));
   });
-  it("defaults to material + watch, ALL includes noise", () => {
-    assert.deepEqual(eventQueries(parseEventFilters({})).map((q) => q.materiality), ["MATERIAL", "WATCH"]);
-    assert.deepEqual(eventQueries(parseEventFilters({ materiality: "ALL" })).map((q) => q.materiality), [undefined]);
-    assert.deepEqual(eventQueries(parseEventFilters({ materiality: "NOISE", type: "TECHNICAL" })), [{ type: "TECHNICAL", company: undefined, relation: undefined, materiality: "NOISE" }]);
+  it("defaults to material + watch in one call, ALL includes noise", () => {
+    assert.equal(eventQuery(parseEventFilters({})).materiality, "MATERIAL,WATCH");
+    assert.equal(eventQuery(parseEventFilters({ materiality: "ALL" })).materiality, undefined);
+    assert.deepEqual(eventQuery(parseEventFilters({ materiality: "NOISE", type: "TECHNICAL" })), { type: "TECHNICAL", company: undefined, relation: undefined, materiality: "NOISE" });
+    assert.equal(eventQuery(parseEventFilters({ type: "competitive" })).type, "COMPETITIVE");
   });
   it("merges lists newest first without duplicates", () => {
     const a = ev("a", "modal", "2026-10-01T00:00:00Z");
@@ -213,14 +227,36 @@ describe("relations through comps", () => {
     },
   ];
   const portfolio = new Set(["cognition"]);
-  it("marks own events SELF and comp events with the portfolio company they belong to", () => {
-    const comps = compIndex(maps);
-    assert.equal(relationOf(ev("x", "cognition", "2026-11-01"), portfolio, comps).kind, "SELF");
-    const r = relationOf(ev("y", "factory", "2026-11-01"), portfolio, comps);
+  const comps = compIndex(maps);
+  const affect = (slug: string, relation: string, comp_type: string | null = null) => ({
+    company_slug: slug, company_name: slug, relation, comp_type, impact_reason: `${relation} of ${slug}`, materiality_for_company: "MATERIAL" as const,
+  });
+  it("uses the API's affects: SELF, or the portfolio companies a comp event reaches", () => {
+    assert.equal(relationOf(ev("x", "cognition", "2026-11-01", { affects: [affect("cognition", "SELF")] }), portfolio, comps).kind, "SELF");
+    const r = relationOf(ev("y", "factory", "2026-11-01", { affects: [affect("cognition", "COMPETITOR", "DIRECT")] }), portfolio, comps);
+    assert.equal(r.kind, "AFFECTS");
+    assert.equal(r.affects[0].company_slug, "cognition");
+    assert.equal(affectFor(ev("y", "factory", "2026-11-01", { affects: [affect("cognition", "COMPETITOR", "DIRECT")] }), "cognition")?.comp_type, "DIRECT");
+  });
+  it("a comp event that reaches nobody still says who tracks the comp", () => {
+    const r = relationOf(ev("z", "factory", "2026-11-01", { affects: [] }), portfolio, comps);
     assert.equal(r.kind, "COMP");
     assert.equal(r.via[0].portfolio.name, "Cognition");
-    assert.equal(relationOf(ev("z", "factory", "2026-11-01", { relation: "COMPETITOR" }), portfolio, comps).kind, "COMPETITOR");
-    assert.equal(relationOf(ev("w", "nobody", "2026-11-01"), portfolio, comps).kind, "UNKNOWN");
+    assert.equal(relationOf(ev("w", "nobody", "2026-11-01", { affects: [] }), portfolio, comps).kind, "UNKNOWN");
+  });
+  it("falls back to the portfolio set on a payload without affects", () => {
+    assert.equal(relationOf(ev("x", "cognition", "2026-11-01"), portfolio, comps).kind, "SELF");
+  });
+});
+
+describe("USAspending state", () => {
+  it("never reads unavailable when it was queried", () => {
+    const q = { state: "queried", recipient: "HELION ENERGY INC", last_queried_at: "2026-11-06" };
+    assert.equal(usaspendingText(q, 0, "06 NOV 2026"), "checked 06 NOV 2026 · no awards · recipient “HELION ENERGY INC”");
+    assert.match(usaspendingText(q, 128, "06 NOV 2026"), /128 federal awards/);
+    assert.equal(usaspendingText({ state: "not_applicable", recipient: null, last_queried_at: null }, null, null), "not applicable (no federal recipient configured)");
+    assert.match(usaspendingText({ state: "configured", recipient: "X INC", last_queried_at: null }, null, null), /not queried yet/);
+    for (const u of [q, { ...q, state: "not_applicable" }, { ...q, state: "configured" }]) assert.doesNotMatch(usaspendingText(u, 0, null), /unavailable/);
   });
 });
 

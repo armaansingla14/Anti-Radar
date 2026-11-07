@@ -269,6 +269,10 @@ export function dataAgeParts(
     if (entityType === "person" && !PERSON_DATA_AGE_FAMILIES.has(f.key)) continue;
     const present = f.key in fams;
     if (!present && f.key !== "social") continue;
+    if (age?.not_applicable?.includes(f.key)) {
+      parts.push({ label: f.label, value: "not applicable", available: false });
+      continue;
+    }
     const at = (fams as Record<string, string | null | undefined>)[f.key];
     const v = ageShort(at, now);
     parts.push({ label: f.label, value: v ?? "unavailable", available: v !== null });

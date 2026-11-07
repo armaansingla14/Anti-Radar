@@ -4,7 +4,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/insight/PageHeader";
 import { loadPortfolioComps, loadPortfolioIndex } from "@/components/entity/data";
 import { EventList, MethodNote } from "@/components/portfolio/Views";
-import { EVENT_TYPES, compIndex, eventFilterHref, eventQueries, mergeEvents, parseEventFilters, portfolioSlugs, type EventFilters } from "@/components/portfolio/logic";
+import { EVENT_TYPES, compIndex, eventFilterHref, eventQuery, parseEventFilters, portfolioSlugs, type EventFilters } from "@/components/portfolio/logic";
 import { getPortfolioEvents } from "@/lib/api";
 
 export const metadata: Metadata = { title: "Events · Portfolio" };
@@ -35,13 +35,9 @@ const LIMIT = 200;
 
 export default async function PortfolioEventsPage({ searchParams }: PageProps<"/portfolio/events">) {
   const filters = parseEventFilters(await searchParams);
-  const [index, maps, ...lists] = await Promise.all([
-    loadPortfolioIndex(),
-    loadPortfolioComps(),
-    ...eventQueries(filters).map((q) => getPortfolioEvents({ ...q, limit: LIMIT })),
-  ]);
-  const events = mergeEvents(lists.map((l) => l.items));
-  const total = lists.reduce((a, l) => a + l.total, 0);
+  const [index, maps, list] = await Promise.all([loadPortfolioIndex(), loadPortfolioComps(), getPortfolioEvents({ ...eventQuery(filters), limit: LIMIT })]);
+  const events = list.items;
+  const total = list.total;
   const portfolio = portfolioSlugs(index);
   const comps = compIndex(maps);
   const companies = [...(index ?? [])].sort((a, b) => a.company.name.localeCompare(b.company.name));
@@ -88,7 +84,7 @@ export default async function PortfolioEventsPage({ searchParams }: PageProps<"/
             { value: "ALL", label: "Include noise" },
           ]}
         />
-        <Strip label="Type" k="type" filters={filters} options={EVENT_TYPES.map((t) => ({ value: t, label: t }))} />
+        <Strip label="Type" k="type" filters={filters} options={EVENT_TYPES.map((t) => ({ value: t, label: t === "COMPETITIVE" ? "Competitive (comp events)" : t }))} />
         <Strip
           label="Relation"
           k="relation"
@@ -103,7 +99,7 @@ export default async function PortfolioEventsPage({ searchParams }: PageProps<"/
 
       <p className="label mb-3 text-ink-3">
         {events.length} of {total} · {scope}
-        {total > events.length && ` · newest ${LIMIT} per class shown`}
+        {total > events.length && ` · newest ${LIMIT} shown`}
       </p>
       <EventList
         events={events}

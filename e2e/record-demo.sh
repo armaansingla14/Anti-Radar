@@ -3,10 +3,11 @@
 #
 #   BASE_URL=http://localhost:3000 ./record-demo.sh          # /demo → demo/anti-radar-demo.mp4 (default BASE_URL)
 #   TOUR=diligence ./record-demo.sh                          # /demo/diligence → demo/anti-radar-diligence-demo.mp4
+#   TOUR=portfolio ./record-demo.sh                          # /demo/portfolio → demo/anti-radar-portfolio-demo.mp4
 #   DEMO_PACE=1.1 DEMO_DWELL="brief=18" ./record-demo.sh     # slower overall / per scene
 #   SKIP_RECORD=1 ./record-demo.sh                           # re-encode the last take only
 #
-# 1. Runs the tour's spec (demo-tour.spec.ts / diligence-tour.spec.ts) with RECORD=1 (paced, smooth scrolls,
+# 1. Runs the tour's spec (demo-tour.spec.ts / diligence-tour.spec.ts / portfolio-tour.spec.ts) with RECORD=1 (paced, smooth scrolls,
 #    Playwright video at 1920×1080).
 # 2. Trims the warm-up visit (the take starts on the title card's entrance; see <tour>-tour-meta.json).
 # 3. Encodes H.264 / yuv420p / 30 fps / faststart with the static ffmpeg shipped in the imageio-ffmpeg
@@ -20,7 +21,8 @@ TOUR="${TOUR:-radar}"
 case "$TOUR" in
   radar) SPEC=demo-tour.spec.ts; ROUTE=/demo; META_NAME=demo-tour-meta.json; DEFAULT_OUT="$ROOT/demo/anti-radar-demo.mp4" ;;
   diligence) SPEC=diligence-tour.spec.ts; ROUTE=/demo/diligence; META_NAME=diligence-tour-meta.json; DEFAULT_OUT="$ROOT/demo/anti-radar-diligence-demo.mp4" ;;
-  *) echo "record-demo: unknown TOUR=$TOUR (radar | diligence)" >&2; exit 1 ;;
+  portfolio) SPEC=portfolio-tour.spec.ts; ROUTE=/demo/portfolio; META_NAME=portfolio-tour-meta.json; DEFAULT_OUT="$ROOT/demo/anti-radar-portfolio-demo.mp4" ;;
+  *) echo "record-demo: unknown TOUR=$TOUR (radar | diligence | portfolio)" >&2; exit 1 ;;
 esac
 OUT="${OUT:-$DEFAULT_OUT}"
 

@@ -122,7 +122,7 @@ def combine(group: list[Candidate]) -> Candidate:
     sources, seen = [], set()
     for c in sorted(group, key=_primary_key):
         for s in c.sources:
-            k = (s.url, s.ref)
+            k = s.url or s.ref  # the same page captured twice (e.g. two captures) is one source
             if k not in seen:
                 seen.add(k)
                 sources.append(s)

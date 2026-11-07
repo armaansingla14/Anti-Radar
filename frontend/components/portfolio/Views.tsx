@@ -22,6 +22,7 @@ import {
   proxyIsNot,
   proxyKind,
   relationOf,
+  subtypeLabel,
   traceStateLabel,
   traceSteps,
   typeLabel,
@@ -151,7 +152,7 @@ export function AttentionCardView({
                     className="inline-flex max-w-[34ch] items-center gap-1 truncate border border-accent px-1.5 font-mono text-[9.5px] uppercase leading-[16px] tracking-[0.06em] text-accent hover:bg-accent hover:text-paper"
                     title={w?.title}
                   >
-                    {w ? `${w.subject} · ${w.subtype.replace(/_/g, " ")} · ${fmtDate(w.event_at, { year: false })}` : "event"} →
+                    {w ? `${w.subject} · ${subtypeLabel(w.subtype)} · ${fmtDate(w.event_at, { year: false })}` : "event"} →
                   </Link>
                 </li>
               ))}
@@ -208,28 +209,55 @@ export function AttentionCardView({
 
 // ── Events ───────────────────────────────────────────────────────────────────
 
-/** "COMPETITOR · comp of Cognition (DIRECT)" — how an event reaches the portfolio. */
+/** "COMPETITOR · of Cognition (direct)" — how an event reaches the portfolio, from the API's `affects`. */
 export function RelationLine({ e, portfolio, comps, className }: { e: PEvent; portfolio: ReadonlySet<string>; comps: Map<string, CompLink[]>; className?: string }) {
   const r = relationOf(e, portfolio, comps);
-  if (r.kind === "SELF") return <RelationChip value="SELF" className={className} title="The portfolio company's own event" />;
-  if (r.kind === "UNKNOWN") return <RelationChip value={e.relation ?? "—"} className={className} />;
+  if (r.kind === "UNKNOWN") return null;
+  if (r.kind === "COMP")
+    return (
+      <span className={clsx("inline-flex flex-wrap items-baseline gap-x-1.5", className)}>
+        <RelationChip value="COMP" title="A comp's event that reaches no portfolio company (rule M8)" />
+        <span className="font-mono text-[9.5px] uppercase tracking-[0.06em] text-ink-3">
+          of{" "}
+          {r.via.map((v, i) => (
+            <Fragment key={v.portfolio.slug}>
+              {i > 0 && ", "}
+              <Link href={portfolioHref(v.portfolio.slug)} className="text-ink-2 hover:text-accent">
+                {v.portfolio.name}
+              </Link>{" "}
+              ({v.comp_type.replace(/_/g, " ").toLowerCase()})
+            </Fragment>
+          ))}{" "}
+          · reaches no portfolio company (M8)
+        </span>
+      </span>
+    );
   return (
     <span className={clsx("inline-flex flex-wrap items-baseline gap-x-1.5", className)}>
-      <RelationChip value={r.kind === "COMPETITOR" ? (e.relation ?? "COMPETITOR") : "COMP"} title="A comp's event, seen from the portfolio company" />
-      <span className="font-mono text-[9.5px] uppercase tracking-[0.06em] text-ink-2">
-        of{" "}
-        {r.via.map((v, i) => (
-          <Fragment key={v.portfolio.slug}>
-            {i > 0 && ", "}
-            <Link href={portfolioHref(v.portfolio.slug)} className="text-ink hover:text-accent">
-              {v.portfolio.name}
-            </Link>{" "}
-            <Link href={compsHref(v.portfolio.slug)} className="text-ink-3 hover:text-accent" title={v.why_comparable}>
-              ({v.comp_type.replace(/_/g, " ").toLowerCase()})
-            </Link>
-          </Fragment>
-        ))}
-      </span>
+      {r.kind === "SELF" && <RelationChip value="SELF" title="The portfolio company's own event" />}
+      {r.affects.length > 0 && (
+        <>
+          <RelationChip value={r.affects[0].relation} title="A comp's event, seen from the portfolio company" />
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.06em] text-ink-2">
+            of{" "}
+            {r.affects.map((a, i) => (
+              <Fragment key={a.company_slug}>
+                {i > 0 && ", "}
+                <Link href={portfolioHref(a.company_slug)} className="text-ink hover:text-accent">
+                  {a.company_name}
+                </Link>
+                {a.comp_type && (
+                  <Link href={compsHref(a.company_slug)} className="text-ink-3 hover:text-accent" title={a.impact_reason}>
+                    {" "}
+                    ({a.comp_type.replace(/_/g, " ").toLowerCase()})
+                  </Link>
+                )}
+                {a.materiality_for_company !== e.materiality && <span className="text-ink-3"> · {a.materiality_for_company.toLowerCase()} for it</span>}
+              </Fragment>
+            ))}
+          </span>
+        </>
+      )}
     </span>
   );
 }
@@ -443,7 +471,7 @@ export function DecisionTrace({ decisions, suggested, max = 4, eventTitles }: { 
 export function CompRow({ comp }: { comp: Comp }) {
   const c = comp.company;
   return (
-    <li className="grid gap-x-6 gap-y-2 border-b border-rule py-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+    <li data-comp={c.slug} className="grid gap-x-6 gap-y-2 border-b border-rule py-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
       <div className="min-w-0">
         <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <Link href={`/companies/${c.slug}`} className="font-serif text-[18px] leading-tight text-ink decoration-accent underline-offset-4 hover:underline">

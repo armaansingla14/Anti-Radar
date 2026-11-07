@@ -1201,7 +1201,7 @@ def capture_portfolio(targets: list[Any], only: tuple[str, ...] | None = None) -
                 if not b.errors:  # an outage is not "no awards": only a clean lookup records the check
                     b.companies.append(CompanyRecord(
                         ref=t.ref, name=t.name, kind="company", source_url="https://www.usaspending.gov/",
-                        attrs={"usaspending_checked_at": clock.today().isoformat(),
+                        attrs={"usaspending_checked_at": clock.now().isoformat(),
                                "usaspending_recipient": t.usaspending_recipient}))
                 return b
 

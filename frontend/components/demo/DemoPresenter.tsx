@@ -66,7 +66,8 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 const samePath = (a: string | null, b: string | null) => !!a && !!b && a.split("#")[0] === b.split("#")[0];
-const matchOf = (url: string) => url.split("?")[0];
+/** Pathname of a step URL (query and hash dropped: the frame path never carries a hash). */
+const matchOf = (url: string) => url.split(/[?#]/)[0];
 
 /**
  * /demo — a guided, presenter-friendly walk through the real app. A title card warms the backend and

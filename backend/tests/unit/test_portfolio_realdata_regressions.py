@@ -271,3 +271,18 @@ def test_merged_event_lists_the_company_source_first():
                   event_at=at, sources=[own], epistemic="FACT")
     merged = combine([a, b])
     assert merged.sources[0].url == "https://factory.com/news/humanlayer"
+
+
+def test_the_same_page_captured_twice_is_one_source():
+    """'Corridor is Joining Cognition' listed cognition.com/blog/corridor-joining-cognition twice (two captures)."""
+    from radar.portfolio.dedup import combine
+    from radar.portfolio.types import Candidate
+
+    cid = uuid.uuid4()
+    at = datetime(2026, 10, 28, tzinfo=UTC)
+    url = "https://cognition.com/blog/corridor-joining-cognition"
+    cands = [Candidate(company_id=cid, event_type="STRATEGIC", subtype="company_joining", title="Corridor is Joining Cognition",
+                       event_at=at, epistemic="FACT",
+                       sources=[SourceRef(url=url, title="Corridor is Joining Cognition", source_type="website",
+                                          family="web", publisher="company", ref=ref)]) for ref in ("sig-1", "sig-2")]
+    assert [s.url for s in combine(cands).sources] == [url]

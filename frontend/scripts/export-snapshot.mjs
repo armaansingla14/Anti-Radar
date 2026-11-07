@@ -129,7 +129,7 @@ async function main() {
   // company's view and its company-page tabs, every event page. Mirrors components/portfolio/logic.ts eventFilterLinks.
   const pSlugs = (Array.isArray(portfolioIndex) ? portfolioIndex : []).map((i) => i.company.slug);
   const pEvents = Array.isArray(portfolioEvents) ? portfolioEvents : [];
-  const EVENT_TYPES = ["PRODUCT", "TECHNICAL", "TALENT", "COMMERCIAL", "FINANCING", "REGULATORY", "RISK", "STRATEGIC"];
+  const EVENT_TYPES = ["PRODUCT", "TECHNICAL", "TALENT", "COMMERCIAL", "FINANCING", "COMPETITIVE", "REGULATORY", "RISK", "STRATEGIC"];
   const portfolioPages = pSlugs.length
     ? [
         "/portfolio", "/portfolio/brief", "/portfolio/comps", "/portfolio/events",
@@ -150,7 +150,7 @@ async function main() {
   const pages = [
     "/", "/?new=today", "/?new=week", "/formation", "/meet", "/meet?week=current", "/founders", "/companies", "/thesis",
     "/daily", "/brief", "/brief/today", "/status", "/watchlist", "/retrospective", "/search", "/unlock", "/demo",
-    "/changes", "/diligence", "/demo/diligence",
+    "/changes", "/diligence", "/demo/diligence", ...(pSlugs.length ? ["/demo/portfolio"] : []),
     ...diligencePages,
     ...agentPages,
     ...portfolioPages,
@@ -182,9 +182,15 @@ async function main() {
     // /demo/diligence pre-flight (the most recent workspace, its company, where it shows in Radar, the agents' audit trail).
     "/diligence", "/changes", "/agents", "/agents/failures", "/agents/cases",
     ...workspaces.flatMap((w) => [`/diligence/${w.company.slug}`, `/companies/${w.company.slug}`]),
-    // /demo/portfolio tour pre-flight (Pulse, the portfolio index, material events, each portfolio view, the brief).
+    // /demo/portfolio pre-flight (components/demo/portfolioWarm.ts): Pulse, every portfolio view (the picked company
+    // and the RUN DILIGENCE company), the material + watch event details (picked event, handoff event), comps,
+    // the brief, the agents overview and the PORTFOLIO ANALYST failure ledger; diligence/{slug} is listed above.
     ...(pSlugs.length
-      ? ["/portfolio", "/portfolio/companies", "/portfolio/events?materiality=MATERIAL", "/portfolio/brief", "/portfolio/comps", ...pSlugs.map((s) => `/portfolio/${s}`)]
+      ? [
+          "/portfolio", "/portfolio/companies", "/portfolio/brief", "/portfolio/comps", `/agents/failures?agent=${encodeURIComponent("PORTFOLIO ANALYST")}`,
+          ...pSlugs.map((s) => `/portfolio/${s}`),
+          ...pEvents.filter((e) => e.materiality !== "NOISE").map((e) => `/portfolio/events/${e.id}`),
+        ]
       : []),
     ...Array.from({ length: Math.ceil(companies.length / COMPANY_PAGE) }, (_, i) => `/companies?limit=${COMPANY_PAGE}&offset=${(i + 1) * COMPANY_PAGE}`),
     ...Array.from({ length: Math.ceil(people.length / FOUNDER_PAGE) }, (_, i) => `/founders?limit=${FOUNDER_PAGE}&offset=${(i + 1) * FOUNDER_PAGE}`),
