@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Demo video",
-  description: "Anti Radar on video: the three-minute narrated walkthrough and the technical diligence tour.",
+  description: "Anti Radar on video: the radar walkthrough, the Portfolio Pulse tour and the technical diligence tour.",
 };
 
 const RELEASE = "https://github.com/armaansingla14/Anti-Radar/releases/tag/v1.0.0";
@@ -44,6 +44,31 @@ export default function VideoPage() {
           Download from GitHub ↗
         </a>
       </div>
+
+      <section className="mt-16 border-t border-rule pt-10" id="portfolio">
+        <p className="label mb-3">Portfolio Pulse · 2.5 min</p>
+        <h2 className="font-serif text-[32px] leading-[1.1] tracking-[-0.01em] md:text-[40px]">What changed after we cared.</h2>
+        <p className="mt-3 max-w-[70ch] text-[15px] leading-relaxed text-ink-2">
+          A captioned, silent recording of the portfolio tour on the snapshot of Nov 6, 2026. It covers publicly disclosed
+          Anti Fund portfolio companies and their competitors, separates material changes from noise, and shows why each change
+          matters and which questions to review. It also shows a handoff from a portfolio event into technical diligence, the
+          morning brief, and how the portfolio agent is evaluated.
+        </p>
+        <div className="mt-8 border border-ink bg-ink">
+          <video controls playsInline preload="metadata" className="block aspect-video w-full" data-demo="portfolio-video">
+            <source src="/demo/anti-radar-portfolio-demo.mp4" type="video/mp4" />
+            Your browser cannot play this video. <a href="/demo/anti-radar-portfolio-demo.mp4">Download the MP4</a>.
+          </video>
+        </div>
+        <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3 font-mono text-[11px] uppercase tracking-[0.08em]">
+          <Link href="/demo/portfolio" className="link text-ink">
+            Take the portfolio tour →
+          </Link>
+          <Link href="/portfolio" className="link text-ink-2">
+            Open Portfolio Pulse →
+          </Link>
+        </div>
+      </section>
 
       <section className="mt-16 border-t border-rule pt-10" id="diligence">
         <p className="label mb-3">Technical diligence · 2 min</p>

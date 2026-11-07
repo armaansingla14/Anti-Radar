@@ -62,6 +62,11 @@ const ROUTES = [
   ["/diligence/unsloth-ai/claims/1", "Not executed"], ["/companies/unsloth-ai?tab=diligence", "Open diligence"],
   ["/agents", "can we trust the research system"], ["/agents/failures", "FAILURE 0001"], ["/agents/cases", "injection-false-positive-001"],
   ["/demo/diligence", null],
+  // V4: Portfolio Pulse.
+  ["/portfolio", "What changed after we cared"], ["/portfolio/brief", "worth knowing"], ["/portfolio/events", "Factory"],
+  ["/portfolio/comps", "Factory"], ["/portfolio/modal", "Publicly disclosed Anti Fund portfolio company"],
+  ["/portfolio/cognition", "Factory"], ["/companies/modal?tab=portfolio", "Portfolio"], ["/companies/cognition?tab=comps", "Factory"],
+  ["/diligence/modal", "NVIDIA Vera CPUs double throughput"], ["/demo/portfolio", null],
 ];
 
 // Report ids change with every reseed: resolve one Anti Brief and one Meeting Brief from the deployed data.
@@ -96,6 +101,13 @@ async function checkHttp() {
   video.status === 200 && video.type.includes("video/mp4") ? ok("video file on the site", `${(video.length / 1e6).toFixed(1)} MB`) : fail("video file on the site", `HTTP ${video.status} ${video.type}`);
   const dvideo = await http(`${BASE}/demo/anti-radar-diligence-demo.mp4`, { method: "HEAD", accept: "video/mp4" });
   dvideo.status === 200 && dvideo.type.includes("video/mp4") ? ok("diligence video on the site", `${(dvideo.length / 1e6).toFixed(1)} MB`) : fail("diligence video on the site", `HTTP ${dvideo.status} ${dvideo.type}`);
+  const pvideo = await http(`${BASE}/demo/anti-radar-portfolio-demo.mp4`, { method: "HEAD", accept: "video/mp4" });
+  pvideo.status === 200 && pvideo.type.includes("video/mp4") ? ok("portfolio video on the site", `${(pvideo.length / 1e6).toFixed(1)} MB`) : fail("portfolio video on the site", `HTTP ${pvideo.status} ${pvideo.type}`);
+  // Public mode never serves private portfolio fields.
+  const pf = await http(`${BASE}/api/proxy/portfolio/modal`, { accept: "application/json" });
+  if (pf.status !== 200) fail("portfolio company data (/api/proxy/portfolio/modal)", `HTTP ${pf.status}`);
+  else if (/private_fields|cost_basis|ownership|current_mark|reserves/.test(pf.body)) fail("no private portfolio fields", "a private field name appears in the public payload");
+  else ok("no private portfolio fields in the public payload");
   const og = await http(`${BASE}/opengraph-image.png`, { method: "HEAD", accept: "image/png" });
   og.status === 200 ? ok("social preview image") : fail("social preview image", `HTTP ${og.status}`);
   if (!flag("no-release")) {
@@ -240,6 +252,24 @@ async function checkBrowser() {
     await page.waitForURL(`${BASE}/`);
     await visible("Possible formations");
   });
+  await step("V4. portfolio: pulse → company → event → comps → brief → diligence handoff", async () => {
+    await page.goto(`${BASE}/portfolio`, { waitUntil: "domcontentloaded" });
+    for (const t of ["What changed after we cared", "Needs attention", "Noise filtered", "Portfolio monitoring"]) await visible(t);
+    await page.goto(`${BASE}/portfolio/cognition`, { waitUntil: "domcontentloaded" });
+    await visible("Publicly disclosed Anti Fund portfolio company");
+    await visible("Factory");
+    await page.goto(`${BASE}/portfolio/events?type=COMPETITIVE`, { waitUntil: "domcontentloaded" });
+    await page.locator('a[href^="/portfolio/events/"]').first().click();
+    await page.waitForURL(/\/portfolio\/events\/[0-9a-f-]{36}/);
+    await visible("Rule");
+    await visible("Sources");
+    await page.goto(`${BASE}/portfolio/comps`, { waitUntil: "domcontentloaded" });
+    await visible("DIRECT");
+    await page.goto(`${BASE}/portfolio/brief`, { waitUntil: "domcontentloaded" });
+    await visible("worth knowing");
+    await page.goto(`${BASE}/diligence/modal`, { waitUntil: "domcontentloaded" });
+    await visible("NVIDIA Vera CPUs double throughput");
+  });
   await step("V3. diligence: company tab → workspace → claim → agents", async () => {
     await page.goto(`${BASE}/companies/unsloth-ai?tab=diligence`, { waitUntil: "domcontentloaded" });
     await page.getByRole("link", { name: /Open diligence/i }).first().click();
@@ -262,7 +292,7 @@ async function checkBrowser() {
   // Phone width: no horizontal overflow on the main pages.
   const phone = await browser.newContext({ ignoreHTTPSErrors: INSECURE, viewport: { width: 390, height: 844 }, isMobile: true });
   const p2 = await phone.newPage();
-  for (const route of ["/", "/formation", "/meet", "/companies/shengshu", "/founders/kevin-zakka", "/video", "/demo", "/changes", "/diligence/unsloth-ai", "/agents"]) {
+  for (const route of ["/", "/formation", "/meet", "/companies/shengshu", "/founders/kevin-zakka", "/video", "/demo", "/changes", "/diligence/unsloth-ai", "/agents", "/portfolio", "/portfolio/modal", "/portfolio/brief", "/portfolio/comps"]) {
     try {
       await p2.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded" });
       await p2.waitForTimeout(400);

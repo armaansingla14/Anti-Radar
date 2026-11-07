@@ -1,4 +1,4 @@
-// Demo stills from a running stack: demo/screenshots/01-radar.png … 11-agents.png
+// Demo stills from a running stack: demo/screenshots/01-radar.png … 14-portfolio-brief.png
 // (1920×1080 viewport, deviceScaleFactor 2, clipped to the meaningful region of each page).
 //
 // Usage: BASE_URL=http://localhost:3000 node demo-screenshots.mjs [outDir]
@@ -140,6 +140,22 @@ if (ws) {
 // 11 — agent evaluation: per-agent metrics, unmeasured values shown with their reasons.
 await go("/agents");
 await shot("11-agents", { top: 130, bottom: 1500 });
+
+// 12 — Portfolio Pulse: counts and the first Needs Attention card.
+await go("/portfolio");
+await shot("12-portfolio-pulse", { top: 130, bottom: 1500 });
+
+// 13 — one portfolio company: public investment context and its material events.
+const pulse = await (await fetch(`${base}/api/proxy/portfolio`, { headers: { Accept: "application/json" } })).json().catch(() => null);
+const top = pulse?.needs_attention?.[0]?.company?.slug ?? pulse?.needs_attention?.[0]?.company_slug;
+if (top) {
+  await go(`/portfolio/${top}`);
+  await shot("13-portfolio-company", { top: 130, bottom: 1500 });
+}
+
+// 14 — the Portfolio morning brief.
+await go("/portfolio/brief");
+await shot("14-portfolio-brief", { top: 130, bottom: 1500 });
 
 console.log(JSON.stringify({ out, errors: errors.slice(0, 10) }));
 await browser.close();

@@ -2,19 +2,20 @@
 
 **Conviction Before Consensus.**
 
-## Discover. Diligence. Decide.
+## Discover. Diligence. Monitor. Decide.
 
-1. **Discover.** Radar reads GitHub, research, hiring, the web and social signals to surface technical founders and companies whose momentum is changing, before conventional startup databases catch up.
-2. **Diligence.** When Radar finds a company, Technical Diligence asks *what should we believe about it?* It extracts the company's material technical claims, checks each one against public code, registries and independent sources, and says plainly what is verified, what is only claimed and what nobody can know from the outside.
-3. **Decide.** People decide. Agents accelerate the research; every output is sourced, evaluated and open to human review.
+1. **Discover.** Radar finds technical founders and companies whose momentum is changing, from GitHub, research, hiring, the web and social signals, before conventional startup databases catch up.
+2. **Diligence.** Diligence tests what they claim. It extracts each material technical claim, checks it against public code, registries and independent sources, and says plainly what is verified, what is only claimed and what nobody can know from the outside.
+3. **Monitor.** Portfolio Pulse monitors what changes afterward. It watches publicly disclosed Anti Fund portfolio companies and their competitors, separates material changes from noise, explains why each one matters and hands technical questions back to Diligence.
+4. **Decide.** People decide. Agents accelerate the work, but evidence, evaluation and human judgment stay visible.
 
-### [Open the radar](https://anti-radar-one.vercel.app) · [Diligence demo](https://anti-radar-one.vercel.app/video#diligence) · [GitHub](https://github.com/armaansingla14/Anti-Radar)
+### [Live radar](https://anti-radar-one.vercel.app) · [Diligence](https://anti-radar-one.vercel.app/diligence) · [Portfolio Pulse](https://anti-radar-one.vercel.app/portfolio) · [Agent evals](https://anti-radar-one.vercel.app/agents) · [Video](https://anti-radar-one.vercel.app/video)
 
-Also: [Diligence tour](https://anti-radar-one.vercel.app/demo/diligence) · [Unsloth AI workspace](https://anti-radar-one.vercel.app/diligence/unsloth-ai) · [What changed since Oct 20](https://anti-radar-one.vercel.app/changes) · [Agent evaluation](https://anti-radar-one.vercel.app/agents) · [3-minute radar video](https://anti-radar-one.vercel.app/video)
+Also: [Portfolio brief](https://anti-radar-one.vercel.app/portfolio/brief) · [Portfolio tour](https://anti-radar-one.vercel.app/demo/portfolio) · [Diligence tour](https://anti-radar-one.vercel.app/demo/diligence) · [What changed since Oct 20](https://anti-radar-one.vercel.app/changes) · [GitHub](https://github.com/armaansingla14/Anti-Radar)
 
 [![Anti Radar: the morning view on the verified snapshot of Nov 5, 2026](demo/screenshots/01-radar.png)](https://anti-radar-one.vercel.app)
 
-The public site serves a **verified snapshot**: real public data collected on **Oct 20** and **Nov 5, 2026**. It is bundled with the site, so it loads instantly and every number can be checked against its source. Anti Radar is an independent project built around Anti Fund's thesis; it is not affiliated with Anti Fund.
+The public site serves a **verified snapshot**: real public data collected on **Oct 20**, **Nov 5** and **Nov 6, 2026**. It is bundled with the site, so it loads instantly and every number can be checked against its source. Anti Radar is an independent project built around Anti Fund's thesis; it is not affiliated with Anti Fund.
 
 ---
 
@@ -38,6 +39,8 @@ Each of those is a weak signal on its own. Dated and combined, they can show tec
 | **Since last snapshot**: what changed between two verified snapshots. Covers new companies and people, new formations, score movers in both directions (only when the scores are comparable) and who entered or left the meeting list. Every caveat comes first. | ![Since last snapshot](demo/screenshots/08-since-snapshot.png) |
 | **Technical Diligence**: a claim ledger for one company. Each claim carries its company, public-artifact and third-party evidence, and a status set by documented rules. Testable claims get a generated test plan. The workspace also covers technical underwriting and questions for the founders. | ![Technical diligence](demo/screenshots/09-diligence.png) |
 | **One claim, audited**: the evidence for and against it, the rule that set its status, and a generated test plan (never executed). | ![A claim](demo/screenshots/10-claim.png) |
+| **Portfolio Pulse**: what materially changed across publicly disclosed Anti Fund portfolio companies and their competitors. Each change carries its rule, why it matters, the questions to review and a suggested action, and the noise filtered out is counted. | ![Portfolio Pulse](demo/screenshots/12-portfolio-pulse.png) |
+| **Portfolio brief**: five things worth knowing each morning, built deterministically from material events, each line sourced. | ![Portfolio brief](demo/screenshots/14-portfolio-brief.png) |
 | **Agent evaluation**: per-agent metrics computed from stored outputs (unmeasured values say why), a failure ledger, and regression cases that pin each documented failure. | ![Agents](demo/screenshots/11-agents.png) |
 
 ## Real-world evaluation
@@ -90,11 +93,44 @@ A hand audit of this run found 9 real extraction and matching errors. Each one i
 
 Each stored agent output is evaluated: task success, structured-output validity, citation validity, unsupported-claim rate, source coverage, latency, cost, fallback and errors. Metrics carry their sample size, and a value that cannot be computed is shown as missing with the reason, never estimated.
 
-Failures go into a ledger with a 13-category taxonomy: 20 documented failures, each with its evidence, resolution and the regression test that guards it. The suite has 16 YAML regression cases (`radar eval`).
+Failures go into a ledger with a 13-category taxonomy: 44 documented real failures (from the Oct 20 evaluation, the diligence audits of Unsloth AI and Modal, and the portfolio audit), each with its evidence, resolution and the regression test that guards it. The suite has 24 YAML regression cases (`radar eval`).
 
 The evaluator found a real bug on its own. The injection guard was flagging meeting briefs that reported "Founder Score 48/100" as prompt injection.
 
 Model comparison is opt-in (`EVAL_PROVIDERS`), and a model recommendation is only shown when there is enough measured data. Details: [`docs/AGENT_EVALUATION.md`](docs/AGENT_EVALUATION.md).
+
+## Portfolio Pulse
+
+Radar answers *who is becoming interesting*. Portfolio Pulse answers *what changed after we cared, and what deserves attention now?*
+
+**What it monitors.** It covers the 16 technical companies that Anti Fund lists publicly on [antifund.com](https://antifund.com/), plus 43 comparable companies, each with a reason it is comparable and a public source.
+- Stage and year are copied exactly as the site states them.
+- Nothing private is stored or shown: no ownership, cost basis, marks or internal metrics. The schema has room for a future firm mode, but those fields stay empty in public mode.
+
+**How a change surfaces.** Every raw change is collected from the radar's existing collectors (company newsrooms, careers boards, GitHub, Hacker News, papers) and from USAspending.gov federal awards. Each change is then:
+- typed into one of nine event types;
+- deduplicated across sources;
+- classified **MATERIAL / WATCH / NOISE** by documented, deterministic rules. No language model sets materiality.
+
+**Competitors count too.** A competitor's event reaches a portfolio company through its comp relationship. For example, a direct competitor's acquisitions put Cognition on Needs Attention.
+
+**Needs Attention cards.** Each card says:
+- why the company surfaced and what changed;
+- what it could mean, labeled as inference;
+- which questions to review;
+- a suggested action: review, monitor, update the competitive map, run diligence, or prepare founder questions. A card never says "contact the founder".
+
+**Handoff to Diligence.** RUN DILIGENCE starts the existing V3 diligence on the event's own sources. Modal's "double throughput" post became claim 01 of its workspace, with a generated test plan.
+
+**First real run** (window Oct 7 – Nov 6, 2026): 1,215 raw changes → 432 candidate events → 283 after deduplication → **6 material · 35 watch · 242 noise** → 5 companies need attention.
+
+A hand audit of that run found 18 real errors in classification, extraction and entity matching. Examples:
+- a proposed $85M award called a material contract;
+- a pricing guide read as a price change;
+- model-catalog listings read as launches;
+- JavaScript-rendered newsrooms yielding nothing.
+
+Each error is fixed, filed in the failure ledger and pinned by a regression test. The PORTFOLIO ANALYST agent is evaluated by the same control plane as every other agent. Method: [`docs/PORTFOLIO_METHODOLOGY.md`](docs/PORTFOLIO_METHODOLOGY.md).
 
 ## Limitations
 

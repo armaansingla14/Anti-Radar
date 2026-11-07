@@ -1,16 +1,23 @@
 {
-  "as_of": "2026-11-05",
-  "captured_at": "2026-11-05T04:44:47.122003+00:00",
-  "exported_at": "2026-11-05T17:11:30.464Z",
-  "source_commit": "2d75a64",
+  "as_of": "2026-11-06",
+  "captured_at": "2026-11-06T22:11:32.596871+00:00",
+  "exported_at": "2026-11-07T00:41:01.280Z",
+  "source_commit": "793634f",
   "note": "Backend API responses for every page of the public site, recorded from the verified real-data snapshot (backend/radar/demo/snapshot plus the dated updates in snapshot_updates/). Served by lib/snapshot-server.ts when DATA_SOURCE=snapshot.",
   "counts": {
-    "companies": 368,
-    "people": 4567,
+    "companies": 424,
+    "people": 5054,
     "formation_candidates": 7,
-    "reports": 12,
-    "diligence_workspaces": 1,
-    "agent_failures": 20,
-    "responses": 15100
+    "reports": 24,
+    "diligence_workspaces": 2,
+    "agent_failures": 44,
+    "portfolio_companies": 16,
+    "portfolio_comps": 43,
+    "portfolio_events": 283,
+    "portfolio_material": 6,
+    "portfolio_watch": 35,
+    "portfolio_noise": 242,
+    "portfolio_briefs": 1,
+    "responses": 17142
   }
 }
