@@ -10,7 +10,7 @@ const PORTFOLIO_TOUR: TourConfig = {
   stageTitle: "Anti Radar — Portfolio Pulse",
   title: {
     tagline: "Portfolio Pulse.",
-    dek: "What changed after we cared — material events, competitor moves and open questions across the publicly disclosed Anti Fund portfolio, each with its source, its rule and what to review.",
+    dek: "What changed after we cared — material events, competitor moves and open questions across selected publicly disclosed Anti Fund portfolio companies, each with its source, its rule and what to review.",
     readyLine: "Ready · nine scenes · about two and a half minutes",
   },
   final: (p) => {

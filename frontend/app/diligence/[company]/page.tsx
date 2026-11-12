@@ -110,7 +110,7 @@ export default async function DiligenceWorkspacePage({ params }: PageProps<"/dil
             <span className="font-mono text-[11.5px] uppercase">{run.mode}</span>
             {run.trace_summary && (
               <span className="block font-mono text-[10px] text-ink-3">
-                {run.trace_summary.requests} requests · {run.trace_summary.errors} errors
+                {run.trace_summary.requests} requests · {run.trace_summary.errors} {run.trace_summary.errors === 1 ? "error" : "errors"}
               </span>
             )}
           </Meta>

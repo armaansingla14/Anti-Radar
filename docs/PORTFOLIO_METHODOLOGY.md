@@ -2,7 +2,7 @@
 
 Portfolio Pulse answers one question: *what changed after we cared, and what deserves attention now?*
 
-It runs over publicly disclosed portfolio companies (`config/anti_fund_portfolio.yaml`) and their comps. These are the same `Company` entities the rest of ANTI RADAR uses. The engine is deterministic and offline (`backend/radar/portfolio/`). No LLM classifies events, sets materiality or ranks companies.
+It runs over selected publicly disclosed portfolio companies (`config/anti_fund_portfolio.yaml`) and their comps. These are 16 technical companies with enough public footprint, out of the 53 that antifund.com lists; this is a selection, not the whole portfolio. These are the same `Company` entities the rest of ANTI RADAR uses. The engine is deterministic and offline (`backend/radar/portfolio/`). No LLM classifies events, sets materiality or ranks companies.
 
 ## Pipeline
 

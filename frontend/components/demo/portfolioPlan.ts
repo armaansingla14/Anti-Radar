@@ -153,7 +153,7 @@ export function buildPortfolioPlan(inp: PortfolioInputs): PortfolioPlan {
       scene_key: "pulse",
       title: "Portfolio Pulse",
       caption: p
-        ? `Radar answers who is becoming interesting. Portfolio Pulse answers what changed after you already care — ${plural(counts.need_attention ?? 0, "company", "companies")} need attention · ${plural(counts.material ?? 0, "material event")} · ${counts.watch ?? 0} to watch, across ${plural(p.monitoring.portfolio_companies, "portfolio company", "portfolio companies")}.`
+        ? `Radar answers who is becoming interesting. Portfolio Pulse answers what changed after you already care — ${plural(counts.need_attention ?? 0, "company", "companies")} need attention · ${plural(counts.material ?? 0, "material event")} · ${counts.watch ?? 0} to watch, across ${plural(p.monitoring.portfolio_companies, "selected portfolio company", "selected portfolio companies")}.`
         : "Portfolio Pulse is unavailable.",
       url: "/portfolio",
       ready: '[data-demo="portfolio-counts"]',

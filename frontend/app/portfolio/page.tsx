@@ -59,7 +59,7 @@ export default async function PortfolioPulsePage() {
             {window && <> · 30-day window {window}</>}
           </p>
           <p className="mt-2 text-[13px] leading-snug text-ink-3">
-            {m.portfolio_companies} publicly disclosed Anti Fund portfolio companies (
+            {m.portfolio_companies} selected publicly disclosed Anti Fund portfolio companies (
             <Ext url="https://antifund.com/" className="text-ink-2">
               antifund.com
             </Ext>

@@ -2,18 +2,29 @@
 
 **Conviction Before Consensus.**
 
+## Start here
+
+Anti Radar is one system that finds technical founders early, tests what companies claim, monitors what changes after investment, and measures the agents doing the work. Every line on the site links to a public source.
+
+1. **Watch the 2.5-minute Portfolio Pulse walkthrough:** [video](https://anti-radar-one.vercel.app/video#portfolio) or [guided tour](https://anti-radar-one.vercel.app/demo/portfolio).
+2. **Open [Portfolio Pulse](https://anti-radar-one.vercel.app/portfolio).** It shows what materially changed across selected publicly disclosed Anti Fund portfolio companies, why each change matters, and what to review.
+3. **Follow one event into Diligence.** Modal's ["double throughput" post](https://anti-radar-one.vercel.app/portfolio/modal) hands off to [its diligence workspace](https://anti-radar-one.vercel.app/diligence/modal), where it is claim 01, with a generated test plan.
+4. **See how the agents are measured:** [agent metrics](https://anti-radar-one.vercel.app/agents) and the [failure ledger](https://anti-radar-one.vercel.app/agents/failures). It holds 44 real failures, each pinned by a regression test.
+
+[Live radar](https://anti-radar-one.vercel.app) · [Portfolio brief](https://anti-radar-one.vercel.app/portfolio/brief) · [Diligence: Unsloth AI](https://anti-radar-one.vercel.app/diligence/unsloth-ai) · [GitHub](https://github.com/armaansingla14/Anti-Radar)
+
 ## Discover. Diligence. Monitor. Decide.
 
 1. **Discover.** Radar finds technical founders and companies whose momentum is changing, from GitHub, research, hiring, the web and social signals, before conventional startup databases catch up.
 2. **Diligence.** Diligence tests what they claim. It extracts each material technical claim, checks it against public code, registries and independent sources, and says plainly what is verified, what is only claimed and what nobody can know from the outside.
-3. **Monitor.** Portfolio Pulse monitors what changes afterward. It watches publicly disclosed Anti Fund portfolio companies and their competitors, separates material changes from noise, explains why each one matters and hands technical questions back to Diligence.
+3. **Monitor.** Portfolio Pulse monitors what changes afterward. It watches selected publicly disclosed Anti Fund portfolio companies and their competitors, separates material changes from noise, explains why each one matters and hands technical questions back to Diligence.
 4. **Decide.** People decide. Agents accelerate the work, but evidence, evaluation and human judgment stay visible.
 
-### [Live radar](https://anti-radar-one.vercel.app) · [Diligence](https://anti-radar-one.vercel.app/diligence) · [Portfolio Pulse](https://anti-radar-one.vercel.app/portfolio) · [Agent evals](https://anti-radar-one.vercel.app/agents) · [Video](https://anti-radar-one.vercel.app/video)
+### [Portfolio Pulse](https://anti-radar-one.vercel.app/portfolio) · [Live radar](https://anti-radar-one.vercel.app) · [Diligence](https://anti-radar-one.vercel.app/diligence) · [Agent evals](https://anti-radar-one.vercel.app/agents) · [Video](https://anti-radar-one.vercel.app/video#portfolio)
 
-Also: [Portfolio brief](https://anti-radar-one.vercel.app/portfolio/brief) · [Portfolio tour](https://anti-radar-one.vercel.app/demo/portfolio) · [Diligence tour](https://anti-radar-one.vercel.app/demo/diligence) · [What changed since Oct 20](https://anti-radar-one.vercel.app/changes) · [GitHub](https://github.com/armaansingla14/Anti-Radar)
+Also: [Portfolio brief](https://anti-radar-one.vercel.app/portfolio/brief) · [Portfolio tour](https://anti-radar-one.vercel.app/demo/portfolio) · [Diligence tour](https://anti-radar-one.vercel.app/demo/diligence) · [What changed since Oct 20](https://anti-radar-one.vercel.app/changes)
 
-[![Anti Radar: the morning view on the verified snapshot of Nov 5, 2026](demo/screenshots/01-radar.png)](https://anti-radar-one.vercel.app)
+[![Portfolio Pulse on the verified snapshot of Nov 6, 2026](demo/screenshots/12-portfolio-pulse.png)](https://anti-radar-one.vercel.app/portfolio)
 
 The public site serves a **verified snapshot**: real public data collected on **Oct 20**, **Nov 5** and **Nov 6, 2026**. It is bundled with the site, so it loads instantly and every number can be checked against its source. Anti Radar is an independent project built around Anti Fund's thesis; it is not affiliated with Anti Fund.
 
@@ -39,7 +50,7 @@ Each of those is a weak signal on its own. Dated and combined, they can show tec
 | **Since last snapshot**: what changed between two verified snapshots. Covers new companies and people, new formations, score movers in both directions (only when the scores are comparable) and who entered or left the meeting list. Every caveat comes first. | ![Since last snapshot](demo/screenshots/08-since-snapshot.png) |
 | **Technical Diligence**: a claim ledger for one company. Each claim carries its company, public-artifact and third-party evidence, and a status set by documented rules. Testable claims get a generated test plan. The workspace also covers technical underwriting and questions for the founders. | ![Technical diligence](demo/screenshots/09-diligence.png) |
 | **One claim, audited**: the evidence for and against it, the rule that set its status, and a generated test plan (never executed). | ![A claim](demo/screenshots/10-claim.png) |
-| **Portfolio Pulse**: what materially changed across publicly disclosed Anti Fund portfolio companies and their competitors. Each change carries its rule, why it matters, the questions to review and a suggested action, and the noise filtered out is counted. | ![Portfolio Pulse](demo/screenshots/12-portfolio-pulse.png) |
+| **Portfolio Pulse**: what materially changed across selected publicly disclosed Anti Fund portfolio companies and their competitors. Each change carries its rule, why it matters, the questions to review and a suggested action, and the noise filtered out is counted. | ![Portfolio Pulse](demo/screenshots/12-portfolio-pulse.png) |
 | **Portfolio brief**: five things worth knowing each morning, built deterministically from material events, each line sourced. | ![Portfolio brief](demo/screenshots/14-portfolio-brief.png) |
 | **Agent evaluation**: per-agent metrics computed from stored outputs (unmeasured values say why), a failure ledger, and regression cases that pin each documented failure. | ![Agents](demo/screenshots/11-agents.png) |
 
@@ -87,7 +98,7 @@ Beyond the ledger, each workspace has:
 - **The critical founder question:** the repository is Apache-2.0, but `studio/` ships under AGPL-3.0.
 - **Open-source health:** a HIGH risk, since 61% of commits come from one contributor.
 
-A hand audit of this run found 9 real extraction and matching errors. Each one is filed in the failure ledger with a regression test. Method: [`docs/DILIGENCE_METHOD.md`](docs/DILIGENCE_METHOD.md). Release status: [`docs/V3_READY.md`](docs/V3_READY.md). Tour script: [`demo/DILIGENCE_DEMO_SCRIPT.md`](demo/DILIGENCE_DEMO_SCRIPT.md).
+A hand audit of this run found 9 real extraction and matching errors. Each one is filed in the failure ledger with a regression test. Method: [`docs/DILIGENCE_METHOD.md`](docs/DILIGENCE_METHOD.md). Release status: [`docs/V3_READY.md`](docs/V3_READY.md) (diligence) and [`docs/V4_READY.md`](docs/V4_READY.md) (portfolio). Tour script: [`demo/DILIGENCE_DEMO_SCRIPT.md`](demo/DILIGENCE_DEMO_SCRIPT.md).
 
 ## Agent evaluation
 
@@ -103,7 +114,7 @@ Model comparison is opt-in (`EVAL_PROVIDERS`), and a model recommendation is onl
 
 Radar answers *who is becoming interesting*. Portfolio Pulse answers *what changed after we cared, and what deserves attention now?*
 
-**What it monitors.** It covers the 16 technical companies that Anti Fund lists publicly on [antifund.com](https://antifund.com/), plus 43 comparable companies, each with a reason it is comparable and a public source.
+**What it monitors.** It covers 16 selected publicly disclosed Anti Fund portfolio companies, plus 43 comparable companies, each with a reason it is comparable and a public source. The 16 are the technical companies, with enough public footprint to monitor, out of the 53 that [antifund.com](https://antifund.com/) lists. This is a selection, not the whole portfolio.
 - Stage and year are copied exactly as the site states them.
 - Nothing private is stored or shown: no ownership, cost basis, marks or internal metrics. The schema has room for a future firm mode, but those fields stay empty in public mode.
 
@@ -120,7 +131,7 @@ Radar answers *who is becoming interesting*. Portfolio Pulse answers *what chang
 - which questions to review;
 - a suggested action: review, monitor, update the competitive map, run diligence, or prepare founder questions. A card never says "contact the founder".
 
-**Handoff to Diligence.** RUN DILIGENCE starts the existing V3 diligence on the event's own sources. Modal's "double throughput" post became claim 01 of its workspace, with a generated test plan.
+**Handoff to Diligence.** RUN DILIGENCE starts the existing diligence workflow on the event's own sources. Modal's "double throughput" post became claim 01 of its workspace, with a generated test plan.
 
 **First real run** (window Oct 7 – Nov 6, 2026): 1,215 raw changes → 432 candidate events → 283 after deduplication → **6 material · 35 watch · 242 noise** → 5 companies need attention.
 
@@ -140,15 +151,15 @@ Each error is fixed, filed in the failure ledger and pinned by a regression test
 - **Public data has blind spots.** Private repositories, stealth hiring and funding are invisible. "Already formed" is inferred from org age and self-descriptions.
 - **History is short.** Velocities strengthen as snapshots accumulate; until then they say *insufficient history*.
 - **arXiv identity is name-based** and linked to GitHub only on corroborating evidence, so research history is under-counted.
-- **Diligence reads public artifacts only.** It cannot see private code, customer results or internal benchmarks, so many claims honestly end UNVERIFIED. Test plans are generated, not run: untrusted code is never executed on the radar host. Only one company has a diligence workspace in the public snapshot.
+- **Diligence reads public artifacts only.** It cannot see private code, customer results or internal benchmarks, so many claims honestly end UNVERIFIED. Test plans are generated, not run: untrusted code is never executed on the radar host. Two companies have a diligence workspace in the public snapshot: Unsloth AI, and Modal (opened from a portfolio event).
 - **Snapshot comparisons are partial.** Of the companies scored on Oct 20, only those re-observed by Nov 5 are compared (47 of 220); the rest are listed as not re-observed rather than guessed.
 
 ## The demo
 
+- **[Portfolio Pulse video](https://anti-radar-one.vercel.app/video#portfolio)** (2:31, captioned, silent), recorded on the Nov 6 snapshot. **[Portfolio tour](https://anti-radar-one.vercel.app/demo/portfolio)**: the same nine scenes in the app. Script: [`demo/PORTFOLIO_DEMO_SCRIPT.md`](demo/PORTFOLIO_DEMO_SCRIPT.md).
 - **[Diligence video](https://anti-radar-one.vercel.app/video#diligence)** (2:15, captioned, silent), recorded on the Nov 5 snapshot. **[Diligence tour](https://anti-radar-one.vercel.app/demo/diligence)**: the same nine scenes in the app. Script: [`demo/DILIGENCE_DEMO_SCRIPT.md`](demo/DILIGENCE_DEMO_SCRIPT.md).
-- **[Radar video](https://anti-radar-one.vercel.app/video)** (3:13, narrated, captioned), recorded on the Oct 20 snapshot. Also attached to the [v1.0.0 release](https://github.com/armaansingla14/Anti-Radar/releases/tag/v1.0.0). Script: [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md). Shot list: [`demo/DEMO_SHOT_LIST.md`](demo/DEMO_SHOT_LIST.md).
-- **[Guided tour](https://anti-radar-one.vercel.app/demo)**: the radar's ten scenes in the live app. Press → to advance.
-- **[The radar](https://anti-radar-one.vercel.app)**: every page, all 368 companies and 4,567 people in the snapshot, served without a backend. The snapshot is read-only, so actions that write (watch, feedback, new investigations) run on a live backend.
+- **[Radar video](https://anti-radar-one.vercel.app/video#radar)** (3:13, narrated, captioned), recorded on the Oct 20 snapshot, so its numbers predate the later snapshots. Also attached to the [v1.0.0 release](https://github.com/armaansingla14/Anti-Radar/releases/tag/v1.0.0). Script: [`demo/DEMO_SCRIPT.md`](demo/DEMO_SCRIPT.md). Shot list: [`demo/DEMO_SHOT_LIST.md`](demo/DEMO_SHOT_LIST.md). **[Radar tour](https://anti-radar-one.vercel.app/demo)**: its ten scenes in the app. Press → to advance.
+- **[The radar](https://anti-radar-one.vercel.app)**: every page, all 424 companies and 5,054 people in the snapshot, served without a backend. The snapshot is read-only, so actions that write (watch, feedback, reviews, new investigations, diligence runs) need a live backend.
 
 ## How it works
 

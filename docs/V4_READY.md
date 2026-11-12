@@ -7,9 +7,9 @@
 | **Live URL** | https://anti-radar-one.vercel.app |
 | **Portfolio URL** | https://anti-radar-one.vercel.app/portfolio |
 | **Portfolio Brief URL** | https://anti-radar-one.vercel.app/portfolio/brief |
-| **Demo URL** | Video: https://anti-radar-one.vercel.app/video#portfolio (2:38, captioned, silent). Guided tour: https://anti-radar-one.vercel.app/demo/portfolio (9 scenes) |
+| **Demo URL** | Video: https://anti-radar-one.vercel.app/video#portfolio (2:31, captioned, silent). Guided tour: https://anti-radar-one.vercel.app/demo/portfolio (9 scenes) |
 | **Snapshot date** | **Nov 6, 2026**. Live public capture `backend/radar/demo/snapshot_updates/2026-11-06/`, on top of the Oct 20 and Nov 5 snapshots. |
-| **Public portfolio companies monitored** | 16 technical companies that Anti Fund lists publicly on antifund.com (checked Nov 6, 2026), plus 43 comps (46 comp relationships). |
+| **Public portfolio companies monitored** | 16 selected publicly disclosed Anti Fund portfolio companies: the technical companies with enough public footprint, out of the 53 that antifund.com lists (checked Nov 6, 2026). Plus 43 comps (46 comp relationships). This is a selection, not the whole portfolio. |
 | **Raw changes detected** | 1,215 in the 30-day window, Oct 7 – Nov 6 |
 | **Candidate events** | 432, then 283 after deduplication |
 | **Material events surfaced** | 6 MATERIAL and 35 WATCH. 29 WATCH events reach a portfolio company; 6 belong to non-direct comps and reach none. |
@@ -88,7 +88,7 @@ The CI smoke test now also renders `/changes`, `/diligence*`, `/agents*` and `/p
 
 | Question | Answer |
 |---|---|
-| Can the system monitor publicly disclosed portfolio companies? | Yes. It covers 16, from antifund.com, with verified identifiers. Unverified look-alikes are deliberately excluded. |
+| Can the system monitor publicly disclosed portfolio companies? | Yes. It covers 16 selected companies from antifund.com (not the whole portfolio), with verified identifiers. Unverified look-alikes are deliberately excluded. |
 | Can it distinguish material events from noise? | Yes: 1,215 raw changes became 6 material, 35 watch and 242 noise, by documented rules M1–M11 (no language model). |
 | Can it explain why an event matters? | Yes. Each event shows its rule and reason, a "why it matters" line, and its impact on each affected company. |
 | Can it identify which companies need attention? | Yes. Five companies are ranked deterministically, each with why it surfaced, a suggested action and questions. |
@@ -131,4 +131,4 @@ V4 is complete and deployed. One system now answers:
 - **AGENTS:** can we trust the system doing the work?
 - **REPORTS:** what have we learned?
 
-It covers the 16 publicly disclosed technical portfolio companies, with real sources throughout. No LP CRM, fund accounting, cap tables, board portal or recommendation engine was built.
+It covers 16 selected publicly disclosed technical portfolio companies, with real sources throughout. No LP CRM, fund accounting, cap tables, board portal or recommendation engine was built.

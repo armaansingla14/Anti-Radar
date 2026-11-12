@@ -137,7 +137,7 @@ describe("buildPortfolioPlan", () => {
     assert.equal(plan.steps.at(-1)!.scene, PORTFOLIO_SCENE_COUNT);
     assert.deepEqual([...new Set(plan.steps.slice(1).map((s) => s.scene))], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const by = (k: string) => plan.steps.filter((s) => s.scene_key === k);
-    assert.match(by("pulse")[0].caption, /2 companies need attention · 6 material events · 29 to watch, across 16 portfolio companies/);
+    assert.match(by("pulse")[0].caption, /2 companies need attention · 6 material events · 29 to watch, across 16 selected portfolio companies/);
     assert.match(by("attention")[0].caption, /^2 companies need attention\. First: COG/);
     assert.equal(by("company")[0].url, "/portfolio/cog");
     assert.equal(by("company")[0].focus, "#competitive-changes");
