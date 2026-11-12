@@ -9,7 +9,7 @@ Anti Radar is one system that finds technical founders early, tests what compani
 1. **Watch the 2.5-minute Portfolio Pulse walkthrough:** [video](https://anti-radar-one.vercel.app/video#portfolio) or [guided tour](https://anti-radar-one.vercel.app/demo/portfolio).
 2. **Open [Portfolio Pulse](https://anti-radar-one.vercel.app/portfolio).** It shows what materially changed across selected publicly disclosed Anti Fund portfolio companies, why each change matters, and what to review.
 3. **Follow one event into Diligence.** Modal's ["double throughput" post](https://anti-radar-one.vercel.app/portfolio/modal) hands off to [its diligence workspace](https://anti-radar-one.vercel.app/diligence/modal), where it is claim 01, with a generated test plan.
-4. **See how the agents are measured:** [agent metrics](https://anti-radar-one.vercel.app/agents) and the [failure ledger](https://anti-radar-one.vercel.app/agents/failures). It holds 44 real failures, each pinned by a regression test.
+4. **See how the agents are measured:** [agent metrics](https://anti-radar-one.vercel.app/agents) and the [failure ledger](https://anti-radar-one.vercel.app/agents/failures). It holds 44 real failures, 42 of them pinned by a regression test.
 
 [Live radar](https://anti-radar-one.vercel.app) · [Portfolio brief](https://anti-radar-one.vercel.app/portfolio/brief) · [Diligence: Unsloth AI](https://anti-radar-one.vercel.app/diligence/unsloth-ai) · [GitHub](https://github.com/armaansingla14/Anti-Radar)
 
@@ -104,7 +104,7 @@ A hand audit of this run found 9 real extraction and matching errors. Each one i
 
 Each stored agent output is evaluated: task success, structured-output validity, citation validity, unsupported-claim rate, source coverage, latency, cost, fallback and errors. Metrics carry their sample size, and a value that cannot be computed is shown as missing with the reason, never estimated.
 
-Failures go into a ledger with a 13-category taxonomy: 44 documented real failures (from the Oct 20 evaluation, the diligence audits of Unsloth AI and Modal, and the portfolio audit), each with its evidence, resolution and the regression test that guards it. The suite has 24 YAML regression cases (`radar eval`).
+Failures go into a ledger with a 13-category taxonomy: 44 documented real failures (from the Oct 20 evaluation, the diligence audits of Unsloth AI and Modal, and the portfolio audit), each with its evidence and resolution; 42 of the 44 are pinned by a regression test (two early ranking calls have none). The suite has 24 YAML regression cases (`radar eval`).
 
 The evaluator found a real bug on its own. The injection guard was flagging meeting briefs that reported "Founder Score 48/100" as prompt injection.
 
