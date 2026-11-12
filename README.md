@@ -52,7 +52,7 @@ Each of those is a weak signal on its own. Dated and combined, they can show tec
 | **One claim, audited**: the evidence for and against it, the rule that set its status, and a generated test plan (never executed). | ![A claim](demo/screenshots/10-claim.png) |
 | **Portfolio Pulse**: what materially changed across selected publicly disclosed Anti Fund portfolio companies and their competitors. Each change carries its rule, why it matters, the questions to review and a suggested action, and the noise filtered out is counted. | ![Portfolio Pulse](demo/screenshots/12-portfolio-pulse.png) |
 | **Portfolio brief**: five things worth knowing each morning, built deterministically from material events, each line sourced. | ![Portfolio brief](demo/screenshots/14-portfolio-brief.png) |
-| **Agent evaluation**: per-agent metrics computed from stored outputs (unmeasured values say why), a failure ledger, and regression cases that pin each documented failure. | ![Agents](demo/screenshots/11-agents.png) |
+| **Agent evaluation**: per-agent metrics computed from stored outputs (unmeasured values say why), a failure ledger, and regression cases that pin most documented failures (42 of 44). | ![Agents](demo/screenshots/11-agents.png) |
 
 ## Real-world evaluation
 
@@ -170,7 +170,7 @@ Each error is fixed, filed in the failure ledger and pinned by a regression test
 5. **Surface** — the morning view, Formation Radar, the weekly meeting list, Daily Radar and a stored morning brief.
 6. **Investigate** — on demand, the RADAR ANALYST agent writes a source-cited brief or meeting brief. External content is untrusted data, never instructions.
 7. **Diligence** — for a company worth a closer look, the DILIGENCE ANALYST builds a claim ledger from public artifacts (`radar diligence run <company>`).
-8. **Evaluate** — every agent output is scored, failures are filed with regression tests (`radar eval`).
+8. **Evaluate** — every agent output is scored, and failures are filed, most pinned by a regression test (`radar eval`).
 
 ## Formation Radar
 
